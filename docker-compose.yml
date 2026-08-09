@@ -1,0 +1,31 @@
+# docker compose up -d --build
+#
+# Reads JWT_SECRET (and optional overrides) from a .env file in this directory.
+# Create it first:
+#   echo "JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")" > .env
+# (or on the VPS: openssl rand -hex 48)
+
+services:
+  app:
+    build: .
+    image: getxmatch:latest
+    container_name: getxmatch
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Required — compose will refuse to start if JWT_SECRET is unset.
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in a .env file next to docker-compose.yml}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-5}
+      MAX_CHAT_FILE_MB: ${MAX_CHAT_FILE_MB:-15}
+    volumes:
+      # Persist the SQLite database and profile/gallery images across restarts.
+      # (Chat-shared files are relayed live and never written to disk.)
+      - gxm_data:/app/data
+      - gxm_uploads:/app/uploads
+
+volumes:
+  gxm_data:
+  gxm_uploads:

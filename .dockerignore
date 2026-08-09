@@ -1,0 +1,12 @@
+# Keep the image small and never bake in local/dev artifacts or secrets.
+node_modules
+npm-debug.log*
+data
+uploads
+.env
+.git
+.gitignore
+Dockerfile
+.dockerignore
+docker-compose.yml
+*.log

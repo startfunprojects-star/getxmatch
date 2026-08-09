@@ -47,9 +47,56 @@ npm start
 
 Open http://localhost:3000
 
-## Deploy on your VPS (pull from GitHub)
+## Deploy with Docker (recommended)
 
-Assumes Ubuntu/Debian with Node.js 18+ installed.
+The repo ships a `Dockerfile` and `docker-compose.yml`. The image is based on
+Node 24 (SQLite built in — no native build). The SQLite database and profile/
+gallery images are kept in named volumes so they survive restarts and rebuilds.
+Chat-shared files are never written to disk, so nothing about them is persisted.
+
+On your VPS:
+
+```bash
+# 1. Get the code
+git clone https://github.com/startfunprojects-star/getxmatch.git
+cd getxmatch
+
+# 2. Create a .env with a strong secret (used by docker-compose)
+echo "JWT_SECRET=$(openssl rand -hex 48)" > .env
+
+# 3. Build and run
+docker compose up -d --build
+
+# Check it
+docker compose ps
+docker compose logs -f app
+```
+
+The app is now on port 3000. Manage it with:
+
+```bash
+docker compose restart app      # restart
+docker compose down             # stop (volumes are kept)
+docker compose up -d --build    # apply an update after `git pull`
+```
+
+### Updating
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+### HTTPS
+
+Run a reverse proxy in front for TLS and WebSocket upgrade — either use the
+`deploy/nginx.conf.example` on the host, or point an existing Caddy/Traefik/nginx
+container at `http://getxmatch:3000`. `NODE_ENV=production` sets secure cookies,
+which require the app to be reached over HTTPS.
+
+## Deploy on your VPS without Docker (pull from GitHub)
+
+Assumes Ubuntu/Debian with **Node.js 24+** installed (for built-in SQLite).
 
 ```bash
 # 1. Get the code
