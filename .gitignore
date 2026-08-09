@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+
+# Runtime data (SQLite DB)
+data/
+
+# Persisted profile & gallery uploads (regenerated per host)
+uploads/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db

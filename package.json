@@ -1,0 +1,26 @@
+{
+  "name": "getxmatch",
+  "version": "1.0.0",
+  "description": "Lightweight social networking app for adults — profiles, galleries, and real-time chat with ephemeral file sharing.",
+  "type": "commonjs",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie": "^0.6.0",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "socket.io": "^4.8.1"
+  }
+}

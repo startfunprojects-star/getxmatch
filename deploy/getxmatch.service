@@ -1,0 +1,26 @@
+# systemd unit for getxmatch.
+# Install:  sudo cp deploy/getxmatch.service /etc/systemd/system/
+# Edit paths/User below to match your VPS, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now getxmatch
+
+[Unit]
+Description=getxmatch social app
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/getxmatch
+# Load PORT / JWT_SECRET / NODE_ENV from the .env file in the app directory.
+EnvironmentFile=/var/www/getxmatch/.env
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=3
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
