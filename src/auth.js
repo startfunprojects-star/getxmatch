@@ -57,6 +57,41 @@ function optionalAuth(req, res, next) {
   next();
 }
 
+/* ---------------------------------------------------------------------------
+   Admin session — a separate cookie/token from regular users.
+--------------------------------------------------------------------------- */
+const ADMIN_COOKIE = 'gxm_admin';
+
+function signAdminToken() {
+  return jwt.sign({ role: 'admin' }, config.jwtSecret, { expiresIn: '12h' });
+}
+
+function setAdminCookie(res, token) {
+  res.cookie(ADMIN_COOKIE, token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: config.isProd,
+    maxAge: 12 * 60 * 60 * 1000,
+  });
+}
+
+function clearAdminCookie(res) {
+  res.clearCookie(ADMIN_COOKIE);
+}
+
+// Express middleware: requires a valid admin session, else 401.
+function requireAdmin(req, res, next) {
+  const token = req.cookies ? req.cookies[ADMIN_COOKIE] : null;
+  try {
+    const payload = jwt.verify(token, config.jwtSecret);
+    if (payload.role !== 'admin') throw new Error('not admin');
+    req.admin = true;
+    next();
+  } catch (_e) {
+    res.status(401).json({ error: 'Admin authentication required.' });
+  }
+}
+
 module.exports = {
   signToken,
   setAuthCookie,
@@ -64,4 +99,9 @@ module.exports = {
   userFromToken,
   requireAuth,
   optionalAuth,
+  ADMIN_COOKIE,
+  signAdminToken,
+  setAdminCookie,
+  clearAdminCookie,
+  requireAdmin,
 };

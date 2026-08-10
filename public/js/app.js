@@ -105,20 +105,66 @@
       msg.className = 'msg';
       const fd = new FormData(form);
       try {
-        let out;
         if (mode === 'signup') {
-          out = await api.post('/api/auth/signup', {
+          // Step 1: request an email OTP. Account is created only after verify.
+          await api.post('/api/auth/signup/start', {
             username: fd.get('username'),
             email: fd.get('email'),
             password: fd.get('password'),
             ageConfirmed: fd.get('ageConfirmed') === 'on',
           });
-        } else {
-          out = await api.post('/api/auth/login', {
-            identifier: fd.get('identifier'),
-            password: fd.get('password'),
-          });
+          return renderOtp(String(fd.get('email')).toLowerCase());
         }
+        const out = await api.post('/api/auth/login', {
+          identifier: fd.get('identifier'),
+          password: fd.get('password'),
+        });
+        state.me = out.user;
+        if (!out.hasProfile) return renderProfileEditor(true);
+        return enterApp();
+      } catch (err) {
+        msg.textContent = err.message;
+        msg.className = 'msg error';
+      }
+    });
+  }
+
+  /* Step 2 of signup: enter the 6-digit code emailed to the user. */
+  function renderOtp(email) {
+    root.innerHTML = '';
+    const card = el(`
+      <div class="auth-wrap"><div class="auth-card">
+        <h1 class="brand">get<span class="x">x</span>match</h1>
+        <p class="auth-sub">Enter the 6-digit code we emailed to <strong>${esc(email)}</strong>.</p>
+        <form id="otpForm">
+          <label>Verification code</label>
+          <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+                 placeholder="123456" required
+                 style="letter-spacing:8px;text-align:center;font-size:22px" />
+          <div class="msg" id="otpMsg"></div>
+          <button class="primary" type="submit" style="width:100%;margin-top:18px">Verify &amp; create account</button>
+        </form>
+        <div class="auth-toggle">
+          Didn't get it? <a href="#" id="backToSignup">Start over</a>
+        </div>
+      </div></div>
+    `);
+    root.appendChild(card);
+
+    const form = card.querySelector('#otpForm');
+    const msg = card.querySelector('#otpMsg');
+
+    card.querySelector('#backToSignup').addEventListener('click', (e) => {
+      e.preventDefault();
+      renderAuth('signup');
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      msg.className = 'msg';
+      const code = new FormData(form).get('code');
+      try {
+        const out = await api.post('/api/auth/signup/verify', { email, code });
         state.me = out.user;
         if (!out.hasProfile) return renderProfileEditor(true);
         return enterApp();

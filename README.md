@@ -5,8 +5,15 @@ self-host on a single VPS: no external database or storage service required.
 
 ## Features
 
-- **Sign up / log in** with an 18+ age confirmation. Passwords are hashed
-  (bcrypt); sessions use a signed httpOnly JWT cookie.
+- **Sign up / log in** with an 18+ age confirmation and **email OTP
+  verification** — a 6-digit code is emailed on signup and the account is only
+  created once the code is entered. Passwords are hashed (bcrypt); sessions use
+  a signed httpOnly JWT cookie.
+- **Admin dashboard** at `/admin` — lists every user with a live green
+  online/offline indicator, lets the admin create users **without** an email
+  address (username + password), and delete users. The admin password is set
+  and reset only via a **single-use link emailed to `ADMIN_EMAIL`**; each new
+  request invalidates the previous link.
 - **Profiles** — created *after* signup. Each profile has a display picture,
   a bio, and a **photo gallery**. Profile images are stored on the server.
 - **Real-time 1:1 chat** over WebSockets (Socket.IO). Text history is saved so
@@ -148,6 +155,29 @@ sudo systemctl restart getxmatch
 | `NODE_ENV`        | `production` enables secure cookies                 |
 | `MAX_UPLOAD_MB`   | Max profile/gallery image size (default 5)          |
 | `MAX_CHAT_FILE_MB`| Max live chat file size (default 15)                |
+| `PUBLIC_URL`      | Public base URL, used for links inside emails (e.g. `https://getxmatch.com`) |
+| `ADMIN_EMAIL`     | Where the admin set/reset link is sent (default `gauravsharma.ps@gmail.com`) |
+| `OTP_TTL_MIN`     | Signup OTP lifetime in minutes (default 10)         |
+| `OTP_MAX_ATTEMPTS`| Wrong-code attempts before the OTP is discarded (default 5) |
+| `ADMIN_RESET_TTL_MIN` | Admin reset-link lifetime in minutes (default 60) |
+| `SMTP_HOST`       | SMTP server (default `smtp.hostinger.com`)          |
+| `SMTP_PORT`       | SMTP port (default 465)                             |
+| `SMTP_SECURE`     | `true` for port 465, `false` for 587 (default true) |
+| `SMTP_USER`       | SMTP mailbox login. **If blank, OTPs/links are printed to the server log instead of emailed.** |
+| `SMTP_PASS`       | SMTP mailbox password                               |
+| `MAIL_FROM`       | `From:` header, e.g. `getxmatch <no-reply@getxmatch.com>` |
+
+### Email & the admin account
+
+Both the signup OTP and the admin set/reset link are sent over SMTP. **Until
+`SMTP_USER`/`SMTP_PASS` are set, the app does not send real email — it prints the
+message (OTP code / reset link) to the server log** (`journalctl -u getxmatch`),
+which is handy for testing.
+
+To set the **first admin password**: go to `/admin`, click *"Email me a
+set-password link"*, then open the link that arrives at `ADMIN_EMAIL` (or, before
+SMTP is configured, copy it from the server log) and choose a password. Requesting
+a new link at any time invalidates the previous one.
 
 ## Notes & next steps
 

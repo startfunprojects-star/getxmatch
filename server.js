@@ -13,6 +13,7 @@ const { initSocket } = require('./src/socket');
 const authRoutes = require('./src/routes/auth');
 const profileRoutes = require('./src/routes/profile');
 const userRoutes = require('./src/routes/users');
+const adminRoutes = require('./src/routes/admin');
 
 const app = express();
 app.set('trust proxy', 1); // behind nginx on the VPS
@@ -45,11 +46,19 @@ app.use('/uploads', express.static(config.uploadsDir, { maxAge: '7d', index: fal
 app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 // Static SPA.
 const publicDir = path.join(config.root, 'public');
+
+// Admin dashboard is its own small SPA. Serve it for /admin and /admin/* (e.g.
+// the /admin/reset?token=... link) before the main SPA fallback below.
+app.get(/^\/admin(\/.*)?$/, (req, res) => {
+  res.sendFile(path.join(publicDir, 'admin.html'));
+});
+
 app.use(express.static(publicDir, { index: 'index.html' }));
 
 // SPA fallback for non-API routes.

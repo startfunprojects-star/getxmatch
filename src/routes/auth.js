@@ -1,10 +1,13 @@
 'use strict';
 
+const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
 
 const db = require('../db');
+const config = require('../config');
+const { sendSignupOtp } = require('../mail');
 const { signToken, setAuthCookie, clearAuthCookie, requireAuth } = require('../auth');
 
 const router = express.Router();
@@ -24,8 +27,13 @@ function publicUser(user) {
   return { id: user.id, username: user.username, email: user.email };
 }
 
-// POST /api/auth/signup
-router.post('/signup', authLimiter, (req, res) => {
+function sha256(s) {
+  return crypto.createHash('sha256').update(s).digest('hex');
+}
+
+// POST /api/auth/signup/start — validate details, email a 6-digit OTP, and
+// stash the pending signup. No user row is created until the code is verified.
+router.post('/signup/start', authLimiter, async (req, res) => {
   const { username, email, password, ageConfirmed } = req.body || {};
 
   if (!ageConfirmed) {
@@ -41,24 +49,84 @@ router.post('/signup', authLimiter, (req, res) => {
     return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   }
 
+  const emailLc = email.toLowerCase();
   const existing = db
     .prepare('SELECT id FROM users WHERE username = ? OR email = ?')
-    .get(username, email.toLowerCase());
+    .get(username, emailLc);
   if (existing) {
     return res.status(409).json({ error: 'That username or email is already taken.' });
   }
 
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  const now = Date.now();
   const passwordHash = bcrypt.hashSync(password, 12);
+
+  // Upsert the pending signup for this email (replaces any prior attempt).
+  db.prepare(
+    `INSERT INTO email_otps (email, username, password_hash, code_hash, attempts, expires_at, created_at)
+     VALUES (?, ?, ?, ?, 0, ?, ?)
+     ON CONFLICT(email) DO UPDATE SET
+       username = excluded.username,
+       password_hash = excluded.password_hash,
+       code_hash = excluded.code_hash,
+       attempts = 0,
+       expires_at = excluded.expires_at,
+       created_at = excluded.created_at`
+  ).run(emailLc, username, passwordHash, sha256(code), now + config.otpTtlMs, now);
+
+  try {
+    await sendSignupOtp(emailLc, code);
+  } catch (e) {
+    return res.status(502).json({ error: 'Could not send the verification email. Please try again.' });
+  }
+
+  res.json({ ok: true, email: emailLc });
+});
+
+// POST /api/auth/signup/verify — check the OTP, then create the account.
+router.post('/signup/verify', authLimiter, (req, res) => {
+  const { email, code } = req.body || {};
+  if (!email || !code) {
+    return res.status(400).json({ error: 'Email and code are required.' });
+  }
+  const emailLc = String(email).toLowerCase();
+
+  const pending = db.prepare('SELECT * FROM email_otps WHERE email = ?').get(emailLc);
+  if (!pending) {
+    return res.status(400).json({ error: 'No pending verification. Please start again.' });
+  }
+  if (Date.now() > pending.expires_at) {
+    db.prepare('DELETE FROM email_otps WHERE email = ?').run(emailLc);
+    return res.status(400).json({ error: 'The code has expired. Please start again.' });
+  }
+  if (pending.attempts >= config.otpMaxAttempts) {
+    db.prepare('DELETE FROM email_otps WHERE email = ?').run(emailLc);
+    return res.status(429).json({ error: 'Too many incorrect attempts. Please start again.' });
+  }
+  if (sha256(String(code)) !== pending.code_hash) {
+    db.prepare('UPDATE email_otps SET attempts = attempts + 1 WHERE email = ?').run(emailLc);
+    const left = config.otpMaxAttempts - (pending.attempts + 1);
+    return res.status(400).json({ error: `Incorrect code.${left > 0 ? ` ${left} attempt(s) left.` : ''}` });
+  }
+
+  // Guard against a race where the username/email was taken meanwhile.
+  const taken = db
+    .prepare('SELECT id FROM users WHERE username = ? OR email = ?')
+    .get(pending.username, emailLc);
+  if (taken) {
+    db.prepare('DELETE FROM email_otps WHERE email = ?').run(emailLc);
+    return res.status(409).json({ error: 'That username or email is already taken.' });
+  }
+
   const now = Date.now();
   const info = db
     .prepare('INSERT INTO users (username, email, password_hash, created_at) VALUES (?, ?, ?, ?)')
-    .run(username, email.toLowerCase(), passwordHash, now);
+    .run(pending.username, emailLc, pending.password_hash, now);
+  db.prepare('DELETE FROM email_otps WHERE email = ?').run(emailLc);
 
-  const user = { id: info.lastInsertRowid, username, email: email.toLowerCase() };
-  const token = signToken(user);
-  setAuthCookie(res, token);
+  const user = { id: info.lastInsertRowid, username: pending.username, email: emailLc };
+  setAuthCookie(res, signToken(user));
 
-  // hasProfile=false → client will send them to create their profile.
   res.status(201).json({ user: publicUser(user), hasProfile: false });
 });
 

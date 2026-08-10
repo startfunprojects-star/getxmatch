@@ -19,6 +19,30 @@ const config = {
   dataDir: path.join(ROOT, 'data'),
   uploadsDir: path.join(ROOT, 'uploads'),
   dbPath: path.join(ROOT, 'data', 'getxmatch.db'),
+
+  // Public base URL, used to build absolute links inside emails.
+  publicUrl: (process.env.PUBLIC_URL || 'http://localhost:3000').replace(/\/+$/, ''),
+
+  // Where the admin password set/reset link is sent.
+  adminEmail: process.env.ADMIN_EMAIL || 'gauravsharma.ps@gmail.com',
+
+  // Signup email OTP.
+  otpTtlMs: (parseInt(process.env.OTP_TTL_MIN, 10) || 10) * 60 * 1000,
+  otpMaxAttempts: parseInt(process.env.OTP_MAX_ATTEMPTS, 10) || 5,
+
+  // Admin password reset link lifetime.
+  adminResetTtlMs: (parseInt(process.env.ADMIN_RESET_TTL_MIN, 10) || 60) * 60 * 1000,
+
+  // Outgoing mail (Hostinger SMTP by default). If user/pass are blank the
+  // mailer falls back to logging messages to the server console.
+  smtp: {
+    host: process.env.SMTP_HOST || 'smtp.hostinger.com',
+    port: parseInt(process.env.SMTP_PORT, 10) || 465,
+    secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : true,
+    user: process.env.SMTP_USER || '',
+    pass: process.env.SMTP_PASS || '',
+    from: process.env.MAIL_FROM || process.env.SMTP_USER || 'getxmatch <no-reply@localhost>',
+  },
 };
 
 if (config.isProd && config.jwtSecret === 'dev-insecure-secret-change-me') {
