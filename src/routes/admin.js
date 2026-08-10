@@ -45,7 +45,6 @@ function getAdmin() {
 // POST /api/admin/request-reset — email a fresh link to the admin address.
 // Every call clears prior tokens, so the previous link stops working.
 router.post('/request-reset', adminLimiter, async (req, res) => {
-  const admin = getAdmin();
   const rawToken = crypto.randomBytes(32).toString('hex');
   const now = Date.now();
 
@@ -60,8 +59,8 @@ router.post('/request-reset', adminLimiter, async (req, res) => {
   } catch (e) {
     return res.status(502).json({ error: 'Could not send the email. Please try again.' });
   }
-  // Don't reveal the admin address; just confirm it was sent.
-  res.json({ ok: true, sentTo: admin.email });
+  // Don't reveal the admin address anywhere client-facing; just confirm.
+  res.json({ ok: true });
 });
 
 // GET /api/admin/reset/valid?token=... — is this link still usable?

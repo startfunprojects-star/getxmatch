@@ -93,8 +93,8 @@
     m.className = 'msg';
     if (btn) btn.disabled = true;
     try {
-      const out = await api.post('/api/admin/request-reset', {});
-      m.textContent = `A one-time link was sent to ${out.sentTo}. Check your email.`;
+      await api.post('/api/admin/request-reset', {});
+      m.textContent = 'A one-time link has been sent — you know where. 🙂';
       m.className = 'msg ok';
     } catch (err) { m.textContent = err.message; m.className = 'msg error'; }
     finally { if (btn) btn.disabled = false; }
