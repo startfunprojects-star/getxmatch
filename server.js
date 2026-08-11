@@ -18,7 +18,6 @@ const adminRoutes = require('./src/routes/admin');
 const contentRoutes = require('./src/routes/content');
 const leaderboardRoutes = require('./src/routes/leaderboard');
 const eventsRoutes = require('./src/routes/events');
-const discussRoutes = require('./src/routes/discuss');
 
 const app = express();
 app.set('trust proxy', 1); // behind nginx on the VPS
@@ -56,7 +55,6 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/content', contentRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/events', eventsRoutes);
-app.use('/api/discuss', discussRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 

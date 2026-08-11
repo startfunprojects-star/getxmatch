@@ -184,7 +184,7 @@ db.exec(`
 })();
 
 // --- Content & engagement features: quizzes, polls, blogs, profile
-// discussions, and admin-authored events. Created idempotently so existing
+// and admin-authored events. Created idempotently so existing
 // databases pick them up on next boot.
 db.exec(`
   /* ---------------- Quizzes ---------------- */
@@ -240,30 +240,6 @@ db.exec(`
     updated_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_blogs_recent ON blogs (created_at);
-
-  /* ---------------- Profile discussions ----------------
-     A discussion is opened by any visitor ABOUT a profile (subject_id). The
-     profile owner can see every discussion, react to (like/dislike) it, and
-     delete it at any time. Discussions surface on the events feed. */
-  CREATE TABLE IF NOT EXISTS discussions (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    subject_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    author_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title      TEXT NOT NULL DEFAULT '',
-    body       TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_discussions_subject
-    ON discussions (subject_id, created_at);
-
-  -- Like (1) / dislike (-1) reactions on a discussion, one per user.
-  CREATE TABLE IF NOT EXISTS discussion_reactions (
-    discussion_id INTEGER NOT NULL REFERENCES discussions(id) ON DELETE CASCADE,
-    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    value         INTEGER NOT NULL CHECK (value IN (-1, 1)),
-    created_at    INTEGER NOT NULL,
-    PRIMARY KEY (discussion_id, user_id)
-  );
 
   /* ---------------- Admin-authored events ----------------
      Curated announcements the admin pins to the Recent Events feed alongside

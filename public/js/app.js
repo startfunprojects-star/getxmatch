@@ -389,6 +389,7 @@
             <button data-tab="chats">Chats</button>
           </div>
           <div class="explore-nav" id="exploreNav">
+            <button data-view="requests">🔔 Requests <span class="req-badge hidden" id="reqBadge">0</span></button>
             <button data-view="quizzes">🧠 Quizzes</button>
             <button data-view="polls">📊 Polls</button>
             <button data-view="blogs">📝 Blogs</button>
@@ -451,6 +452,19 @@
 
     connectSocket();
     renderList();
+    refreshRequestBadge();
+  }
+
+  // Update the sidebar "Requests" badge with the number of incoming requests.
+  async function refreshRequestBadge() {
+    const badge = document.getElementById('reqBadge');
+    if (!badge) return;
+    try {
+      const { incoming } = await api.get('/api/social/friends');
+      const n = (incoming || []).length;
+      badge.textContent = n;
+      badge.classList.toggle('hidden', n === 0);
+    } catch (_e) { /* ignore */ }
   }
 
   /* ---------- sidebar list ---------- */
@@ -792,11 +806,6 @@
               <div id="pvCommentForm"></div>
               <div class="comments" id="pvComments"></div>
             </section>
-            <section class="card">
-              <h3 class="card-title">🗣️ Discussions ${isMe ? '<span class="hint">people discussing your profile</span>' : ''}</h3>
-              <div id="pvDiscussForm"></div>
-              <div class="discussions" id="pvDiscussions"><div class="hint">Loading…</div></div>
-            </section>
           </div>
           <div class="pro-col-side">
             ${detailsHtml ? `<section class="card"><h3 class="card-title">🧬 Details</h3><div class="detail-grid">${detailsHtml}</div></section>` : ''}
@@ -961,97 +970,6 @@
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
     }
 
-    /* ----- discussions ----- */
-    const discussBox = view.querySelector('#pvDiscussions');
-    const renderDiscussion = (d) => {
-      const item = el(`
-        <div class="discussion" data-id="${d.id}">
-          <div class="disc-head">
-            <img class="avatar sm" src="${avatarUrl(d.author.avatar)}" />
-            <div class="disc-who">
-              <b class="disc-author" data-u="${esc(d.author.username)}">${esc(d.author.displayName)}</b>
-              <span class="hint">${fmtDate(d.at)}</span>
-            </div>
-            <div class="disc-head-actions"></div>
-          </div>
-          ${d.title ? `<div class="disc-title"></div>` : ''}
-          <div class="disc-body"></div>
-          <div class="disc-foot">
-            <button class="react-btn like${d.myReaction === 1 ? ' on' : ''}" data-v="1">👍 <span class="rc">${d.likes}</span></button>
-            <button class="react-btn dislike${d.myReaction === -1 ? ' on' : ''}" data-v="-1">👎 <span class="rc">${d.dislikes}</span></button>
-            <span class="disc-action"></span>
-          </div>
-        </div>
-      `);
-      if (d.title) item.querySelector('.disc-title').textContent = d.title;
-      item.querySelector('.disc-body').textContent = d.body;
-      item.querySelector('.disc-author').addEventListener('click', () => showProfile(d.author.username));
-
-      // React (like/dislike).
-      item.querySelectorAll('.react-btn').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          try {
-            const out = await api.post('/api/discuss/' + d.id + '/react', { value: Number(btn.dataset.v) });
-            const fresh = renderDiscussion(out.discussion);
-            item.replaceWith(fresh);
-          } catch (e) { alert(e.message); }
-        });
-      });
-
-      // Delete (profile owner any time, or the author).
-      if (d.canDelete) {
-        const del = el(`<button class="ghost small">${d.isOwner && d.author.id !== state.me.id ? 'Delete' : 'Delete'}</button>`);
-        del.addEventListener('click', async () => {
-          if (!confirm('Delete this discussion?')) return;
-          try { await api.del('/api/discuss/' + d.id); item.remove(); if (!discussBox.children.length) discussBox.appendChild(el('<div class="hint">No discussions yet.</div>')); }
-          catch (e) { alert(e.message); }
-        });
-        item.querySelector('.disc-head-actions').appendChild(del);
-      }
-      // Friend action on the author (not for yourself / the profile owner viewing).
-      if (!d.author.isMe && d.friendState) {
-        const fb = friendButtonEl(d.author.username, d.friendState, () => loadDiscussions());
-        if (fb) item.querySelector('.disc-action').appendChild(fb);
-      }
-      return item;
-    };
-
-    async function loadDiscussions() {
-      try {
-        const { discussions } = await api.get('/api/discuss/' + encodeURIComponent(profile.username));
-        discussBox.innerHTML = '';
-        if (!discussions.length) { discussBox.appendChild(el('<div class="hint">No discussions yet.</div>')); return; }
-        discussions.forEach((d) => discussBox.appendChild(renderDiscussion(d)));
-      } catch (e) {
-        discussBox.innerHTML = `<div class="hint">${esc(e.message)}</div>`;
-      }
-    }
-
-    if (!isMe) {
-      const dform = el(`
-        <div class="discuss-form">
-          <input id="dTitle" maxlength="120" placeholder="Discussion title (optional)" />
-          <textarea id="dBody" maxlength="2000" placeholder="Start a discussion about this profile…"></textarea>
-          <div class="row-actions"><button class="primary small" id="dSend">Start discussion</button></div>
-        </div>
-      `);
-      view.querySelector('#pvDiscussForm').appendChild(dform);
-      dform.querySelector('#dSend').addEventListener('click', async () => {
-        const title = dform.querySelector('#dTitle').value.trim();
-        const body = dform.querySelector('#dBody').value.trim();
-        if (!body) return;
-        try {
-          const { discussion } = await api.post('/api/discuss/' + encodeURIComponent(profile.username), { title, body });
-          dform.querySelector('#dTitle').value = '';
-          dform.querySelector('#dBody').value = '';
-          const hint = discussBox.querySelector('.hint');
-          if (hint) hint.remove();
-          discussBox.prepend(renderDiscussion(discussion));
-        } catch (e) { alert(e.message); }
-      });
-    }
-    loadDiscussions();
-
     /* ----- misc wiring ----- */
     view.querySelectorAll('.partner-link').forEach((a) =>
       a.addEventListener('click', (ev) => { ev.preventDefault(); showProfile(a.dataset.u); }));
@@ -1072,7 +990,7 @@
   function renderFriendButton(slot, profile, refresh) {
     slot.innerHTML = '';
     const u = encodeURIComponent(profile.username);
-    const act = async (fn) => { try { await fn(); refresh(); } catch (e) { alert(e.message); } };
+    const act = async (fn) => { try { await fn(); refreshRequestBadge(); refresh(); } catch (e) { alert(e.message); } };
     const btn = (label, cls, handler) => {
       const b = el(`<button class="${cls} small">${esc(label)}</button>`);
       b.addEventListener('click', () => act(handler));
@@ -1121,11 +1039,11 @@
     `);
   }
 
-  // A compact friend-action control for use in lists (leaderboard/events/discuss).
+  // A compact friend-action control for use in lists (leaderboard/events/requests).
   // `fstate` is one of self|friends|incoming|outgoing|none. Returns null for self.
   function friendButtonEl(username, fstate, refresh) {
     const u = encodeURIComponent(username);
-    const act = async (fn) => { try { await fn(); refresh(); } catch (e) { alert(e.message); } };
+    const act = async (fn) => { try { await fn(); refreshRequestBadge(); refresh(); } catch (e) { alert(e.message); } };
     const btn = (label, cls, handler) => {
       const b = el(`<button class="${cls} small">${esc(label)}</button>`);
       b.addEventListener('click', (ev) => { ev.stopPropagation(); act(handler); });
@@ -1141,11 +1059,100 @@
   }
 
   function openExplore(view) {
+    if (view === 'requests') return renderRequests();
     if (view === 'quizzes') return renderQuizzes();
     if (view === 'polls') return renderPolls();
     if (view === 'blogs') return renderBlogs();
     if (view === 'leaderboard') return renderLeaderboard();
     if (view === 'events') return renderEvents();
+  }
+
+  /* ---------- Friend requests ---------- */
+  async function renderRequests() {
+    const main = openMainView();
+    main.appendChild(sectionShell('Friend Requests', 'People who want to connect with you. View their profile, then accept or decline.'));
+    const body = main.querySelector('#sectionBody');
+    let data;
+    try { data = await api.get('/api/social/friends'); }
+    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+
+    const incoming = data.incoming || [];
+    const outgoing = data.outgoing || [];
+    refreshRequestBadge();
+
+    body.innerHTML = '';
+
+    // ---- Incoming (received) ----
+    const inWrap = el(`<div class="card"><h3 class="card-title">📥 Received <span class="hint">(${incoming.length})</span></h3><div class="req-list" id="reqIn"></div></div>`);
+    const inBox = inWrap.querySelector('#reqIn');
+    if (!incoming.length) {
+      inBox.appendChild(el('<div class="hint">No pending friend requests right now.</div>'));
+    } else {
+      incoming.forEach((u) => {
+        const row = el(`
+          <div class="req-row">
+            <img class="avatar sm" src="${avatarUrl(u.avatar)}" />
+            <div class="req-id">
+              <div class="name">${esc(u.displayName || u.username)}</div>
+              <div class="handle">@${esc(u.username)}</div>
+            </div>
+            <div class="req-actions">
+              <button class="ghost small req-view">View profile</button>
+              <button class="primary small req-accept">Accept</button>
+              <button class="ghost small req-decline">Decline</button>
+            </div>
+          </div>
+        `);
+        const u2 = encodeURIComponent(u.username);
+        row.querySelector('.req-id').addEventListener('click', () => showProfile(u.username));
+        row.querySelector('.avatar').addEventListener('click', () => showProfile(u.username));
+        row.querySelector('.req-view').addEventListener('click', () => showProfile(u.username));
+        row.querySelector('.req-accept').addEventListener('click', async () => {
+          try { await api.post('/api/social/friend/' + u2 + '/accept'); renderRequests(); }
+          catch (e) { alert(e.message); }
+        });
+        row.querySelector('.req-decline').addEventListener('click', async () => {
+          try { await api.del('/api/social/friend/' + u2); renderRequests(); }
+          catch (e) { alert(e.message); }
+        });
+        inBox.appendChild(row);
+      });
+    }
+    body.appendChild(inWrap);
+
+    // ---- Outgoing (sent) ----
+    const outWrap = el(`<div class="card"><h3 class="card-title">📤 Sent <span class="hint">(${outgoing.length})</span></h3><div class="req-list" id="reqOut"></div></div>`);
+    const outBox = outWrap.querySelector('#reqOut');
+    if (!outgoing.length) {
+      outBox.appendChild(el('<div class="hint">You haven\'t sent any pending requests.</div>'));
+    } else {
+      outgoing.forEach((u) => {
+        const row = el(`
+          <div class="req-row">
+            <img class="avatar sm" src="${avatarUrl(u.avatar)}" />
+            <div class="req-id">
+              <div class="name">${esc(u.displayName || u.username)}</div>
+              <div class="handle">@${esc(u.username)}</div>
+            </div>
+            <div class="req-actions">
+              <button class="ghost small req-view">View profile</button>
+              <span class="pill">Pending…</span>
+              <button class="ghost small req-cancel">Cancel</button>
+            </div>
+          </div>
+        `);
+        const u2 = encodeURIComponent(u.username);
+        row.querySelector('.req-id').addEventListener('click', () => showProfile(u.username));
+        row.querySelector('.avatar').addEventListener('click', () => showProfile(u.username));
+        row.querySelector('.req-view').addEventListener('click', () => showProfile(u.username));
+        row.querySelector('.req-cancel').addEventListener('click', async () => {
+          try { await api.del('/api/social/friend/' + u2); renderRequests(); }
+          catch (e) { alert(e.message); }
+        });
+        outBox.appendChild(row);
+      });
+    }
+    body.appendChild(outWrap);
   }
 
   /* ---------- Quizzes ---------- */
@@ -1370,7 +1377,7 @@
   /* ---------- Recent Events ---------- */
   async function renderEvents() {
     const main = openMainView();
-    main.appendChild(sectionShell('Recent Events', 'New friendships, chats, discussions, quizzes and announcements.'));
+    main.appendChild(sectionShell('Recent Events', 'New friendships, chats, quizzes and announcements.'));
     const body = main.querySelector('#sectionBody');
     let events;
     try { events = (await api.get('/api/events')).events; }

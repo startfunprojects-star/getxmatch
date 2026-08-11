@@ -40,12 +40,11 @@ self-host on a single VPS: no external database or storage service required.
   ratings, friends and quiz activity. Users can send a **friend request** to
   anyone directly from the leaderboard.
 - **Recent Events** — a unified activity feed aggregating new friendships,
-  recent chats, profile discussions and quiz attempts, plus **admin-curated
-  announcements**. Friend requests can be sent inline from the feed.
-- **Profile discussions** — any visitor can open a **discussion** about a
-  profile they're viewing. The profile owner sees every discussion on their
-  profile, can **like/dislike** them, and can **delete** any of them at any
-  time (authors can delete their own too). Discussions surface on Recent Events.
+  recent chats and quiz attempts, plus **admin-curated announcements**. Friend
+  requests can be sent inline from the feed.
+- **Friend requests inbox** — a **Requests** view shows how many friend
+  requests you've received and from whom, lets you open each requester's
+  profile, and accept or decline. A live badge in the sidebar shows the count.
 - **Admin content management** — a tabbed `/admin` dashboard manages Users,
   Quizzes, Polls, Blogs and Recent Events, and shows a read-only Leaderboard.
 
@@ -68,7 +67,7 @@ src/
   upload.js            multer image uploads (profile/gallery only)
   socket.js            live chat + ephemeral file relay
   routes/              auth, profile, users, social, admin, content,
-                       leaderboard, events, discuss REST endpoints
+                       leaderboard, events REST endpoints
 public/                static SPA (HTML/CSS/JS)
 deploy/                systemd unit + nginx example
 data/                  SQLite DB   (gitignored, created at runtime)

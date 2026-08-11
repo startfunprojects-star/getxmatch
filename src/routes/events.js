@@ -4,7 +4,6 @@
 // real activity across the app plus admin-curated announcements:
 //   • user relationships   (new accepted friendships)
 //   • recent chats          (conversations that recently happened)
-//   • discussions           (discussions opened on profiles)
 //   • quiz attempts         (quizzes users attempted)
 //   • admin events          (curated announcements)
 // Each activity row carries the viewer's friendship state with the actor so the
@@ -84,27 +83,7 @@ router.get('/', requireAuth, (req, res) => {
     });
   });
 
-  // 3) Discussions opened on profiles.
-  db.prepare(
-    `SELECT id, subject_id, author_id, title, created_at
-     FROM discussions ORDER BY created_at DESC LIMIT ?`
-  ).all(PER_SOURCE).forEach((d) => {
-    const a = userMini(d.author_id, me);
-    const s = userMini(d.subject_id, me);
-    if (!a || !s) return;
-    events.push({
-      id: 'disc-' + d.id,
-      type: 'discussion',
-      at: d.created_at,
-      icon: '🗣️',
-      actor: a,
-      target: s,
-      refId: d.id,
-      text: `${a.displayName} started a discussion on ${s.displayName}'s profile${d.title ? `: “${d.title}”` : ''}`,
-    });
-  });
-
-  // 4) Quiz attempts.
+  // 3) Quiz attempts.
   db.prepare(
     `SELECT qa.id, qa.user_id, qa.score, qa.total, qa.created_at, q.title
      FROM quiz_attempts qa JOIN quizzes q ON q.id = qa.quiz_id
@@ -123,7 +102,7 @@ router.get('/', requireAuth, (req, res) => {
     });
   });
 
-  // 5) Admin-curated announcements.
+  // 4) Admin-curated announcements.
   db.prepare('SELECT id, title, body, created_at FROM admin_events ORDER BY created_at DESC LIMIT ?')
     .all(PER_SOURCE)
     .forEach((e) => {

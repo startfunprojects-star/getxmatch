@@ -392,23 +392,22 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .feed-time { margin-top: 3px; }
 .feed-action { flex: none; }
 
-/* ---------- Discussions (profile) ---------- */
-.discuss-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
-.discussions { display: flex; flex-direction: column; gap: 14px; }
-.discussion { background: var(--bg-3); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
-.disc-head { display: flex; align-items: center; gap: 10px; }
-.disc-who { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
-.disc-author { cursor: pointer; }
-.disc-author:hover { color: var(--accent); }
-.disc-head-actions { margin-left: auto; }
-.disc-title { font-weight: 700; margin: 8px 0 2px; }
-.disc-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; margin-top: 6px; }
-.disc-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.react-btn { background: var(--bg-2); border: 1px solid var(--border); padding: 4px 10px; font-size: 13px; border-radius: 999px; }
-.react-btn.on.like { background: rgba(46,204,113,.18); border-color: var(--ok); }
-.react-btn.on.dislike { background: rgba(255,92,92,.18); border-color: var(--danger); }
-.disc-action { margin-left: auto; }
 .friend-pill { background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; color: var(--ok); font-weight: 600; }
+
+/* ---------- Friend requests ---------- */
+.req-badge {
+  display: inline-grid; place-items: center; min-width: 18px; height: 18px;
+  padding: 0 5px; margin-left: 4px; border-radius: 999px;
+  background: var(--accent); color: #fff; font-size: 11px; font-weight: 700;
+}
+.req-list { display: flex; flex-direction: column; gap: 8px; }
+.req-row { display: flex; align-items: center; gap: 12px; padding: 10px 8px; border-radius: 12px; }
+.req-row:hover { background: var(--bg-3); }
+.req-id { min-width: 0; flex: 1; cursor: pointer; }
+.req-id .name { font-weight: 700; }
+.req-id .handle { color: var(--muted); font-size: 13px; }
+.req-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.req-actions .pill { background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
 
 /* ---------- Admin: content management ---------- */
 .admin-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
