@@ -383,12 +383,12 @@
       <div class="shell" id="shell">
         <aside class="sidebar">
           <div class="topbar">
-            <div class="me">
+            <div class="me" id="myProfile" title="View my profile & gallery" style="cursor:pointer">
               <img class="avatar sm" id="myAvatar" src="${avatarUrl(null)}" />
               <span class="me-name">@${esc(state.me.username)}</span>
             </div>
             <div>
-              <button class="ghost small" id="editProfileBtn" title="Edit profile">Profile</button>
+              <button class="ghost small" id="myProfileBtn" title="My profile & gallery">Profile</button>
               <button class="ghost small" id="logoutBtn" title="Log out">Exit</button>
             </div>
           </div>
@@ -422,7 +422,9 @@
       if (state.socket) state.socket.disconnect();
       renderAuth();
     });
-    shell.querySelector('#editProfileBtn').addEventListener('click', () => renderProfileEditor(false));
+    const openMine = () => showProfile(state.me.username);
+    shell.querySelector('#myProfileBtn').addEventListener('click', openMine);
+    shell.querySelector('#myProfile').addEventListener('click', openMine);
 
     shell.querySelectorAll('.nav button').forEach((b) => {
       b.addEventListener('click', () => {
