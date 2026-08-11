@@ -16,9 +16,12 @@
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[c]));
   }
-  async function req(method, url, body) {
+  async function req(method, url, body, isForm) {
     const opts = { method, headers: {}, credentials: 'same-origin' };
-    if (body != null) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+    if (body != null) {
+      if (isForm) { opts.body = body; }
+      else { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+    }
     const res = await fetch(url, opts);
     let data = null;
     try { data = await res.json(); } catch (_e) {}
@@ -28,7 +31,10 @@
   const api = {
     get: (u) => req('GET', u),
     post: (u, b) => req('POST', u, b),
+    put: (u, b) => req('PUT', u, b),
     del: (u) => req('DELETE', u),
+    postForm: (u, fd) => req('POST', u, fd, true),
+    putForm: (u, fd) => req('PUT', u, fd, true),
   };
   function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
   function fmtDate(ms) {
@@ -146,61 +152,96 @@
     });
   }
 
-  /* ---- dashboard ---- */
+  /* ---- dashboard (tabbed) ---- */
+  const TABS = [
+    ['users', 'Users'],
+    ['quizzes', 'Quizzes'],
+    ['polls', 'Polls'],
+    ['blogs', 'Blogs'],
+    ['events', 'Recent Events'],
+    ['leaderboard', 'Leaderboard'],
+  ];
+
   async function renderDashboard() {
+    stopPolling();
     root.innerHTML = '';
     const wrap = el(`
       <div class="admin-wrap">
         <div class="admin-top">
-          <h1>Users <span class="count" id="userCount"></span></h1>
+          <h1 class="brand">get<span class="x">x</span>match <span style="font-size:14px;color:var(--muted)">admin</span></h1>
           <div class="admin-actions">
-            <button class="ghost small" id="refresh">Refresh</button>
             <button class="ghost small" id="logout">Log out</button>
           </div>
         </div>
-
-        <div class="admin-card">
-          <h2>Create user (no email)</h2>
-          <form id="createForm" class="form-grid">
-            <div><label>Username</label><input name="username" placeholder="3-20 letters/numbers/_" required /></div>
-            <div><label>Display name (optional)</label><input name="displayName" placeholder="Shown to others" /></div>
-            <div><label>Password</label><input name="password" type="password" placeholder="At least 8 characters" required /></div>
-            <div><button class="primary" type="submit">Create user</button></div>
-          </form>
-          <div class="msg" id="createMsg"></div>
+        <div class="admin-tabs" id="adminTabs">
+          ${TABS.map(([id, label], i) => `<button data-tab="${id}"${i === 0 ? ' class="active"' : ''}>${esc(label)}</button>`).join('')}
         </div>
-
-        <div class="admin-card">
-          <div class="table-scroll">
-            <table class="users">
-              <thead>
-                <tr><th>Status</th><th>User</th><th>Email</th><th>Profile</th><th>Joined</th><th></th></tr>
-              </thead>
-              <tbody id="userRows"><tr><td colspan="6" class="count">Loading…</td></tr></tbody>
-            </table>
-          </div>
-        </div>
+        <div id="tabContent"></div>
       </div>
     `);
     root.appendChild(wrap);
 
     wrap.querySelector('#logout').addEventListener('click', async () => {
+      stopPolling();
       await api.post('/api/admin/logout', {});
       renderLogin(true);
     });
-    wrap.querySelector('#refresh').addEventListener('click', loadUsers);
 
-    const createForm = wrap.querySelector('#createForm');
-    const createMsg = wrap.querySelector('#createMsg');
+    wrap.querySelectorAll('#adminTabs button').forEach((b) => {
+      b.addEventListener('click', () => {
+        wrap.querySelectorAll('#adminTabs button').forEach((x) => x.classList.toggle('active', x === b));
+        selectTab(b.dataset.tab);
+      });
+    });
+
+    selectTab('users');
+  }
+
+  function selectTab(tab) {
+    stopPolling();
+    if (tab === 'users') return renderUsersTab();
+    if (tab === 'quizzes') return renderQuizzesTab();
+    if (tab === 'polls') return renderPollsTab();
+    if (tab === 'blogs') return renderBlogsTab();
+    if (tab === 'events') return renderEventsTab();
+    if (tab === 'leaderboard') return renderLeaderboardTab();
+  }
+
+  function tabHost() { return document.getElementById('tabContent'); }
+
+  /* ---- Users tab ---- */
+  async function renderUsersTab() {
+    const host = tabHost();
+    host.innerHTML = `
+      <div class="admin-card">
+        <h2>Create user (no email)</h2>
+        <form id="createForm" class="form-grid">
+          <div><label>Username</label><input name="username" placeholder="3-20 letters/numbers/_" required /></div>
+          <div><label>Display name (optional)</label><input name="displayName" placeholder="Shown to others" /></div>
+          <div><label>Password</label><input name="password" type="password" placeholder="At least 8 characters" required /></div>
+          <div><button class="primary" type="submit">Create user</button></div>
+        </form>
+        <div class="msg" id="createMsg"></div>
+      </div>
+      <div class="admin-card">
+        <h2>Users <span class="count" id="userCount"></span></h2>
+        <div class="table-scroll">
+          <table class="users">
+            <thead><tr><th>Status</th><th>User</th><th>Email</th><th>Profile</th><th>Joined</th><th></th></tr></thead>
+            <tbody id="userRows"><tr><td colspan="6" class="count">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    `;
+    const createForm = host.querySelector('#createForm');
+    const createMsg = host.querySelector('#createMsg');
     createForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       createMsg.className = 'msg';
       const fd = new FormData(createForm);
       try {
         await api.post('/api/admin/users', {
-          username: fd.get('username'),
-          displayName: fd.get('displayName'),
-          password: fd.get('password'),
+          username: fd.get('username'), displayName: fd.get('displayName'), password: fd.get('password'),
         });
         createMsg.textContent = `User "${fd.get('username')}" created.`;
         createMsg.className = 'msg ok';
@@ -210,8 +251,6 @@
     });
 
     await loadUsers();
-    stopPolling();
-    // Live-ish green dots: refresh the list periodically.
     pollTimer = setInterval(loadUsers, 5000);
   }
 
@@ -230,10 +269,7 @@
     const countEl = document.getElementById('userCount');
     if (countEl) countEl.textContent = `· ${users.length} total, ${online} online`;
 
-    if (!users.length) {
-      rowsEl.innerHTML = `<tr><td colspan="6" class="count">No users yet.</td></tr>`;
-      return;
-    }
+    if (!users.length) { rowsEl.innerHTML = `<tr><td colspan="6" class="count">No users yet.</td></tr>`; return; }
     rowsEl.innerHTML = '';
     users.forEach((u) => {
       const tr = el(`
@@ -252,6 +288,380 @@
         catch (err) { alert(err.message); }
       });
       rowsEl.appendChild(tr);
+    });
+  }
+
+  /* ==================================================================
+     Quizzes tab
+  ================================================================== */
+  async function renderQuizzesTab() {
+    const host = tabHost();
+    host.innerHTML = '<div class="admin-card" id="quizEditor"></div><div class="admin-card"><h2>Existing quizzes</h2><div id="quizList" class="count">Loading…</div></div>';
+    renderQuizEditor(null);
+    await loadQuizList();
+  }
+
+  function optionRowHtml(qIdx, value, checked) {
+    return `
+      <div class="qb-option-row">
+        <input type="radio" name="correct-${qIdx}"${checked ? ' checked' : ''} title="Mark as correct answer" />
+        <input type="text" class="qb-opt" value="${esc(value || '')}" placeholder="Option text" />
+        <button type="button" class="danger small qb-rm-opt">✕</button>
+      </div>`;
+  }
+
+  function questionBlock(qIdx, q) {
+    q = q || { prompt: '', options: ['', ''], answer: 0 };
+    const block = el(`
+      <div class="qb-question" data-q="${qIdx}">
+        <label>Question ${qIdx + 1}</label>
+        <input type="text" class="qb-prompt" value="${esc(q.prompt)}" placeholder="Question prompt" />
+        <div class="qb-options"></div>
+        <div class="admin-item-actions">
+          <button type="button" class="ghost small qb-add-opt">+ Add option</button>
+          <button type="button" class="danger small qb-rm-q">Remove question</button>
+        </div>
+      </div>
+    `);
+    const optsBox = block.querySelector('.qb-options');
+    (q.options.length ? q.options : ['', '']).forEach((opt, oi) => {
+      optsBox.appendChild(el(optionRowHtml(qIdx, opt, oi === q.answer)));
+    });
+    optsBox.querySelectorAll('.qb-rm-opt').forEach((b) => b.addEventListener('click', (e) => {
+      if (optsBox.children.length <= 2) return alert('At least two options are required.');
+      e.target.closest('.qb-option-row').remove();
+    }));
+    block.querySelector('.qb-add-opt').addEventListener('click', () => {
+      const row = el(optionRowHtml(qIdx, '', false));
+      row.querySelector('.qb-rm-opt').addEventListener('click', () => {
+        if (optsBox.children.length <= 2) return alert('At least two options are required.');
+        row.remove();
+      });
+      optsBox.appendChild(row);
+    });
+    block.querySelector('.qb-rm-q').addEventListener('click', () => block.remove());
+    return block;
+  }
+
+  function renderQuizEditor(quiz) {
+    const host = document.getElementById('quizEditor');
+    host.innerHTML = `
+      <h2>${quiz ? 'Edit quiz' : 'Create quiz'}</h2>
+      <label>Title</label><input id="quizTitle" value="${esc(quiz ? quiz.title : '')}" />
+      <label>Description</label><input id="quizDesc" value="${esc(quiz ? quiz.description : '')}" />
+      <label>Questions</label>
+      <div id="quizQuestions"></div>
+      <div class="admin-item-actions">
+        <button type="button" class="ghost small" id="addQuestion">+ Add question</button>
+        <button type="button" class="primary" id="saveQuiz">${quiz ? 'Save changes' : 'Create quiz'}</button>
+        ${quiz ? '<button type="button" class="ghost" id="cancelEdit">Cancel</button>' : ''}
+      </div>
+      <div class="msg" id="quizMsg"></div>
+    `;
+    const qBox = host.querySelector('#quizQuestions');
+    const questions = quiz && quiz.questions && quiz.questions.length ? quiz.questions : [null];
+    questions.forEach((q, i) => qBox.appendChild(questionBlock(i, q)));
+
+    host.querySelector('#addQuestion').addEventListener('click', () => {
+      qBox.appendChild(questionBlock(qBox.children.length, null));
+    });
+    if (host.querySelector('#cancelEdit')) host.querySelector('#cancelEdit').addEventListener('click', () => renderQuizEditor(null));
+
+    host.querySelector('#saveQuiz').addEventListener('click', async () => {
+      const msg = host.querySelector('#quizMsg');
+      msg.className = 'msg';
+      const title = host.querySelector('#quizTitle').value.trim();
+      const description = host.querySelector('#quizDesc').value.trim();
+      const questionsOut = [];
+      qBox.querySelectorAll('.qb-question').forEach((block) => {
+        const prompt = block.querySelector('.qb-prompt').value.trim();
+        const options = Array.from(block.querySelectorAll('.qb-opt')).map((i) => i.value.trim()).filter(Boolean);
+        const radios = Array.from(block.querySelectorAll('input[type=radio]'));
+        const answer = radios.findIndex((r) => r.checked);
+        questionsOut.push({ prompt, options, answer: answer < 0 ? 0 : answer });
+      });
+      try {
+        const payload = { title, description, questions: questionsOut };
+        if (quiz) await api.put('/api/admin/quizzes/' + quiz.id, payload);
+        else await api.post('/api/admin/quizzes', payload);
+        msg.className = 'msg ok'; msg.textContent = 'Saved.';
+        renderQuizEditor(null);
+        loadQuizList();
+      } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
+    });
+  }
+
+  async function loadQuizList() {
+    const box = document.getElementById('quizList');
+    if (!box) return;
+    let quizzes;
+    try { quizzes = (await api.get('/api/admin/quizzes')).quizzes; }
+    catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
+    if (!quizzes.length) { box.innerHTML = '<div class="count">No quizzes yet.</div>'; return; }
+    box.innerHTML = '';
+    quizzes.forEach((q) => {
+      const item = el(`
+        <div class="admin-item">
+          <h3>${esc(q.title)}</h3>
+          <div class="count">${q.questions.length} questions · ${q.attempts} attempts</div>
+          <div class="admin-item-actions">
+            <button class="ghost small" data-edit>Edit</button>
+            <button class="danger small" data-del>Delete</button>
+          </div>
+        </div>
+      `);
+      item.querySelector('[data-edit]').addEventListener('click', () => { renderQuizEditor(q); window.scrollTo(0, 0); });
+      item.querySelector('[data-del]').addEventListener('click', async () => {
+        if (!confirm('Delete this quiz and all its attempts?')) return;
+        try { await api.del('/api/admin/quizzes/' + q.id); loadQuizList(); } catch (e) { alert(e.message); }
+      });
+      box.appendChild(item);
+    });
+  }
+
+  /* ==================================================================
+     Polls tab
+  ================================================================== */
+  async function renderPollsTab() {
+    const host = tabHost();
+    host.innerHTML = '<div class="admin-card" id="pollEditor"></div><div class="admin-card"><h2>Existing polls</h2><div id="pollList" class="count">Loading…</div></div>';
+    renderPollEditor(null);
+    await loadPollList();
+  }
+
+  function renderPollEditor(poll) {
+    const host = document.getElementById('pollEditor');
+    const opts = poll && poll.options.length ? poll.options : ['', ''];
+    host.innerHTML = `
+      <h2>${poll ? 'Edit poll' : 'Create poll'}</h2>
+      <label>Question</label><input id="pollQ" value="${esc(poll ? poll.question : '')}" />
+      <label>Options</label>
+      <div id="pollOpts"></div>
+      <div class="admin-item-actions">
+        <button type="button" class="ghost small" id="addOpt">+ Add option</button>
+        ${poll ? `<label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="pollClosed" style="width:auto"${poll.closed ? ' checked' : ''}/> Closed</label>` : ''}
+        <button type="button" class="primary" id="savePoll">${poll ? 'Save changes' : 'Create poll'}</button>
+        ${poll ? '<button type="button" class="ghost" id="cancelPoll">Cancel</button>' : ''}
+      </div>
+      <div class="msg" id="pollMsg"></div>
+    `;
+    const optsBox = host.querySelector('#pollOpts');
+    const addOptRow = (v) => {
+      const row = el(`<div class="qb-option-row"><input type="text" class="poll-opt-in" value="${esc(v || '')}" placeholder="Option text" /><button type="button" class="danger small">✕</button></div>`);
+      row.querySelector('button').addEventListener('click', () => { if (optsBox.children.length <= 2) return alert('At least two options are required.'); row.remove(); });
+      optsBox.appendChild(row);
+    };
+    opts.forEach(addOptRow);
+    host.querySelector('#addOpt').addEventListener('click', () => addOptRow(''));
+    if (host.querySelector('#cancelPoll')) host.querySelector('#cancelPoll').addEventListener('click', () => renderPollEditor(null));
+
+    host.querySelector('#savePoll').addEventListener('click', async () => {
+      const msg = host.querySelector('#pollMsg');
+      msg.className = 'msg';
+      const question = host.querySelector('#pollQ').value.trim();
+      const options = Array.from(host.querySelectorAll('.poll-opt-in')).map((i) => i.value.trim()).filter(Boolean);
+      const closedEl = host.querySelector('#pollClosed');
+      try {
+        const payload = { question, options };
+        if (poll) { payload.closed = !!(closedEl && closedEl.checked); await api.put('/api/admin/polls/' + poll.id, payload); }
+        else await api.post('/api/admin/polls', payload);
+        msg.className = 'msg ok'; msg.textContent = 'Saved.';
+        renderPollEditor(null);
+        loadPollList();
+      } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
+    });
+  }
+
+  async function loadPollList() {
+    const box = document.getElementById('pollList');
+    if (!box) return;
+    let polls;
+    try { polls = (await api.get('/api/admin/polls')).polls; }
+    catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
+    if (!polls.length) { box.innerHTML = '<div class="count">No polls yet.</div>'; return; }
+    box.innerHTML = '';
+    polls.forEach((p) => {
+      const item = el(`
+        <div class="admin-item">
+          <h3>${esc(p.question)}</h3>
+          <div class="count">${p.options.length} options · ${p.votes} votes${p.closed ? ' · CLOSED' : ''}</div>
+          <div class="admin-item-actions">
+            <button class="ghost small" data-edit>Edit</button>
+            <button class="danger small" data-del>Delete</button>
+          </div>
+        </div>
+      `);
+      item.querySelector('[data-edit]').addEventListener('click', () => { renderPollEditor(p); window.scrollTo(0, 0); });
+      item.querySelector('[data-del]').addEventListener('click', async () => {
+        if (!confirm('Delete this poll and all its votes?')) return;
+        try { await api.del('/api/admin/polls/' + p.id); loadPollList(); } catch (e) { alert(e.message); }
+      });
+      box.appendChild(item);
+    });
+  }
+
+  /* ==================================================================
+     Blogs tab
+  ================================================================== */
+  async function renderBlogsTab() {
+    const host = tabHost();
+    host.innerHTML = '<div class="admin-card" id="blogEditor"></div><div class="admin-card"><h2>Existing posts</h2><div id="blogList" class="count">Loading…</div></div>';
+    renderBlogEditor(null);
+    await loadBlogList();
+  }
+
+  function renderBlogEditor(blog) {
+    const host = document.getElementById('blogEditor');
+    host.innerHTML = `
+      <h2>${blog ? 'Edit blog post' : 'Create blog post'}</h2>
+      <label>Title</label><input id="blogTitle" value="${esc(blog ? blog.title : '')}" />
+      <label>Author</label><input id="blogAuthor" value="${esc(blog ? blog.author : 'getxmatch')}" />
+      <label>Excerpt (optional)</label><input id="blogExcerpt" value="${esc(blog ? blog.excerpt : '')}" />
+      <label>Body</label><textarea id="blogBody" style="min-height:160px">${esc(blog ? blog.body : '')}</textarea>
+      <label>Cover image (optional)</label><input type="file" id="blogCover" accept="image/*" />
+      <div class="admin-item-actions">
+        <button type="button" class="primary" id="saveBlog">${blog ? 'Save changes' : 'Publish'}</button>
+        ${blog ? '<button type="button" class="ghost" id="cancelBlog">Cancel</button>' : ''}
+      </div>
+      <div class="msg" id="blogMsg"></div>
+    `;
+    if (host.querySelector('#cancelBlog')) host.querySelector('#cancelBlog').addEventListener('click', () => renderBlogEditor(null));
+    host.querySelector('#saveBlog').addEventListener('click', async () => {
+      const msg = host.querySelector('#blogMsg');
+      msg.className = 'msg';
+      const fd = new FormData();
+      fd.append('title', host.querySelector('#blogTitle').value.trim());
+      fd.append('author', host.querySelector('#blogAuthor').value.trim());
+      fd.append('excerpt', host.querySelector('#blogExcerpt').value.trim());
+      fd.append('body', host.querySelector('#blogBody').value.trim());
+      const coverEl = host.querySelector('#blogCover');
+      if (coverEl.files[0]) fd.append('cover', coverEl.files[0]);
+      try {
+        if (blog) await api.putForm('/api/admin/blogs/' + blog.id, fd);
+        else await api.postForm('/api/admin/blogs', fd);
+        msg.className = 'msg ok'; msg.textContent = 'Saved.';
+        renderBlogEditor(null);
+        loadBlogList();
+      } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
+    });
+  }
+
+  async function loadBlogList() {
+    const box = document.getElementById('blogList');
+    if (!box) return;
+    let blogs;
+    try { blogs = (await api.get('/api/admin/blogs')).blogs; }
+    catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
+    if (!blogs.length) { box.innerHTML = '<div class="count">No blog posts yet.</div>'; return; }
+    box.innerHTML = '';
+    blogs.forEach((b) => {
+      const item = el(`
+        <div class="admin-item">
+          <h3>${esc(b.title)}</h3>
+          <div class="count">By ${esc(b.author)} · ${esc(fmtDate(b.createdAt))}</div>
+          <div class="admin-item-actions">
+            <button class="ghost small" data-edit>Edit</button>
+            <button class="danger small" data-del>Delete</button>
+          </div>
+        </div>
+      `);
+      item.querySelector('[data-edit]').addEventListener('click', () => { renderBlogEditor(b); window.scrollTo(0, 0); });
+      item.querySelector('[data-del]').addEventListener('click', async () => {
+        if (!confirm('Delete this blog post?')) return;
+        try { await api.del('/api/admin/blogs/' + b.id); loadBlogList(); } catch (e) { alert(e.message); }
+      });
+      box.appendChild(item);
+    });
+  }
+
+  /* ==================================================================
+     Recent Events tab (admin-curated announcements)
+  ================================================================== */
+  async function renderEventsTab() {
+    const host = tabHost();
+    host.innerHTML = '<div class="admin-card" id="eventEditor"></div><div class="admin-card"><h2>Curated events</h2><p class="count">These appear on the Recent Events feed alongside automatic activity (friendships, chats, discussions, quiz attempts).</p><div id="eventList" class="count">Loading…</div></div>';
+    renderEventEditor(null);
+    await loadEventList();
+  }
+
+  function renderEventEditor(ev) {
+    const host = document.getElementById('eventEditor');
+    host.innerHTML = `
+      <h2>${ev ? 'Edit event' : 'Create event / announcement'}</h2>
+      <label>Title</label><input id="evTitle" value="${esc(ev ? ev.title : '')}" />
+      <label>Body</label><textarea id="evBody">${esc(ev ? ev.body : '')}</textarea>
+      <div class="admin-item-actions">
+        <button type="button" class="primary" id="saveEvent">${ev ? 'Save changes' : 'Publish'}</button>
+        ${ev ? '<button type="button" class="ghost" id="cancelEvent">Cancel</button>' : ''}
+      </div>
+      <div class="msg" id="evMsg"></div>
+    `;
+    if (host.querySelector('#cancelEvent')) host.querySelector('#cancelEvent').addEventListener('click', () => renderEventEditor(null));
+    host.querySelector('#saveEvent').addEventListener('click', async () => {
+      const msg = host.querySelector('#evMsg');
+      msg.className = 'msg';
+      const payload = { title: host.querySelector('#evTitle').value.trim(), body: host.querySelector('#evBody').value.trim() };
+      try {
+        if (ev) await api.put('/api/admin/events/' + ev.id, payload);
+        else await api.post('/api/admin/events', payload);
+        msg.className = 'msg ok'; msg.textContent = 'Saved.';
+        renderEventEditor(null);
+        loadEventList();
+      } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
+    });
+  }
+
+  async function loadEventList() {
+    const box = document.getElementById('eventList');
+    if (!box) return;
+    let events;
+    try { events = (await api.get('/api/admin/events')).events; }
+    catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
+    if (!events.length) { box.innerHTML = '<div class="count">No curated events yet.</div>'; return; }
+    box.innerHTML = '';
+    events.forEach((ev) => {
+      const item = el(`
+        <div class="admin-item">
+          <h3>${esc(ev.title)}</h3>
+          <div class="count">${esc(fmtDate(ev.createdAt))}</div>
+          <div class="admin-item-actions">
+            <button class="ghost small" data-edit>Edit</button>
+            <button class="danger small" data-del>Delete</button>
+          </div>
+        </div>
+      `);
+      item.querySelector('[data-edit]').addEventListener('click', () => { renderEventEditor(ev); window.scrollTo(0, 0); });
+      item.querySelector('[data-del]').addEventListener('click', async () => {
+        if (!confirm('Delete this event?')) return;
+        try { await api.del('/api/admin/events/' + ev.id); loadEventList(); } catch (e) { alert(e.message); }
+      });
+      box.appendChild(item);
+    });
+  }
+
+  /* ==================================================================
+     Leaderboard tab (read-only oversight)
+  ================================================================== */
+  async function renderLeaderboardTab() {
+    const host = tabHost();
+    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Auto-ranked by ratings, friends and quiz activity.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Score</th></tr></thead><tbody id="lbRows"><tr><td colspan="6" class="count">Loading…</td></tr></tbody></table></div></div>';
+    const rowsEl = host.querySelector('#lbRows');
+    let rows;
+    try { rows = (await api.get('/api/admin/leaderboard')).leaderboard; }
+    catch (e) { if (e.status === 401) return renderLogin(true); rowsEl.innerHTML = `<tr><td colspan="6" class="count">${esc(e.message)}</td></tr>`; return; }
+    if (!rows.length) { rowsEl.innerHTML = '<tr><td colspan="6" class="count">No ranked users yet.</td></tr>'; return; }
+    rowsEl.innerHTML = '';
+    rows.forEach((r) => {
+      rowsEl.appendChild(el(`
+        <tr>
+          <td><strong>#${r.rank}</strong></td>
+          <td><strong>${esc(r.displayName)}</strong><div class="pill">@${esc(r.username)}</div></td>
+          <td>${r.ratingAvg || '—'} (${r.ratingCount})</td>
+          <td>${r.friends}</td>
+          <td>${r.quizzes}</td>
+          <td><strong>${r.score}</strong></td>
+        </tr>
+      `));
     });
   }
 

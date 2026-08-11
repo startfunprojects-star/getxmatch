@@ -388,6 +388,13 @@
             <button data-tab="people" class="active">People</button>
             <button data-tab="chats">Chats</button>
           </div>
+          <div class="explore-nav" id="exploreNav">
+            <button data-view="quizzes">🧠 Quizzes</button>
+            <button data-view="polls">📊 Polls</button>
+            <button data-view="blogs">📝 Blogs</button>
+            <button data-view="leaderboard">🏆 Leaderboard</button>
+            <button data-view="events">✨ Recent Events</button>
+          </div>
           <div class="search"><input id="searchInput" placeholder="Search people…" /></div>
           <div class="list" id="list"></div>
         </aside>
@@ -422,7 +429,17 @@
       b.addEventListener('click', () => {
         state.tab = b.dataset.tab;
         shell.querySelectorAll('.nav button').forEach((x) => x.classList.toggle('active', x === b));
+        shell.querySelectorAll('#exploreNav button').forEach((x) => x.classList.remove('active'));
+        document.getElementById('shell').classList.remove('viewing-main');
+        state.peer = null;
         renderList();
+      });
+    });
+
+    shell.querySelectorAll('#exploreNav button').forEach((b) => {
+      b.addEventListener('click', () => {
+        shell.querySelectorAll('#exploreNav button').forEach((x) => x.classList.toggle('active', x === b));
+        openExplore(b.dataset.view);
       });
     });
 
@@ -775,6 +792,11 @@
               <div id="pvCommentForm"></div>
               <div class="comments" id="pvComments"></div>
             </section>
+            <section class="card">
+              <h3 class="card-title">🗣️ Discussions ${isMe ? '<span class="hint">people discussing your profile</span>' : ''}</h3>
+              <div id="pvDiscussForm"></div>
+              <div class="discussions" id="pvDiscussions"><div class="hint">Loading…</div></div>
+            </section>
           </div>
           <div class="pro-col-side">
             ${detailsHtml ? `<section class="card"><h3 class="card-title">🧬 Details</h3><div class="detail-grid">${detailsHtml}</div></section>` : ''}
@@ -939,6 +961,97 @@
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
     }
 
+    /* ----- discussions ----- */
+    const discussBox = view.querySelector('#pvDiscussions');
+    const renderDiscussion = (d) => {
+      const item = el(`
+        <div class="discussion" data-id="${d.id}">
+          <div class="disc-head">
+            <img class="avatar sm" src="${avatarUrl(d.author.avatar)}" />
+            <div class="disc-who">
+              <b class="disc-author" data-u="${esc(d.author.username)}">${esc(d.author.displayName)}</b>
+              <span class="hint">${fmtDate(d.at)}</span>
+            </div>
+            <div class="disc-head-actions"></div>
+          </div>
+          ${d.title ? `<div class="disc-title"></div>` : ''}
+          <div class="disc-body"></div>
+          <div class="disc-foot">
+            <button class="react-btn like${d.myReaction === 1 ? ' on' : ''}" data-v="1">👍 <span class="rc">${d.likes}</span></button>
+            <button class="react-btn dislike${d.myReaction === -1 ? ' on' : ''}" data-v="-1">👎 <span class="rc">${d.dislikes}</span></button>
+            <span class="disc-action"></span>
+          </div>
+        </div>
+      `);
+      if (d.title) item.querySelector('.disc-title').textContent = d.title;
+      item.querySelector('.disc-body').textContent = d.body;
+      item.querySelector('.disc-author').addEventListener('click', () => showProfile(d.author.username));
+
+      // React (like/dislike).
+      item.querySelectorAll('.react-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          try {
+            const out = await api.post('/api/discuss/' + d.id + '/react', { value: Number(btn.dataset.v) });
+            const fresh = renderDiscussion(out.discussion);
+            item.replaceWith(fresh);
+          } catch (e) { alert(e.message); }
+        });
+      });
+
+      // Delete (profile owner any time, or the author).
+      if (d.canDelete) {
+        const del = el(`<button class="ghost small">${d.isOwner && d.author.id !== state.me.id ? 'Delete' : 'Delete'}</button>`);
+        del.addEventListener('click', async () => {
+          if (!confirm('Delete this discussion?')) return;
+          try { await api.del('/api/discuss/' + d.id); item.remove(); if (!discussBox.children.length) discussBox.appendChild(el('<div class="hint">No discussions yet.</div>')); }
+          catch (e) { alert(e.message); }
+        });
+        item.querySelector('.disc-head-actions').appendChild(del);
+      }
+      // Friend action on the author (not for yourself / the profile owner viewing).
+      if (!d.author.isMe && d.friendState) {
+        const fb = friendButtonEl(d.author.username, d.friendState, () => loadDiscussions());
+        if (fb) item.querySelector('.disc-action').appendChild(fb);
+      }
+      return item;
+    };
+
+    async function loadDiscussions() {
+      try {
+        const { discussions } = await api.get('/api/discuss/' + encodeURIComponent(profile.username));
+        discussBox.innerHTML = '';
+        if (!discussions.length) { discussBox.appendChild(el('<div class="hint">No discussions yet.</div>')); return; }
+        discussions.forEach((d) => discussBox.appendChild(renderDiscussion(d)));
+      } catch (e) {
+        discussBox.innerHTML = `<div class="hint">${esc(e.message)}</div>`;
+      }
+    }
+
+    if (!isMe) {
+      const dform = el(`
+        <div class="discuss-form">
+          <input id="dTitle" maxlength="120" placeholder="Discussion title (optional)" />
+          <textarea id="dBody" maxlength="2000" placeholder="Start a discussion about this profile…"></textarea>
+          <div class="row-actions"><button class="primary small" id="dSend">Start discussion</button></div>
+        </div>
+      `);
+      view.querySelector('#pvDiscussForm').appendChild(dform);
+      dform.querySelector('#dSend').addEventListener('click', async () => {
+        const title = dform.querySelector('#dTitle').value.trim();
+        const body = dform.querySelector('#dBody').value.trim();
+        if (!body) return;
+        try {
+          const { discussion } = await api.post('/api/discuss/' + encodeURIComponent(profile.username), { title, body });
+          dform.querySelector('#dTitle').value = '';
+          dform.querySelector('#dBody').value = '';
+          const hint = discussBox.querySelector('.hint');
+          if (hint) hint.remove();
+          discussBox.prepend(renderDiscussion(discussion));
+        } catch (e) { alert(e.message); }
+      });
+    }
+    loadDiscussions();
+
     /* ----- misc wiring ----- */
     view.querySelectorAll('.partner-link').forEach((a) =>
       a.addEventListener('click', (ev) => { ev.preventDefault(); showProfile(a.dataset.u); }));
@@ -981,6 +1094,313 @@
       default:
         slot.appendChild(btn('Add friend', 'ghost', () => api.post('/api/social/friend/' + u)));
     }
+  }
+
+  /* ======================================================================
+     EXPLORE SECTIONS (Quizzes / Polls / Blogs / Leaderboard / Events)
+  ====================================================================== */
+
+  // Prepare the main pane for a full-width section and return its element.
+  function openMainView() {
+    document.getElementById('shell').classList.add('viewing-main');
+    state.peer = null;
+    const main = document.getElementById('main');
+    main.innerHTML = '';
+    return main;
+  }
+
+  function sectionShell(title, subtitle) {
+    return el(`
+      <div class="section-view">
+        <div class="section-head">
+          <h1 class="section-h1">${esc(title)}</h1>
+          ${subtitle ? `<p class="hint">${esc(subtitle)}</p>` : ''}
+        </div>
+        <div class="section-body" id="sectionBody"><div class="empty-main">Loading…</div></div>
+      </div>
+    `);
+  }
+
+  // A compact friend-action control for use in lists (leaderboard/events/discuss).
+  // `fstate` is one of self|friends|incoming|outgoing|none. Returns null for self.
+  function friendButtonEl(username, fstate, refresh) {
+    const u = encodeURIComponent(username);
+    const act = async (fn) => { try { await fn(); refresh(); } catch (e) { alert(e.message); } };
+    const btn = (label, cls, handler) => {
+      const b = el(`<button class="${cls} small">${esc(label)}</button>`);
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); act(handler); });
+      return b;
+    };
+    switch (fstate) {
+      case 'self': return null;
+      case 'friends': return el('<span class="pill friend-pill">✓ Friends</span>');
+      case 'outgoing': return btn('Cancel request', 'ghost', () => api.del('/api/social/friend/' + u));
+      case 'incoming': return btn('Accept request', 'primary', () => api.post('/api/social/friend/' + u + '/accept'));
+      default: return btn('＋ Add friend', 'primary', () => api.post('/api/social/friend/' + u));
+    }
+  }
+
+  function openExplore(view) {
+    if (view === 'quizzes') return renderQuizzes();
+    if (view === 'polls') return renderPolls();
+    if (view === 'blogs') return renderBlogs();
+    if (view === 'leaderboard') return renderLeaderboard();
+    if (view === 'events') return renderEvents();
+  }
+
+  /* ---------- Quizzes ---------- */
+  async function renderQuizzes() {
+    const main = openMainView();
+    main.appendChild(sectionShell('Quizzes', 'Test yourself and climb the leaderboard.'));
+    const body = main.querySelector('#sectionBody');
+    let quizzes;
+    try { quizzes = (await api.get('/api/content/quizzes')).quizzes; }
+    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+    if (!quizzes.length) { body.innerHTML = '<div class="empty-main">No quizzes yet. Check back soon!</div>'; return; }
+    body.innerHTML = '';
+    const grid = el('<div class="card-grid"></div>');
+    quizzes.forEach((q) => {
+      const best = q.myBest ? `Your best: ${q.myBest.score}/${q.myBest.total}` : 'Not attempted yet';
+      const card = el(`
+        <div class="tile">
+          <h3>${esc(q.title)}</h3>
+          <p class="rich">${esc(q.description || '')}</p>
+          <div class="tile-meta">
+            <span class="pill">${q.questionCount} question${q.questionCount === 1 ? '' : 's'}</span>
+            <span class="pill">${q.attempts} attempt${q.attempts === 1 ? '' : 's'}</span>
+          </div>
+          <div class="hint" style="margin:8px 0">${esc(best)}</div>
+          <button class="primary small" data-take="${q.id}">Take quiz →</button>
+        </div>
+      `);
+      card.querySelector('[data-take]').addEventListener('click', () => openQuiz(q.id));
+      grid.appendChild(card);
+    });
+    body.appendChild(grid);
+  }
+
+  async function openQuiz(id) {
+    const main = openMainView();
+    main.appendChild(sectionShell('Quiz', ''));
+    const body = main.querySelector('#sectionBody');
+    let quiz;
+    try { quiz = (await api.get('/api/content/quizzes/' + id)).quiz; }
+    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+    main.querySelector('.section-h1').textContent = quiz.title;
+    const sub = main.querySelector('.section-head');
+    if (quiz.description) sub.appendChild(el(`<p class="hint">${esc(quiz.description)}</p>`));
+
+    body.innerHTML = '';
+    const form = el('<div class="quiz-form card"></div>');
+    quiz.questions.forEach((qq, qi) => {
+      const block = el(`<div class="quiz-q"><div class="quiz-prompt">${qi + 1}. ${esc(qq.prompt)}</div></div>`);
+      qq.options.forEach((opt, oi) => {
+        const optEl = el(`<label class="quiz-opt"><input type="radio" name="q${qi}" value="${oi}" /> <span>${esc(opt)}</span></label>`);
+        block.appendChild(optEl);
+      });
+      form.appendChild(block);
+    });
+    const actions = el('<div class="row-actions"></div>');
+    const submit = el('<button class="primary">Submit answers</button>');
+    const back = el('<button class="ghost">Back to quizzes</button>');
+    back.addEventListener('click', renderQuizzes);
+    actions.appendChild(submit); actions.appendChild(back);
+    form.appendChild(actions);
+    const result = el('<div class="msg" id="quizResult"></div>');
+    form.appendChild(result);
+    body.appendChild(form);
+
+    submit.addEventListener('click', async () => {
+      const answers = quiz.questions.map((_q, qi) => {
+        const sel = form.querySelector(`input[name="q${qi}"]:checked`);
+        return sel ? Number(sel.value) : -1;
+      });
+      try {
+        const out = await api.post('/api/content/quizzes/' + id + '/attempt', { answers });
+        result.className = 'msg ok';
+        result.textContent = `You scored ${out.score} / ${out.total}!`;
+        // Mark each option correct/incorrect.
+        out.review.forEach((r, qi) => {
+          const block = form.querySelectorAll('.quiz-q')[qi];
+          if (!block) return;
+          const opts = block.querySelectorAll('.quiz-opt');
+          opts.forEach((o, oi) => {
+            o.classList.remove('correct', 'wrong');
+            if (oi === r.correct) o.classList.add('correct');
+            else if (oi === r.picked && !r.right) o.classList.add('wrong');
+          });
+        });
+        submit.disabled = true;
+      } catch (e) { result.className = 'msg error'; result.textContent = e.message; }
+    });
+  }
+
+  /* ---------- Polls ---------- */
+  async function renderPolls() {
+    const main = openMainView();
+    main.appendChild(sectionShell('Polls', 'Cast your vote and see what the community thinks.'));
+    const body = main.querySelector('#sectionBody');
+    let polls;
+    try { polls = (await api.get('/api/content/polls')).polls; }
+    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+    if (!polls.length) { body.innerHTML = '<div class="empty-main">No polls yet.</div>'; return; }
+    body.innerHTML = '';
+    polls.forEach((p) => body.appendChild(pollCard(p)));
+  }
+
+  function pollCard(p) {
+    const card = el(`<div class="tile poll-card"><h3>${esc(p.question)}</h3>${p.closed ? '<span class="pill">Closed</span>' : ''}<div class="poll-opts"></div></div>`);
+    const optsBox = card.querySelector('.poll-opts');
+    const render = (poll) => {
+      optsBox.innerHTML = '';
+      poll.options.forEach((opt, oi) => {
+        const count = poll.counts[oi] || 0;
+        const pct = poll.total ? Math.round((count / poll.total) * 100) : 0;
+        const mine = poll.myVote === oi;
+        const row = el(`
+          <div class="poll-opt${mine ? ' mine' : ''}" data-i="${oi}">
+            <div class="poll-bar" style="width:${pct}%"></div>
+            <span class="poll-label">${esc(opt)}${mine ? ' ✓' : ''}</span>
+            <span class="poll-pct">${pct}% · ${count}</span>
+          </div>
+        `);
+        if (!poll.closed) {
+          row.style.cursor = 'pointer';
+          row.addEventListener('click', async () => {
+            try { const out = await api.post('/api/content/polls/' + poll.id + '/vote', { option: oi }); render(out.poll); }
+            catch (e) { alert(e.message); }
+          });
+        }
+        optsBox.appendChild(row);
+      });
+      optsBox.appendChild(el(`<div class="hint" style="margin-top:8px">${poll.total} vote${poll.total === 1 ? '' : 's'}</div>`));
+    };
+    render(p);
+    return card;
+  }
+
+  /* ---------- Blogs ---------- */
+  async function renderBlogs() {
+    const main = openMainView();
+    main.appendChild(sectionShell('Blogs', 'Stories, tips and news from getxmatch.'));
+    const body = main.querySelector('#sectionBody');
+    let blogs;
+    try { blogs = (await api.get('/api/content/blogs')).blogs; }
+    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+    if (!blogs.length) { body.innerHTML = '<div class="empty-main">No blog posts yet.</div>'; return; }
+    body.innerHTML = '';
+    const grid = el('<div class="card-grid"></div>');
+    blogs.forEach((b) => {
+      const card = el(`
+        <div class="tile blog-card">
+          ${b.cover ? `<img class="blog-cover" src="${esc(b.cover)}" loading="lazy" />` : ''}
+          <h3>${esc(b.title)}</h3>
+          <div class="hint">By ${esc(b.author)} · ${fmtDate(b.createdAt)}</div>
+          <p class="rich">${esc(b.excerpt || '')}</p>
+          <button class="ghost small" data-read="${b.id}">Read more →</button>
+        </div>
+      `);
+      card.querySelector('[data-read]').addEventListener('click', () => openBlog(b.id));
+      grid.appendChild(card);
+    });
+    body.appendChild(grid);
+  }
+
+  async function openBlog(id) {
+    const main = openMainView();
+    main.appendChild(sectionShell('Blog', ''));
+    const body = main.querySelector('#sectionBody');
+    let blog;
+    try { blog = (await api.get('/api/content/blogs/' + id)).blog; }
+    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+    main.querySelector('.section-h1').textContent = blog.title;
+    body.innerHTML = '';
+    const article = el(`
+      <article class="card blog-full">
+        ${blog.cover ? `<img class="blog-cover-full" src="${esc(blog.cover)}" />` : ''}
+        <div class="hint">By ${esc(blog.author)} · ${fmtDate(blog.createdAt)}</div>
+        <div class="blog-body rich"></div>
+        <div class="row-actions"><button class="ghost" id="blogBack">← Back to blogs</button></div>
+      </article>
+    `);
+    article.querySelector('.blog-body').textContent = blog.body;
+    article.querySelector('#blogBack').addEventListener('click', renderBlogs);
+    body.appendChild(article);
+  }
+
+  /* ---------- Leaderboard ---------- */
+  async function renderLeaderboard() {
+    const main = openMainView();
+    main.appendChild(sectionShell('Leaderboard', 'Top members by ratings, friends and activity. Send a friend request to anyone.'));
+    const body = main.querySelector('#sectionBody');
+    let rows;
+    try { rows = (await api.get('/api/leaderboard')).leaderboard; }
+    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+    if (!rows.length) { body.innerHTML = '<div class="empty-main">No ranked members yet.</div>'; return; }
+    body.innerHTML = '';
+    const list = el('<div class="lb-list card"></div>');
+    rows.forEach((r) => {
+      const medal = r.rank === 1 ? '🥇' : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : `#${r.rank}`;
+      const row = el(`
+        <div class="lb-row${r.isMe ? ' me' : ''}">
+          <div class="lb-rank">${medal}</div>
+          <img class="avatar sm" src="${avatarUrl(r.avatar)}" />
+          <div class="lb-id">
+            <div class="name">${esc(r.displayName)}${r.isMe ? ' <span class="pill">you</span>' : ''}</div>
+            <div class="handle">@${esc(r.username)}${r.country ? ' · ' + esc(r.country) : ''}</div>
+          </div>
+          <div class="lb-stats">
+            <span title="Average rating">⭐ ${r.ratingAvg || '—'}</span>
+            <span title="Friends">👥 ${r.friends}</span>
+            <span title="Quizzes">🧠 ${r.quizzes}</span>
+            <span class="lb-score" title="Score">${r.score}</span>
+          </div>
+          <div class="lb-action"></div>
+        </div>
+      `);
+      row.querySelector('.lb-id').addEventListener('click', () => showProfile(r.username));
+      row.querySelector('.avatar').addEventListener('click', () => showProfile(r.username));
+      const fb = friendButtonEl(r.username, r.friendState, renderLeaderboard);
+      if (fb) row.querySelector('.lb-action').appendChild(fb);
+      list.appendChild(row);
+    });
+    body.appendChild(list);
+  }
+
+  /* ---------- Recent Events ---------- */
+  async function renderEvents() {
+    const main = openMainView();
+    main.appendChild(sectionShell('Recent Events', 'New friendships, chats, discussions, quizzes and announcements.'));
+    const body = main.querySelector('#sectionBody');
+    let events;
+    try { events = (await api.get('/api/events')).events; }
+    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+    if (!events.length) { body.innerHTML = '<div class="empty-main">Nothing happening yet.</div>'; return; }
+    body.innerHTML = '';
+    const feed = el('<div class="feed card"></div>');
+    events.forEach((ev) => {
+      const item = el(`
+        <div class="feed-item">
+          <div class="feed-icon">${ev.icon || '•'}</div>
+          <div class="feed-main">
+            ${ev.type === 'admin' && ev.title ? `<div class="feed-title">${esc(ev.title)}</div>` : ''}
+            <div class="feed-text"></div>
+            <div class="feed-time hint">${fmtDate(ev.at)} · ${fmtTime(ev.at)}</div>
+          </div>
+          <div class="feed-action"></div>
+        </div>
+      `);
+      item.querySelector('.feed-text').textContent = ev.text;
+      // Offer a friend action for the actor (when not yourself).
+      if (ev.actor && !ev.actor.isMe) {
+        const fb = friendButtonEl(ev.actor.username, ev.actor.friendState, renderEvents);
+        if (fb) item.querySelector('.feed-action').appendChild(fb);
+        item.querySelector('.feed-icon').style.cursor = 'pointer';
+        item.querySelector('.feed-icon').addEventListener('click', () => showProfile(ev.actor.username));
+      }
+      feed.appendChild(item);
+    });
+    body.appendChild(feed);
   }
 
   boot();

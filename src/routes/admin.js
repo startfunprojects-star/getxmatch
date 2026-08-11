@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
@@ -10,6 +12,7 @@ const db = require('../db');
 const config = require('../config');
 const { sendAdminResetLink } = require('../mail');
 const { isOnline } = require('../socket');
+const { imageUpload } = require('../upload');
 const {
   ADMIN_COOKIE,
   signAdminToken,
@@ -193,6 +196,292 @@ router.delete('/users/:id', requireAdmin, (req, res) => {
   const info = db.prepare('DELETE FROM users WHERE id = ?').run(id);
   if (info.changes === 0) return res.status(404).json({ error: 'User not found.' });
   res.json({ ok: true });
+});
+
+/* ===========================================================================
+   Content management (admin only): quizzes, polls, blogs, events.
+=========================================================================== */
+
+function parseJson(raw, fallback) {
+  if (raw == null) return fallback;
+  if (typeof raw !== 'string') return raw;
+  try { const v = JSON.parse(raw); return v == null ? fallback : v; } catch (_e) { return fallback; }
+}
+
+function removeUpload(filename) {
+  if (!filename) return;
+  fs.promises.unlink(path.join(config.uploadsDir, path.basename(filename))).catch(() => {});
+}
+
+// Validate + normalise a quiz's questions array. Returns { value } or { error }.
+function normalizeQuestions(raw) {
+  const arr = parseJson(raw, null);
+  if (!Array.isArray(arr) || arr.length === 0) return { error: 'A quiz needs at least one question.' };
+  const out = [];
+  for (const q of arr) {
+    const prompt = (q && typeof q.prompt === 'string' ? q.prompt : '').trim();
+    const options = Array.isArray(q && q.options)
+      ? q.options.map((o) => String(o).trim()).filter(Boolean)
+      : [];
+    const answer = parseInt(q && q.answer, 10);
+    if (!prompt) return { error: 'Every question needs a prompt.' };
+    if (options.length < 2) return { error: 'Every question needs at least two options.' };
+    if (!(answer >= 0 && answer < options.length)) return { error: 'Every question needs a valid correct answer.' };
+    out.push({ prompt: prompt.slice(0, 300), options: options.slice(0, 8), answer });
+  }
+  return { value: out };
+}
+
+/* ---------------- Quizzes ---------------- */
+
+// GET /api/admin/quizzes — full quizzes including correct answers.
+router.get('/quizzes', requireAdmin, (req, res) => {
+  const rows = db.prepare('SELECT id, title, description, questions, created_at, updated_at FROM quizzes ORDER BY created_at DESC').all();
+  res.json({
+    quizzes: rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      description: r.description,
+      questions: parseJson(r.questions, []),
+      attempts: db.prepare('SELECT COUNT(*) AS n FROM quiz_attempts WHERE quiz_id = ?').get(r.id).n,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    })),
+  });
+});
+
+// POST /api/admin/quizzes
+router.post('/quizzes', requireAdmin, (req, res) => {
+  const title = ((req.body && req.body.title) || '').trim();
+  if (!title) return res.status(400).json({ error: 'Title is required.' });
+  const description = ((req.body && req.body.description) || '').trim().slice(0, 500);
+  const q = normalizeQuestions(req.body && req.body.questions);
+  if (q.error) return res.status(400).json({ error: q.error });
+
+  const now = Date.now();
+  const info = db.prepare(
+    'INSERT INTO quizzes (title, description, questions, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(title.slice(0, 150), description, JSON.stringify(q.value), now, now);
+  res.status(201).json({ id: info.lastInsertRowid });
+});
+
+// PUT /api/admin/quizzes/:id
+router.put('/quizzes/:id', requireAdmin, (req, res) => {
+  const row = db.prepare('SELECT id FROM quizzes WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Quiz not found.' });
+  const title = ((req.body && req.body.title) || '').trim();
+  if (!title) return res.status(400).json({ error: 'Title is required.' });
+  const description = ((req.body && req.body.description) || '').trim().slice(0, 500);
+  const q = normalizeQuestions(req.body && req.body.questions);
+  if (q.error) return res.status(400).json({ error: q.error });
+
+  db.prepare('UPDATE quizzes SET title = ?, description = ?, questions = ?, updated_at = ? WHERE id = ?')
+    .run(title.slice(0, 150), description, JSON.stringify(q.value), Date.now(), row.id);
+  res.json({ ok: true });
+});
+
+// DELETE /api/admin/quizzes/:id
+router.delete('/quizzes/:id', requireAdmin, (req, res) => {
+  const info = db.prepare('DELETE FROM quizzes WHERE id = ?').run(req.params.id);
+  if (!info.changes) return res.status(404).json({ error: 'Quiz not found.' });
+  res.json({ ok: true });
+});
+
+/* ---------------- Polls ---------------- */
+
+function normalizeOptions(raw) {
+  const arr = parseJson(raw, null);
+  if (!Array.isArray(arr)) return { error: 'Options must be a list.' };
+  const opts = arr.map((o) => String(o).trim()).filter(Boolean).slice(0, 10);
+  if (opts.length < 2) return { error: 'A poll needs at least two options.' };
+  return { value: opts };
+}
+
+// GET /api/admin/polls
+router.get('/polls', requireAdmin, (req, res) => {
+  const rows = db.prepare('SELECT id, question, options, closed, created_at FROM polls ORDER BY created_at DESC').all();
+  res.json({
+    polls: rows.map((r) => ({
+      id: r.id,
+      question: r.question,
+      options: parseJson(r.options, []),
+      closed: !!r.closed,
+      votes: db.prepare('SELECT COUNT(*) AS n FROM poll_votes WHERE poll_id = ?').get(r.id).n,
+      createdAt: r.created_at,
+    })),
+  });
+});
+
+// POST /api/admin/polls
+router.post('/polls', requireAdmin, (req, res) => {
+  const question = ((req.body && req.body.question) || '').trim();
+  if (!question) return res.status(400).json({ error: 'Question is required.' });
+  const o = normalizeOptions(req.body && req.body.options);
+  if (o.error) return res.status(400).json({ error: o.error });
+
+  const now = Date.now();
+  const info = db.prepare(
+    'INSERT INTO polls (question, options, closed, created_at, updated_at) VALUES (?, ?, 0, ?, ?)'
+  ).run(question.slice(0, 300), JSON.stringify(o.value), now, now);
+  res.status(201).json({ id: info.lastInsertRowid });
+});
+
+// PUT /api/admin/polls/:id
+router.put('/polls/:id', requireAdmin, (req, res) => {
+  const row = db.prepare('SELECT id FROM polls WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Poll not found.' });
+  const question = ((req.body && req.body.question) || '').trim();
+  if (!question) return res.status(400).json({ error: 'Question is required.' });
+  const o = normalizeOptions(req.body && req.body.options);
+  if (o.error) return res.status(400).json({ error: o.error });
+  const closed = req.body && (req.body.closed === true || req.body.closed === 'true' || req.body.closed === 1) ? 1 : 0;
+
+  db.prepare('UPDATE polls SET question = ?, options = ?, closed = ?, updated_at = ? WHERE id = ?')
+    .run(question.slice(0, 300), JSON.stringify(o.value), closed, Date.now(), row.id);
+  res.json({ ok: true });
+});
+
+// DELETE /api/admin/polls/:id
+router.delete('/polls/:id', requireAdmin, (req, res) => {
+  const info = db.prepare('DELETE FROM polls WHERE id = ?').run(req.params.id);
+  if (!info.changes) return res.status(404).json({ error: 'Poll not found.' });
+  res.json({ ok: true });
+});
+
+/* ---------------- Blogs ---------------- */
+
+// GET /api/admin/blogs
+router.get('/blogs', requireAdmin, (req, res) => {
+  const rows = db.prepare('SELECT id, title, author, excerpt, body, cover, created_at, updated_at FROM blogs ORDER BY created_at DESC').all();
+  res.json({
+    blogs: rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      author: r.author,
+      excerpt: r.excerpt,
+      body: r.body,
+      cover: r.cover ? `/uploads/${r.cover}` : null,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    })),
+  });
+});
+
+// POST /api/admin/blogs  (multipart, optional cover)
+router.post('/blogs', requireAdmin, imageUpload.single('cover'), (req, res) => {
+  const title = ((req.body && req.body.title) || '').trim();
+  if (!title) { removeUpload(req.file && req.file.filename); return res.status(400).json({ error: 'Title is required.' }); }
+  const body = ((req.body && req.body.body) || '').trim();
+  if (!body) { removeUpload(req.file && req.file.filename); return res.status(400).json({ error: 'Body is required.' }); }
+  const author = ((req.body && req.body.author) || 'getxmatch').trim().slice(0, 80) || 'getxmatch';
+  const excerpt = ((req.body && req.body.excerpt) || body.slice(0, 160)).trim().slice(0, 300);
+
+  const now = Date.now();
+  const info = db.prepare(
+    'INSERT INTO blogs (title, author, excerpt, body, cover, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(title.slice(0, 200), author, excerpt, body, req.file ? req.file.filename : null, now, now);
+  res.status(201).json({ id: info.lastInsertRowid });
+});
+
+// PUT /api/admin/blogs/:id  (multipart, optional new cover)
+router.put('/blogs/:id', requireAdmin, imageUpload.single('cover'), (req, res) => {
+  const row = db.prepare('SELECT id, cover FROM blogs WHERE id = ?').get(req.params.id);
+  if (!row) { removeUpload(req.file && req.file.filename); return res.status(404).json({ error: 'Blog post not found.' }); }
+  const title = ((req.body && req.body.title) || '').trim();
+  if (!title) { removeUpload(req.file && req.file.filename); return res.status(400).json({ error: 'Title is required.' }); }
+  const body = ((req.body && req.body.body) || '').trim();
+  if (!body) { removeUpload(req.file && req.file.filename); return res.status(400).json({ error: 'Body is required.' }); }
+  const author = ((req.body && req.body.author) || 'getxmatch').trim().slice(0, 80) || 'getxmatch';
+  const excerpt = ((req.body && req.body.excerpt) || body.slice(0, 160)).trim().slice(0, 300);
+
+  let cover = row.cover;
+  if (req.file) {
+    if (cover) removeUpload(cover);
+    cover = req.file.filename;
+  }
+  db.prepare('UPDATE blogs SET title = ?, author = ?, excerpt = ?, body = ?, cover = ?, updated_at = ? WHERE id = ?')
+    .run(title.slice(0, 200), author, excerpt, body, cover, Date.now(), row.id);
+  res.json({ ok: true });
+});
+
+// DELETE /api/admin/blogs/:id
+router.delete('/blogs/:id', requireAdmin, (req, res) => {
+  const row = db.prepare('SELECT id, cover FROM blogs WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Blog post not found.' });
+  db.prepare('DELETE FROM blogs WHERE id = ?').run(row.id);
+  removeUpload(row.cover);
+  res.json({ ok: true });
+});
+
+/* ---------------- Recent Events (admin-curated announcements) ---------------- */
+
+// GET /api/admin/events
+router.get('/events', requireAdmin, (req, res) => {
+  const rows = db.prepare('SELECT id, title, body, created_at, updated_at FROM admin_events ORDER BY created_at DESC').all();
+  res.json({ events: rows.map((r) => ({ id: r.id, title: r.title, body: r.body, createdAt: r.created_at, updatedAt: r.updated_at })) });
+});
+
+// POST /api/admin/events
+router.post('/events', requireAdmin, (req, res) => {
+  const title = ((req.body && req.body.title) || '').trim();
+  if (!title) return res.status(400).json({ error: 'Title is required.' });
+  const body = ((req.body && req.body.body) || '').trim().slice(0, 2000);
+  const now = Date.now();
+  const info = db.prepare('INSERT INTO admin_events (title, body, created_at, updated_at) VALUES (?, ?, ?, ?)')
+    .run(title.slice(0, 200), body, now, now);
+  res.status(201).json({ id: info.lastInsertRowid });
+});
+
+// PUT /api/admin/events/:id
+router.put('/events/:id', requireAdmin, (req, res) => {
+  const row = db.prepare('SELECT id FROM admin_events WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Event not found.' });
+  const title = ((req.body && req.body.title) || '').trim();
+  if (!title) return res.status(400).json({ error: 'Title is required.' });
+  const body = ((req.body && req.body.body) || '').trim().slice(0, 2000);
+  db.prepare('UPDATE admin_events SET title = ?, body = ?, updated_at = ? WHERE id = ?')
+    .run(title.slice(0, 200), body, Date.now(), row.id);
+  res.json({ ok: true });
+});
+
+// DELETE /api/admin/events/:id
+router.delete('/events/:id', requireAdmin, (req, res) => {
+  const info = db.prepare('DELETE FROM admin_events WHERE id = ?').run(req.params.id);
+  if (!info.changes) return res.status(404).json({ error: 'Event not found.' });
+  res.json({ ok: true });
+});
+
+/* ---------------- Leaderboard (read-only view for admins) ---------------- */
+
+// GET /api/admin/leaderboard — same ranking users see, for oversight.
+router.get('/leaderboard', requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    `SELECT u.id, u.username, p.display_name, p.avatar,
+            (SELECT COUNT(*) FROM ratings r WHERE r.ratee_id = u.id)   AS rating_count,
+            (SELECT AVG(stars) FROM ratings r WHERE r.ratee_id = u.id) AS rating_avg,
+            (SELECT COUNT(*) FROM friendships f
+               WHERE (f.requester_id = u.id OR f.addressee_id = u.id) AND f.status = 'accepted') AS friends,
+            (SELECT COUNT(*) FROM quiz_attempts q WHERE q.user_id = u.id) AS quizzes
+     FROM users u JOIN profiles p ON p.user_id = u.id`
+  ).all();
+
+  const scored = rows.map((r) => {
+    const avg = r.rating_avg || 0;
+    return {
+      id: r.id,
+      username: r.username,
+      displayName: r.display_name || r.username,
+      avatar: r.avatar ? `/uploads/${r.avatar}` : null,
+      ratingAvg: avg ? Math.round(avg * 10) / 10 : 0,
+      ratingCount: r.rating_count,
+      friends: r.friends,
+      quizzes: r.quizzes,
+      score: Math.round(avg * 20 + r.rating_count * 5 + r.friends * 8 + r.quizzes * 3),
+    };
+  });
+  scored.sort((a, b) => b.score - a.score || b.ratingAvg - a.ratingAvg);
+  scored.forEach((row, i) => { row.rank = i + 1; });
+  res.json({ leaderboard: scored });
 });
 
 module.exports = router;

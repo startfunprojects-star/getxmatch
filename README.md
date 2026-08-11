@@ -33,6 +33,21 @@ self-host on a single VPS: no external database or storage service required.
   server (not on disk, not in the database). If the recipient is offline the
   file is simply not delivered. Only text messages are persisted.
 - **Browse & search** other users.
+- **Quizzes, Polls & Blogs** — admin-authored content users can engage with:
+  take quizzes (auto-graded, attempts recorded), vote in polls (live tallies),
+  and read blog posts. All are created/edited/deleted from the admin dashboard.
+- **Leaderboard** — ranks every member by an engagement score built from their
+  ratings, friends and quiz activity. Users can send a **friend request** to
+  anyone directly from the leaderboard.
+- **Recent Events** — a unified activity feed aggregating new friendships,
+  recent chats, profile discussions and quiz attempts, plus **admin-curated
+  announcements**. Friend requests can be sent inline from the feed.
+- **Profile discussions** — any visitor can open a **discussion** about a
+  profile they're viewing. The profile owner sees every discussion on their
+  profile, can **like/dislike** them, and can **delete** any of them at any
+  time (authors can delete their own too). Discussions surface on Recent Events.
+- **Admin content management** — a tabbed `/admin` dashboard manages Users,
+  Quizzes, Polls, Blogs and Recent Events, and shows a read-only Leaderboard.
 
 ## Tech
 
@@ -52,7 +67,8 @@ src/
   auth.js              JWT cookie auth helpers
   upload.js            multer image uploads (profile/gallery only)
   socket.js            live chat + ephemeral file relay
-  routes/              auth, profile, users, social, admin REST endpoints
+  routes/              auth, profile, users, social, admin, content,
+                       leaderboard, events, discuss REST endpoints
 public/                static SPA (HTML/CSS/JS)
 deploy/                systemd unit + nginx example
 data/                  SQLite DB   (gitignored, created at runtime)
