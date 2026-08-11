@@ -23,8 +23,10 @@ self-host on a single VPS: no external database or storage service required.
   on the server.
 - **Ratings, comments & friends** — other users can leave a **1–5 star rating**
   and **public comments** on a profile, and send **friend requests**
-  (request → accept/decline → unfriend). The friends list has a per-user
-  **visibility** setting: everyone, only friends, or hidden.
+  (request → accept/decline → unfriend). The friends list is public.
+- **Everything on a profile is publicly visible except the email address**,
+  which is never returned by the profile or browse APIs — it's only visible to
+  the account owner and the admin dashboard.
 - **Real-time 1:1 chat** over WebSockets (Socket.IO). Text history is saved so
   conversations persist across sessions.
 - **File sharing in chat** — files are **relayed live and never stored** on the

@@ -130,17 +130,10 @@ function buildProfile(userId, viewerId) {
     if (p) partner = { id: p.id, username: p.username, displayName: p.display_name };
   }
 
-  // Friends list visibility: public → everyone; friends → only accepted
-  // friends (and owner); hidden → only owner.
+  // All profile information is public; the friends list is always visible.
+  // Email is the only private field and is never included in this payload.
   const fState = friendState(row.id, viewerId);
-  const visibility = row.friends_visibility || 'public';
-  const allFriends = friendsOf(row.id);
-  let friendList = null;
-  if (isMe || visibility === 'public') {
-    friendList = allFriends;
-  } else if (visibility === 'friends' && fState === 'friends') {
-    friendList = allFriends;
-  }
+  const friendList = friendsOf(row.id);
 
   return {
     id: row.id,
@@ -166,9 +159,8 @@ function buildProfile(userId, viewerId) {
     rating: ratingSummary(row.id, viewerId),
     comments: commentsFor(row.id, viewerId),
     friends: {
-      visibility,
-      count: allFriends.length,
-      list: friendList, // null means hidden from this viewer
+      count: friendList.length,
+      list: friendList,
       state: fState,
     },
     isMe,

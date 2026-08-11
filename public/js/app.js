@@ -306,13 +306,6 @@
           ${selectHtml('bedRole', OPT.bedRole, e.bedRole, 'Select…')}
         </details>
 
-        <label>Who can see your friends list?</label>
-        ${selectHtml('friendsVisibility', [
-          { value: 'public', label: 'Everyone (public)' },
-          { value: 'friends', label: 'Only my friends' },
-          { value: 'hidden', label: 'Hidden' },
-        ], e.friends ? e.friends.visibility : 'public', false)}
-
         <div class="msg" id="pMsg"></div>
         <div class="row-actions">
           <button class="primary" id="saveProfile" type="button">${firstTime ? 'Create profile' : 'Save'}</button>
@@ -360,7 +353,6 @@
       fd.append('persona', val('persona'));
       fd.append('likesInBed', val('likesInBed'));
       fd.append('bedRole', val('bedRole'));
-      fd.append('friendsVisibility', val('friendsVisibility'));
       fd.append('interests', JSON.stringify(interests));
       if (avatarFile) fd.append('avatar', avatarFile);
 
@@ -846,9 +838,7 @@
 
     /* ----- friends list ----- */
     const friendsBox = view.querySelector('#pvFriends');
-    if (profile.friends.list === null) {
-      friendsBox.appendChild(el('<div class="hint">This list is private.</div>'));
-    } else if (!profile.friends.list.length) {
+    if (!profile.friends.list.length) {
       friendsBox.appendChild(el('<div class="hint">No friends yet.</div>'));
     } else {
       const row = el('<div class="friend-row"></div>');
