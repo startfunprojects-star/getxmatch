@@ -666,10 +666,24 @@
   /* ======================================================================
      PROFILE VIEW (someone else's profile in the main pane)
   ====================================================================== */
-  // A labelled detail chip, only rendered when there's a value.
-  function detail(label, value) {
+  // A labelled detail tile with an icon, only rendered when there's a value.
+  function detail(label, value, icon) {
     if (!value) return '';
-    return `<div class="detail"><span class="dl">${esc(label)}</span><span class="dv">${esc(value)}</span></div>`;
+    return `<div class="detail"><span class="di">${icon || ''}</span><div class="dtext"><span class="dl">${esc(label)}</span><span class="dv">${esc(value)}</span></div></div>`;
+  }
+  function genderIcon(g) {
+    return g === 'Female' ? '♀' : g === 'Male' ? '♂' : '⚧';
+  }
+
+  // Full-screen image lightbox for gallery photos.
+  function openLightbox(url) {
+    const box = el(`<div class="lightbox"><img src="${url}" /><button class="lb-close" title="Close">✕</button></div>`);
+    const close = () => box.remove();
+    box.addEventListener('click', (e) => { if (e.target === box || e.target.classList.contains('lb-close')) close(); });
+    document.addEventListener('keydown', function onKey(e) {
+      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
+    });
+    document.body.appendChild(box);
   }
 
   async function showProfile(username) {
@@ -699,56 +713,78 @@
       }
     }
 
+    const badges = [];
+    if (profile.age != null) badges.push(`🎂 ${profile.age}`);
+    if (profile.gender) badges.push(`${genderIcon(profile.gender)} ${esc(profile.gender)}`);
+    if (profile.country) badges.push(`📍 ${esc(profile.country)}`);
+    const badgesHtml = badges.map((b) => `<span class="badge">${b}</span>`).join('');
+
+    const detailsHtml = [
+      detail('Sexuality', profile.sexuality, '🌈'),
+      detail('Smokes', profile.smokes, '🚬'),
+      detail('Drinks', profile.drinks, '🍷'),
+      detail('Diet', profile.diet, '🥗'),
+      detail('In bed', profile.bedRole, '🔥'),
+    ].join('');
+
+    const score = profile.rating.average ? profile.rating.average.toFixed(1) : '—';
+    const card = (icon, title, inner) =>
+      `<section class="card"><h3 class="card-title">${icon} ${title}</h3>${inner}</section>`;
+
     const view = el(`
-      <div class="profile-view">
-        <button class="ghost small" id="pvBack" style="margin-bottom:16px">← Back</button>
-        <div class="profile-head">
-          <img class="avatar lg" src="${avatarUrl(profile.avatar)}" />
-          <div style="min-width:0">
-            <h2>${esc(profile.displayName)}</h2>
-            <div class="handle">@${esc(profile.username)}</div>
-            ${meta ? `<div class="meta-line">${esc(meta)}</div>` : ''}
+      <div class="profile-view pro">
+        <button class="ghost small pv-back" id="pvBack">← Back</button>
+
+        <div class="pro-hero card">
+          <div class="pro-cover"></div>
+          <div class="pro-hero-body">
+            <div class="pro-avatar-wrap">
+              <img class="pro-avatar" src="${avatarUrl(profile.avatar)}" alt="${esc(profile.displayName)}" />
+            </div>
+            <div class="pro-id">
+              <h2 class="pro-name">${esc(profile.displayName)}</h2>
+              <div class="handle">@${esc(profile.username)}</div>
+              ${badgesHtml ? `<div class="pro-badges">${badgesHtml}</div>` : ''}
+              ${relLine ? `<div class="rel-line">💞 ${relLine}</div>` : ''}
+            </div>
+            <div class="pro-rating" title="${profile.rating.count} rating${profile.rating.count === 1 ? '' : 's'}">
+              <div class="pro-score">${score}</div>
+              <div class="stars" id="pvStars">${starsHtml(profile.rating.average, !isMe)}</div>
+              <div class="pro-rcount">${profile.rating.count} rating${profile.rating.count === 1 ? '' : 's'}</div>
+              ${!isMe && profile.rating.mine ? '<button class="ghost small" id="unrate">Clear rating</button>' : ''}
+            </div>
+          </div>
+          <div class="pro-actions pv-actions">
+            ${!isMe ? '<button class="primary" id="pvChat">💬 Message</button>' : ''}
+            ${!isMe ? `<span id="pvFriend"></span>` : ''}
+            ${isMe ? '<button class="ghost" id="pvEdit">✎ Edit profile</button>' : ''}
           </div>
         </div>
 
-        <div class="rating-row">
-          <span class="stars" id="pvStars">${starsHtml(profile.rating.average, !isMe)}</span>
-          <span class="rating-num">${profile.rating.average ? profile.rating.average.toFixed(1) : '—'}</span>
-          <span class="hint">(${profile.rating.count} rating${profile.rating.count === 1 ? '' : 's'})</span>
-          ${!isMe && profile.rating.mine ? '<button class="ghost small" id="unrate">Clear my rating</button>' : ''}
+        <div class="pro-grid">
+          <div class="pro-col-main">
+            ${profile.about ? card('📝', 'About me', `<p class="rich">${esc(profile.about)}</p>`) : ''}
+            ${profile.persona ? card('✨', 'What kind of person they are', `<p class="rich">${esc(profile.persona)}</p>`) : ''}
+            ${profile.likesInBed ? card('🔥', 'In the bedroom', `<p class="rich">${esc(profile.likesInBed)}</p>`) : ''}
+            <section class="card">
+              <h3 class="card-title">📷 Gallery <span class="hint" id="galCount"></span></h3>
+              <div class="gallery" id="pvGallery"></div>
+            </section>
+            <section class="card">
+              <h3 class="card-title">💬 Comments</h3>
+              <div id="pvCommentForm"></div>
+              <div class="comments" id="pvComments"></div>
+            </section>
+          </div>
+          <div class="pro-col-side">
+            ${detailsHtml ? `<section class="card"><h3 class="card-title">🧬 Details</h3><div class="detail-grid">${detailsHtml}</div></section>` : ''}
+            ${profile.interests.length ? card('❤️', 'Interests', `<div class="chip-row">${profile.interests.map((i) => `<span class="chip static">${esc(i)}</span>`).join('')}</div>`) : ''}
+            <section class="card">
+              <h3 class="card-title">👥 Friends <span class="hint">(${profile.friends.count})</span></h3>
+              <div id="pvFriends"></div>
+            </section>
+          </div>
         </div>
-
-        <div class="pv-actions">
-          ${!isMe ? '<button class="primary" id="pvChat">Message</button>' : ''}
-          ${!isMe ? `<span id="pvFriend"></span>` : ''}
-          ${isMe ? '<button class="ghost small" id="pvEdit">Edit profile</button>' : ''}
-        </div>
-
-        ${relLine ? `<div class="rel-line">💞 ${relLine}</div>` : ''}
-        ${profile.about ? `<div class="bio">${esc(profile.about)}</div>` : ''}
-        ${profile.persona ? `<div class="section-title">What kind of person they are</div><div class="bio">${esc(profile.persona)}</div>` : ''}
-
-        <div class="detail-grid">
-          ${detail('Sexuality', profile.sexuality)}
-          ${detail('Smokes', profile.smokes)}
-          ${detail('Drinks', profile.drinks)}
-          ${detail('Diet', profile.diet)}
-          ${detail('In bed', profile.bedRole)}
-        </div>
-
-        ${profile.likesInBed ? `<div class="section-title">What they like in bed</div><div class="bio">${esc(profile.likesInBed)}</div>` : ''}
-
-        ${profile.interests.length ? `<div class="section-title">Interests</div><div class="chip-row">${profile.interests.map((i) => `<span class="chip static">${esc(i)}</span>`).join('')}</div>` : ''}
-
-        <div class="section-title">Gallery <span class="hint" id="galCount"></span></div>
-        <div class="gallery" id="pvGallery"></div>
-
-        <div class="section-title">Friends <span class="hint">(${profile.friends.count})</span></div>
-        <div id="pvFriends"></div>
-
-        <div class="section-title">Comments</div>
-        <div id="pvCommentForm"></div>
-        <div class="comments" id="pvComments"></div>
       </div>
     `);
     main.innerHTML = '';
@@ -790,10 +826,13 @@
       galCount.textContent = isMe ? `(${n}/${MAX_GALLERY})` : `(${n})`;
     };
     const makeCell = (ph) => {
-      const cell = el(`<div class="cell"><img src="${ph.url}" loading="lazy" /></div>`);
+      const cell = el(`<div class="cell"><img src="${ph.url}" loading="lazy" /><span class="cell-zoom">⤢</span></div>`);
+      cell.querySelector('img').addEventListener('click', () => openLightbox(ph.url));
+      cell.querySelector('.cell-zoom').addEventListener('click', () => openLightbox(ph.url));
       if (isMe) {
-        const del = el('<button class="del danger small">Delete</button>');
-        del.addEventListener('click', async () => {
+        const del = el('<button class="del" title="Delete photo">✕</button>');
+        del.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
           if (!confirm('Delete this photo?')) return;
           try { await api.del('/api/profile/gallery/' + ph.id); cell.remove(); updateCount(); refreshAddBtn(); }
           catch (e) { alert(e.message); }
