@@ -14,8 +14,17 @@ self-host on a single VPS: no external database or storage service required.
   address (username + password), and delete users. The admin password is set
   and reset only via a **single-use link emailed to `ADMIN_EMAIL`**; each new
   request invalidates the previous link.
-- **Profiles** — created *after* signup. Each profile has a display picture,
-  a bio, and a **photo gallery**. Profile images are stored on the server.
+- **Rich profiles** — created *after* signup. **Gender, date of birth (18+
+  enforced), and country are required**; everything else is optional: sexuality,
+  smoking/alcohol/diet, an "About me", a "what kind of person you are" blurb,
+  a multi-select of interests, relationship status (optionally linked to another
+  user), and an optional 18+ intimacy section. Each profile also has a display
+  picture and a **photo gallery of up to 25 images**. Profile images are stored
+  on the server.
+- **Ratings, comments & friends** — other users can leave a **1–5 star rating**
+  and **public comments** on a profile, and send **friend requests**
+  (request → accept/decline → unfriend). The friends list has a per-user
+  **visibility** setting: everyone, only friends, or hidden.
 - **Real-time 1:1 chat** over WebSockets (Socket.IO). Text history is saved so
   conversations persist across sessions.
 - **File sharing in chat** — files are **relayed live and never stored** on the
@@ -25,7 +34,9 @@ self-host on a single VPS: no external database or storage service required.
 
 ## Tech
 
-Node.js · Express · Socket.IO · SQLite (better-sqlite3) · vanilla JS frontend.
+Node.js · Express · Socket.IO · SQLite (Node's built-in `node:sqlite`, no native
+build) · vanilla JS frontend. Schema changes are applied automatically at
+startup — no manual migration step.
 
 ## Project layout
 
@@ -33,11 +44,13 @@ Node.js · Express · Socket.IO · SQLite (better-sqlite3) · vanilla JS fronten
 server.js              app entry (Express + Socket.IO)
 src/
   config.js            env-driven config
-  db.js                SQLite schema
+  db.js                SQLite schema + auto-migrations
+  profileFields.js     allowed values for profile dropdowns + age helper
+  profileData.js       builds the full profile (fields, rating, comments, friends)
   auth.js              JWT cookie auth helpers
   upload.js            multer image uploads (profile/gallery only)
   socket.js            live chat + ephemeral file relay
-  routes/              auth, profile, users REST endpoints
+  routes/              auth, profile, users, social, admin REST endpoints
 public/                static SPA (HTML/CSS/JS)
 deploy/                systemd unit + nginx example
 data/                  SQLite DB   (gitignored, created at runtime)

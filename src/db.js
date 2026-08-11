@@ -22,11 +22,12 @@ db.exec(`
     created_at    INTEGER NOT NULL
   );
 
-  -- One profile per user. Created after signup.
+  -- One profile per user. Created after signup. The extended fields below are
+  -- added by migration for older databases; see migrateProfileColumns().
   CREATE TABLE IF NOT EXISTS profiles (
     user_id       INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     display_name  TEXT NOT NULL,
-    bio           TEXT NOT NULL DEFAULT '',
+    bio           TEXT NOT NULL DEFAULT '',   -- "About me"
     avatar        TEXT,                 -- filename of display picture in uploads/
     updated_at    INTEGER NOT NULL
   );
@@ -65,6 +66,41 @@ db.exec(`
     expires_at    INTEGER NOT NULL,
     created_at    INTEGER NOT NULL
   );
+
+  -- Star ratings other users leave on a profile (1-5). One row per rater/ratee
+  -- pair; a re-rate updates the existing row.
+  CREATE TABLE IF NOT EXISTS ratings (
+    rater_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ratee_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    stars      INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 5),
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (rater_id, ratee_id)
+  );
+
+  -- Public comments left by other users on a profile.
+  CREATE TABLE IF NOT EXISTS comments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    author_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    subject_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_comments_subject
+    ON comments (subject_id, created_at);
+
+  -- Friend relationships. A row is created (status 'pending') when one user
+  -- sends a request and flips to 'accepted' when the other accepts. The pair
+  -- is stored in request direction: requester_id asked addressee_id.
+  CREATE TABLE IF NOT EXISTS friendships (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    addressee_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status       TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'accepted'
+    created_at   INTEGER NOT NULL,
+    UNIQUE (requester_id, addressee_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_friendships_addressee
+    ON friendships (addressee_id, status);
 
   -- Single admin account (id is always 1). password_hash is null until the
   -- admin sets it via an emailed link.
@@ -115,6 +151,36 @@ db.exec(`
     throw e;
   }
   db.exec('PRAGMA foreign_keys = ON;');
+})();
+
+// --- Migration: add the extended profile fields as nullable columns. Older
+// databases (and the original schema above) only had display_name/bio/avatar.
+// New columns are added idempotently so existing profile rows are preserved;
+// gender/date_of_birth/country are enforced as required at write time by the
+// profile route, not by the DB.
+(function migrateProfileColumns() {
+  const cols = db.prepare('PRAGMA table_info(profiles)').all().map((c) => c.name);
+  const additions = [
+    ['gender', 'TEXT'],
+    ['date_of_birth', 'TEXT'],
+    ['country', 'TEXT'],
+    ['smokes', 'TEXT'],
+    ['drinks', 'TEXT'],
+    ['diet', 'TEXT'],
+    ['sexuality', 'TEXT'],
+    ['interests', "TEXT NOT NULL DEFAULT '[]'"],
+    ['persona', "TEXT NOT NULL DEFAULT ''"],
+    ['likes_in_bed', "TEXT NOT NULL DEFAULT ''"],
+    ['bed_role', 'TEXT'],
+    ['relationship_status', 'TEXT'],
+    ['partner_user_id', 'INTEGER'],
+    ['friends_visibility', "TEXT NOT NULL DEFAULT 'public'"],
+  ];
+  for (const [name, type] of additions) {
+    if (!cols.includes(name)) {
+      db.exec(`ALTER TABLE profiles ADD COLUMN ${name} ${type};`);
+    }
+  }
 })();
 
 // Seed the single admin row (email from config). Never overwrites an existing

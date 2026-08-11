@@ -13,6 +13,7 @@ const { initSocket } = require('./src/socket');
 const authRoutes = require('./src/routes/auth');
 const profileRoutes = require('./src/routes/profile');
 const userRoutes = require('./src/routes/users');
+const socialRoutes = require('./src/routes/social');
 const adminRoutes = require('./src/routes/admin');
 
 const app = express();
@@ -46,6 +47,7 @@ app.use('/uploads', express.static(config.uploadsDir, { maxAge: '7d', index: fal
 app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/social', socialRoutes);
 app.use('/api/admin', adminRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
