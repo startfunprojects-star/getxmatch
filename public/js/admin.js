@@ -158,6 +158,7 @@
     ['quizzes', 'Quizzes'],
     ['polls', 'Polls'],
     ['blogs', 'Blogs'],
+    ['roleplays', 'Roleplays'],
     ['events', 'Recent Events'],
     ['leaderboard', 'Leaderboard'],
   ];
@@ -203,6 +204,7 @@
     if (tab === 'quizzes') return renderQuizzesTab();
     if (tab === 'polls') return renderPollsTab();
     if (tab === 'blogs') return renderBlogsTab();
+    if (tab === 'roleplays') return renderRoleplaysTab();
     if (tab === 'events') return renderEventsTab();
     if (tab === 'leaderboard') return renderLeaderboardTab();
   }
@@ -569,6 +571,144 @@
       item.querySelector('[data-del]').addEventListener('click', async () => {
         if (!confirm('Delete this blog post?')) return;
         try { await api.del('/api/admin/blogs/' + b.id); loadBlogList(); } catch (e) { alert(e.message); }
+      });
+      box.appendChild(item);
+    });
+  }
+
+  /* ==================================================================
+     Roleplays tab
+  ================================================================== */
+  async function renderRoleplaysTab() {
+    const host = tabHost();
+    host.innerHTML = '<div class="admin-card" id="rpEditor"></div><div class="admin-card"><h2>Existing roleplays</h2><div id="rpList" class="count">Loading…</div></div>';
+    renderRoleplayEditor(null);
+    await loadRoleplayList();
+  }
+
+  // One editable stage: narration + optional image (with keep/replace/clear).
+  function roleplayStageBlock(stage, idx) {
+    stage = stage || { narration: '', image: null, imageRaw: null };
+    const block = el(`
+      <div class="qb-question rp-stage">
+        <label>Stage <span class="rp-stage-num">${idx + 1}</span></label>
+        <textarea class="rp-narration" placeholder="Narration / story for this stage…" style="min-height:90px">${esc(stage.narration || '')}</textarea>
+        <div class="rp-stage-img">
+          ${stage.image ? `<img class="rp-thumb" src="${esc(stage.image)}" alt="stage image" />` : ''}
+          <label style="margin:8px 0 4px">Image / GIF (optional)</label>
+          <input type="file" class="rp-image" accept="image/*" />
+          ${stage.imageRaw ? `<label class="rp-keep-row" style="display:flex;align-items:center;gap:6px;margin:6px 0"><input type="checkbox" class="rp-clear-img" style="width:auto" /> Remove current image</label>` : ''}
+        </div>
+        <div class="admin-item-actions">
+          <button type="button" class="danger small rp-rm-stage">Remove stage</button>
+        </div>
+      </div>
+    `);
+    block.dataset.existingImage = stage.imageRaw || '';
+    block.querySelector('.rp-rm-stage').addEventListener('click', () => { block.remove(); renumberStages(); });
+    return block;
+  }
+
+  function renumberStages() {
+    document.querySelectorAll('#rpStages .rp-stage').forEach((b, i) => {
+      const n = b.querySelector('.rp-stage-num');
+      if (n) n.textContent = i + 1;
+    });
+  }
+
+  function renderRoleplayEditor(rp) {
+    const host = document.getElementById('rpEditor');
+    host.innerHTML = `
+      <h2>${rp ? 'Edit roleplay' : 'Create roleplay'}</h2>
+      <label>Title</label><input id="rpTitle" value="${esc(rp ? rp.title : '')}" />
+      <label>Description</label><input id="rpDesc" value="${esc(rp ? rp.description : '')}" />
+      <label>Messages required from EACH user per stage</label>
+      <input id="rpRequired" type="number" min="1" max="100" value="${rp ? rp.requiredMessages : 10}" style="max-width:120px" />
+      <label>Cover image (optional)</label>
+      ${rp && rp.cover ? `<div><img class="rp-thumb" src="${esc(rp.cover)}" alt="cover" /></div>` : ''}
+      <input type="file" id="rpCover" accept="image/*" />
+      <h3 style="margin-top:18px">Stages <span class="count">(total: <span id="rpStageCount">0</span>)</span></h3>
+      <div id="rpStages"></div>
+      <div class="admin-item-actions">
+        <button type="button" class="ghost small" id="rpAddStage">+ Add stage</button>
+        <button type="button" class="primary" id="rpSave">${rp ? 'Save changes' : 'Create roleplay'}</button>
+        ${rp ? '<button type="button" class="ghost" id="rpCancel">Cancel</button>' : ''}
+      </div>
+      <div class="msg" id="rpMsg"></div>
+    `;
+    const stagesBox = host.querySelector('#rpStages');
+    const countEl = host.querySelector('#rpStageCount');
+    const updateCount = () => { countEl.textContent = stagesBox.querySelectorAll('.rp-stage').length; };
+    const stages = rp && rp.stages && rp.stages.length ? rp.stages : [null];
+    stages.forEach((s, i) => stagesBox.appendChild(roleplayStageBlock(s, i)));
+    updateCount();
+
+    host.querySelector('#rpAddStage').addEventListener('click', () => {
+      stagesBox.appendChild(roleplayStageBlock(null, stagesBox.querySelectorAll('.rp-stage').length));
+      updateCount();
+    });
+    stagesBox.addEventListener('click', (e) => { if (e.target.classList.contains('rp-rm-stage')) setTimeout(updateCount, 0); });
+
+    if (host.querySelector('#rpCancel')) host.querySelector('#rpCancel').addEventListener('click', () => renderRoleplayEditor(null));
+
+    host.querySelector('#rpSave').addEventListener('click', async () => {
+      const msg = host.querySelector('#rpMsg');
+      msg.className = 'msg';
+      const fd = new FormData();
+      fd.append('title', host.querySelector('#rpTitle').value.trim());
+      fd.append('description', host.querySelector('#rpDesc').value.trim());
+      fd.append('requiredMessages', host.querySelector('#rpRequired').value || '10');
+
+      const coverEl = host.querySelector('#rpCover');
+      if (coverEl.files[0]) fd.append('cover', coverEl.files[0]);
+      else if (rp && rp.cover) fd.append('keepCover', 'true');
+
+      const stageEls = Array.from(stagesBox.querySelectorAll('.rp-stage'));
+      if (!stageEls.length) { msg.className = 'msg error'; msg.textContent = 'Add at least one stage.'; return; }
+      const stagesOut = stageEls.map((blk, i) => {
+        const narration = blk.querySelector('.rp-narration').value.trim();
+        const fileIn = blk.querySelector('.rp-image');
+        const cleared = blk.querySelector('.rp-clear-img');
+        const existing = blk.dataset.existingImage || '';
+        if (fileIn.files[0]) fd.append('stage_image_' + i, fileIn.files[0]);
+        const keepExisting = existing && !fileIn.files[0] && !(cleared && cleared.checked);
+        return { narration, existingImage: keepExisting ? existing : null };
+      });
+      fd.append('stages', JSON.stringify(stagesOut));
+
+      try {
+        if (rp) await api.putForm('/api/admin/roleplays/' + rp.id, fd);
+        else await api.postForm('/api/admin/roleplays', fd);
+        msg.className = 'msg ok'; msg.textContent = 'Saved.';
+        renderRoleplayEditor(null);
+        loadRoleplayList();
+      } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
+    });
+  }
+
+  async function loadRoleplayList() {
+    const box = document.getElementById('rpList');
+    if (!box) return;
+    let roleplays;
+    try { roleplays = (await api.get('/api/admin/roleplays')).roleplays; }
+    catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
+    if (!roleplays.length) { box.innerHTML = '<div class="count">No roleplays yet.</div>'; return; }
+    box.innerHTML = '';
+    roleplays.forEach((rp) => {
+      const item = el(`
+        <div class="admin-item">
+          <h3>${esc(rp.title)}</h3>
+          <div class="count">${rp.stages.length} stage${rp.stages.length === 1 ? '' : 's'} · ${rp.requiredMessages} messages each per stage</div>
+          <div class="admin-item-actions">
+            <button class="ghost small" data-edit>Edit</button>
+            <button class="danger small" data-del>Delete</button>
+          </div>
+        </div>
+      `);
+      item.querySelector('[data-edit]').addEventListener('click', () => { renderRoleplayEditor(rp); window.scrollTo(0, 0); });
+      item.querySelector('[data-del]').addEventListener('click', async () => {
+        if (!confirm('Delete this roleplay? Any in-progress sessions will end.')) return;
+        try { await api.del('/api/admin/roleplays/' + rp.id); loadRoleplayList(); } catch (e) { alert(e.message); }
       });
       box.appendChild(item);
     });

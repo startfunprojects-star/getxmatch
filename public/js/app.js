@@ -548,11 +548,14 @@
         </div>
         <div class="chat-body" id="chatBody"></div>
         <div class="typing hidden" id="typing">typing…</div>
+        <div class="roleplay-bar hidden" id="roleplayBar"></div>
         <div class="gift-picker hidden" id="giftPicker"></div>
+        <div class="rp-picker hidden" id="rpPicker"></div>
         <div class="composer">
           <input type="file" id="fileInput" class="hidden" />
           <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
           <button class="icon-btn" id="giftBtn" title="Send a naughty gift">🎁</button>
+          <button class="icon-btn" id="rpBtn" title="Start a roleplay story">🎭</button>
           <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" />
           <button class="primary" id="sendBtn">Send</button>
         </div>
@@ -606,12 +609,33 @@
       }
     });
 
-    // Load persisted history (text + gifts).
+    // Roleplay picker.
+    const rpPicker = view.querySelector('#rpPicker');
+    const rpBtn = view.querySelector('#rpBtn');
+    rpBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!rpPicker.classList.contains('hidden')) { rpPicker.classList.add('hidden'); return; }
+      giftPicker.classList.add('hidden');
+      await buildRoleplayPicker(rpPicker);
+      rpPicker.classList.remove('hidden');
+    });
+    document.addEventListener('click', function onRpDocClick(ev) {
+      if (!document.body.contains(rpPicker)) { document.removeEventListener('click', onRpDocClick); return; }
+      if (!rpPicker.contains(ev.target) && ev.target !== rpBtn) rpPicker.classList.add('hidden');
+    });
+
+    // Load persisted history (text + gifts + roleplay narration).
     try {
       const { messages } = await api.get(`/api/users/${peer.id}/messages`);
       messages.forEach((m) => appendMessage(m));
     } catch (_e) {}
     scrollBody();
+
+    // Restore any active roleplay progress banner for this conversation.
+    try {
+      const { session } = await api.get(`/api/roleplay/session/${peer.id}`);
+      updateRoleplayBar(session);
+    } catch (_e) { updateRoleplayBar(null); }
   }
 
   function chatBody() { return document.getElementById('chatBody'); }
@@ -653,7 +677,102 @@
   // Route a message object (from history or live) to the right bubble.
   function appendMessage(m) {
     if (m.kind === 'gift') appendGiftBubble(m.body, m.mine, m.at);
+    else if (m.kind === 'narration') appendNarrationBubble(m.body, m.at);
     else appendTextBubble(m.body, m.mine, m.at);
+  }
+
+  // Roleplay narration card. `raw` is the JSON payload stored in the message.
+  function appendNarrationBubble(raw, at) {
+    const b = chatBody();
+    if (!b) return;
+    let p = {};
+    try { p = typeof raw === 'string' ? JSON.parse(raw) : (raw || {}); } catch (_e) { p = {}; }
+    const label = p.final
+      ? '🎬 The End'
+      : `🎭 ${esc(p.title || 'Roleplay')} · Stage ${(p.stage || 0) + 1}/${p.total || 1}`;
+    const card = el(`
+      <div class="narration">
+        <div class="narration-head">${label}</div>
+        ${p.image ? `<img class="narration-img" src="${esc(p.image)}" loading="lazy" />` : ''}
+        <div class="narration-text"></div>
+        <div class="time">${fmtTime(at)}</div>
+      </div>
+    `);
+    card.querySelector('.narration-text').textContent = p.final
+      ? 'Your story is complete. Start another anytime with 🎭.'
+      : (p.narration || '');
+    const img = card.querySelector('.narration-img');
+    if (img) img.addEventListener('click', () => openLightbox(p.image));
+    b.appendChild(card);
+    scrollBody();
+  }
+
+  // Populate the roleplay picker with the catalog.
+  async function buildRoleplayPicker(picker) {
+    picker.innerHTML = '<div class="gift-picker-title">Loading roleplays…</div>';
+    let roleplays = [];
+    try { roleplays = (await api.get('/api/roleplay')).roleplays || []; } catch (_e) { roleplays = []; }
+    picker.innerHTML = '';
+    picker.appendChild(el('<div class="gift-picker-title">Start a roleplay story</div>'));
+    if (!roleplays.length) {
+      picker.appendChild(el('<div class="hint" style="padding:6px 2px">No roleplays available yet. The admin can add them from the dashboard.</div>'));
+      return;
+    }
+    const list = el('<div class="rp-list"></div>');
+    roleplays.forEach((rp) => {
+      const item = el(`
+        <button class="rp-item" title="${esc(rp.description || rp.title)}">
+          ${rp.cover ? `<img class="rp-cover" src="${esc(rp.cover)}" />` : '<span class="rp-cover rp-cover-ph">🎭</span>'}
+          <span class="rp-item-body">
+            <span class="rp-item-title">${esc(rp.title)}</span>
+            <span class="rp-item-meta">${rp.stageCount} stage${rp.stageCount === 1 ? '' : 's'} · ${rp.requiredMessages} msgs each</span>
+          </span>
+        </button>
+      `);
+      item.addEventListener('click', () => { startRoleplay(rp.id); picker.classList.add('hidden'); });
+      list.appendChild(item);
+    });
+    picker.appendChild(list);
+  }
+
+  function startRoleplay(roleplayId) {
+    if (!state.peer || !state.socket) return;
+    state.socket.emit('roleplay:start', { to: state.peer.id, roleplayId }, (res) => {
+      if (res && res.error) return notify(res.error);
+      // The first narration + progress arrive over the socket.
+    });
+  }
+
+  function stopRoleplay() {
+    if (!state.peer || !state.socket) return;
+    if (!confirm('End this roleplay?')) return;
+    state.socket.emit('roleplay:stop', { to: state.peer.id }, (res) => {
+      if (res && res.error) return notify(res.error);
+      updateRoleplayBar(null);
+    });
+  }
+
+  // Render/refresh the roleplay progress banner for the open chat.
+  function updateRoleplayBar(p) {
+    const bar = document.getElementById('roleplayBar');
+    if (!bar) return;
+    if (!p || p.status !== 'active') { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
+    const meDone = p.myCount >= p.required;
+    const peerDone = p.peerCount >= p.required;
+    bar.innerHTML = `
+      <div class="rp-bar-main">
+        <span class="rp-bar-title">🎭 ${esc(p.title)}</span>
+        <span class="rp-bar-stage">Stage ${(p.stage || 0) + 1}/${p.total}</span>
+      </div>
+      <div class="rp-bar-progress">
+        <span class="${meDone ? 'done' : ''}">You ${Math.min(p.myCount, p.required)}/${p.required}${meDone ? ' ✓' : ''}</span>
+        <span class="${peerDone ? 'done' : ''}">Partner ${Math.min(p.peerCount, p.required)}/${p.required}${peerDone ? ' ✓' : ''}</span>
+      </div>
+      <button class="ghost small" id="rpEnd">End</button>
+    `;
+    bar.classList.remove('hidden');
+    const end = bar.querySelector('#rpEnd');
+    if (end) end.addEventListener('click', stopRoleplay);
   }
 
   function appendGiftBubble(giftId, mine, at) {
@@ -759,6 +878,12 @@
     s.on('chat:typing', (p) => {
       const peerId = state.peer && state.peer.id;
       if (peerId && p.from === peerId) showTyping();
+    });
+
+    s.on('roleplay:progress', (p) => {
+      const peerId = state.peer && state.peer.id;
+      // Only update the banner when the progress is for the open conversation.
+      if (peerId && p && p.peerId === peerId) updateRoleplayBar(p);
     });
 
     s.on('connect_error', () => { /* auth or network issue; UI still works for browsing */ });

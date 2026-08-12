@@ -451,6 +451,155 @@ router.delete('/events/:id', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+/* ---------------- Roleplay stories ----------------
+   Interactive stories users play out in chat. Each roleplay has ordered stages
+   (narration + optional image/gif). Stage images arrive as multipart fields
+   named `stage_image_<index>`; the cover as `cover`. */
+
+// Parse the posted stages, resolving each stage's image to either a freshly
+// uploaded file, a retained existing filename, or none. Returns
+// { value: [{narration, image}], retained: Set } or { error }.
+function normalizeStages(rawStages, fileByField) {
+  const arr = parseJson(rawStages, null);
+  if (!Array.isArray(arr) || arr.length === 0) return { error: 'Add at least one stage.' };
+  const out = [];
+  const retained = new Set();
+  for (let i = 0; i < arr.length; i++) {
+    const s = arr[i] || {};
+    const narration = (typeof s.narration === 'string' ? s.narration : '').trim();
+    const uploaded = fileByField['stage_image_' + i];
+    let image = null;
+    if (uploaded) {
+      image = uploaded.filename;
+    } else if (s.existingImage && typeof s.existingImage === 'string') {
+      image = path.basename(s.existingImage);
+      retained.add(image);
+    }
+    if (!narration && !image) {
+      return { error: `Stage ${i + 1} needs a narration or an image.` };
+    }
+    out.push({ narration: narration.slice(0, 4000), image });
+  }
+  return { value: out, retained };
+}
+
+function indexFiles(req) {
+  const map = {};
+  (req.files || []).forEach((f) => { map[f.fieldname] = f; });
+  return map;
+}
+function cleanupFiles(req) {
+  (req.files || []).forEach((f) => removeUpload(f.filename));
+}
+function parseRequired(raw) {
+  const n = parseInt(raw, 10);
+  return n >= 1 && n <= 100 ? n : 10;
+}
+
+// GET /api/admin/roleplays — full roleplays including stages.
+router.get('/roleplays', requireAdmin, (req, res) => {
+  const rows = db.prepare('SELECT * FROM roleplays ORDER BY created_at DESC').all();
+  res.json({
+    roleplays: rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      description: r.description,
+      cover: r.cover ? `/uploads/${r.cover}` : null,
+      requiredMessages: r.required_messages,
+      stages: db
+        .prepare('SELECT id, stage_index, narration, image FROM roleplay_stages WHERE roleplay_id = ? ORDER BY stage_index')
+        .all(r.id)
+        .map((s) => ({
+          index: s.stage_index,
+          narration: s.narration,
+          image: s.image ? `/uploads/${s.image}` : null,
+          imageRaw: s.image || null,
+        })),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    })),
+  });
+});
+
+// POST /api/admin/roleplays  (multipart: cover + stage_image_<i>)
+router.post('/roleplays', requireAdmin, imageUpload.any(), (req, res) => {
+  const fileByField = indexFiles(req);
+  const title = ((req.body && req.body.title) || '').trim();
+  if (!title) { cleanupFiles(req); return res.status(400).json({ error: 'Title is required.' }); }
+  const stages = normalizeStages(req.body && req.body.stages, fileByField);
+  if (stages.error) { cleanupFiles(req); return res.status(400).json({ error: stages.error }); }
+
+  const description = ((req.body && req.body.description) || '').trim().slice(0, 1000);
+  const required = parseRequired(req.body && req.body.requiredMessages);
+  const cover = fileByField.cover ? fileByField.cover.filename : null;
+  const now = Date.now();
+
+  const info = db
+    .prepare('INSERT INTO roleplays (title, description, cover, required_messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(title.slice(0, 200), description, cover, required, now, now);
+  const rpId = info.lastInsertRowid;
+  const insStage = db.prepare('INSERT INTO roleplay_stages (roleplay_id, stage_index, narration, image, created_at) VALUES (?, ?, ?, ?, ?)');
+  stages.value.forEach((s, i) => insStage.run(rpId, i, s.narration, s.image, now));
+
+  res.status(201).json({ id: rpId });
+});
+
+// PUT /api/admin/roleplays/:id  (multipart: cover + stage_image_<i>)
+router.put('/roleplays/:id', requireAdmin, imageUpload.any(), (req, res) => {
+  const rp = db.prepare('SELECT * FROM roleplays WHERE id = ?').get(req.params.id);
+  if (!rp) { cleanupFiles(req); return res.status(404).json({ error: 'Roleplay not found.' }); }
+  const fileByField = indexFiles(req);
+
+  const title = ((req.body && req.body.title) || '').trim();
+  if (!title) { cleanupFiles(req); return res.status(400).json({ error: 'Title is required.' }); }
+  const stages = normalizeStages(req.body && req.body.stages, fileByField);
+  if (stages.error) { cleanupFiles(req); return res.status(400).json({ error: stages.error }); }
+
+  const description = ((req.body && req.body.description) || '').trim().slice(0, 1000);
+  const required = parseRequired(req.body && req.body.requiredMessages);
+  const now = Date.now();
+
+  // Cover: new upload replaces; else keep when keepCover is set, otherwise drop.
+  let cover = rp.cover;
+  if (fileByField.cover) {
+    if (cover) removeUpload(cover);
+    cover = fileByField.cover.filename;
+  } else if (!(req.body && (req.body.keepCover === 'true' || req.body.keepCover === '1'))) {
+    if (cover) removeUpload(cover);
+    cover = null;
+  }
+
+  // Remove any old stage images that are not being retained.
+  const oldImages = db
+    .prepare('SELECT image FROM roleplay_stages WHERE roleplay_id = ? AND image IS NOT NULL')
+    .all(rp.id)
+    .map((r) => r.image);
+  oldImages.forEach((img) => { if (!stages.retained.has(img)) removeUpload(img); });
+
+  db.prepare('DELETE FROM roleplay_stages WHERE roleplay_id = ?').run(rp.id);
+  const insStage = db.prepare('INSERT INTO roleplay_stages (roleplay_id, stage_index, narration, image, created_at) VALUES (?, ?, ?, ?, ?)');
+  stages.value.forEach((s, i) => insStage.run(rp.id, i, s.narration, s.image, now));
+
+  db.prepare('UPDATE roleplays SET title = ?, description = ?, cover = ?, required_messages = ?, updated_at = ? WHERE id = ?')
+    .run(title.slice(0, 200), description, cover, required, now, rp.id);
+
+  res.json({ ok: true });
+});
+
+// DELETE /api/admin/roleplays/:id
+router.delete('/roleplays/:id', requireAdmin, (req, res) => {
+  const rp = db.prepare('SELECT id, cover FROM roleplays WHERE id = ?').get(req.params.id);
+  if (!rp) return res.status(404).json({ error: 'Roleplay not found.' });
+  const images = db
+    .prepare('SELECT image FROM roleplay_stages WHERE roleplay_id = ? AND image IS NOT NULL')
+    .all(rp.id)
+    .map((r) => r.image);
+  db.prepare('DELETE FROM roleplays WHERE id = ?').run(rp.id); // cascades stages + sessions
+  removeUpload(rp.cover);
+  images.forEach(removeUpload);
+  res.json({ ok: true });
+});
+
 /* ---------------- Leaderboard (read-only view for admins) ---------------- */
 
 // GET /api/admin/leaderboard — same ranking users see, for oversight.

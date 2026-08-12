@@ -6,6 +6,7 @@ const config = require('./config');
 const { userFromToken } = require('./auth');
 const { areBlocked } = require('./relations');
 const { getGift } = require('./gifts');
+const roleplay = require('./roleplay');
 
 // Map of userId -> Set of socket ids (a user may have multiple tabs open).
 const online = new Map();
@@ -24,6 +25,44 @@ function removeSocket(userId, socketId) {
 
 function isOnline(userId) {
   return online.has(userId);
+}
+
+/* --------------------------------------------------------------------------
+   Roleplay delivery helpers
+-------------------------------------------------------------------------- */
+
+// Persist a narration card as a kind='narration' message and deliver it to
+// both users in the pair (body is the JSON stage payload).
+function deliverNarration(io, a, b, payload) {
+  const now = Date.now();
+  const body = JSON.stringify(payload);
+  const info = db
+    .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at) VALUES (?, ?, ?, 'narration', ?)")
+    .run(a, b, body, now);
+  const msg = { id: info.lastInsertRowid, from: a, to: b, body, kind: 'narration', at: now };
+  io.to(`user:${a}`).emit('chat:message', { ...msg, mine: true });
+  io.to(`user:${b}`).emit('chat:message', { ...msg, mine: false });
+}
+
+function emitRoleplayProgress(io, a, b, session) {
+  io.to(`user:${a}`).emit('roleplay:progress', roleplay.progressState(session, a));
+  io.to(`user:${b}`).emit('roleplay:progress', roleplay.progressState(session, b));
+}
+
+// Act on a recordMessage()/start outcome: reveal narration + push progress.
+function applyRoleplayOutcome(io, senderId, otherId, outcome) {
+  if (!outcome) return;
+  if (outcome.type === 'advance') {
+    deliverNarration(io, senderId, otherId,
+      roleplay.stagePayload(outcome.roleplay, outcome.stageRow, outcome.stageIndex, outcome.total, false));
+    emitRoleplayProgress(io, senderId, otherId, outcome.session);
+  } else if (outcome.type === 'complete') {
+    deliverNarration(io, senderId, otherId,
+      roleplay.stagePayload(outcome.roleplay, null, outcome.total, outcome.total, true));
+    emitRoleplayProgress(io, senderId, otherId, outcome.session);
+  } else if (outcome.type === 'progress') {
+    emitRoleplayProgress(io, senderId, otherId, outcome.session);
+  }
 }
 
 function initSocket(io) {
@@ -71,6 +110,10 @@ function initSocket(io) {
         // Deliver to recipient's sockets and echo to sender's other tabs.
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
         socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
+
+        // Count the message toward any active roleplay; reveal the next stage
+        // when both players have hit the threshold.
+        applyRoleplayOutcome(io, me.id, to, roleplay.recordMessage(me.id, to));
 
         ack && ack({ ok: true, message: { ...msg, mine: true } });
       } catch (e) {
@@ -141,6 +184,46 @@ function initSocket(io) {
         socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
 
         ack && ack({ ok: true, message: { ...msg, mine: true } });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // Start (or restart) a roleplay with another user. Reveals the first
+    // stage's narration to both.
+    socket.on('roleplay:start', (payload, ack) => {
+      try {
+        const to = parseInt(payload && payload.to, 10);
+        const roleplayId = parseInt(payload && payload.roleplayId, 10);
+        if (!to || !roleplayId) return ack && ack({ error: 'Invalid roleplay.' });
+
+        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
+        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
+        if (areBlocked(me.id, to)) {
+          return ack && ack({ error: 'You cannot start a roleplay — a block is in place.' });
+        }
+
+        const started = roleplay.startSession(roleplayId, me.id, to);
+        if (started.error) return ack && ack({ error: started.error });
+
+        deliverNarration(io, me.id, to,
+          roleplay.stagePayload(started.roleplay, started.stageRow, 0, started.total, false));
+        emitRoleplayProgress(io, me.id, to, started.session);
+
+        ack && ack({ ok: true });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // Cancel the active roleplay with another user.
+    socket.on('roleplay:stop', (payload, ack) => {
+      try {
+        const to = parseInt(payload && payload.to, 10);
+        if (!to) return ack && ack({ error: 'Invalid request.' });
+        const session = roleplay.stopSession(me.id, to);
+        if (session) emitRoleplayProgress(io, me.id, to, session);
+        ack && ack({ ok: true });
       } catch (e) {
         ack && ack({ error: 'Server error.' });
       }

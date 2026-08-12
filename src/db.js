@@ -273,6 +273,50 @@ db.exec(`
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
+
+  /* ---------------- Roleplay stories ----------------
+     Admin-authored interactive stories two users play out in chat. A roleplay
+     has an ordered list of stages, each with a narration and an optional
+     image/gif. required_messages is how many messages EACH user must send in a
+     stage before the next stage's narration is revealed. */
+  CREATE TABLE IF NOT EXISTS roleplays (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    title             TEXT NOT NULL,
+    description       TEXT NOT NULL DEFAULT '',
+    cover             TEXT,                      -- optional filename in uploads/
+    required_messages INTEGER NOT NULL DEFAULT 10,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS roleplay_stages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    roleplay_id INTEGER NOT NULL REFERENCES roleplays(id) ON DELETE CASCADE,
+    stage_index INTEGER NOT NULL,                -- 0-based order
+    narration   TEXT NOT NULL DEFAULT '',
+    image       TEXT,                            -- optional filename in uploads/
+    created_at  INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_roleplay_stages
+    ON roleplay_stages (roleplay_id, stage_index);
+
+  -- One active playthrough per pair of users. The pair is stored normalized
+  -- (user_lo < user_hi); count_lo/count_hi track messages each has sent in the
+  -- current stage and reset to 0 when the stage advances.
+  CREATE TABLE IF NOT EXISTS roleplay_sessions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    roleplay_id   INTEGER NOT NULL REFERENCES roleplays(id) ON DELETE CASCADE,
+    user_lo       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_hi       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    current_stage INTEGER NOT NULL DEFAULT 0,
+    count_lo      INTEGER NOT NULL DEFAULT 0,
+    count_hi      INTEGER NOT NULL DEFAULT 0,
+    status        TEXT NOT NULL DEFAULT 'active', -- 'active' | 'completed'
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_roleplay_sessions_pair
+    ON roleplay_sessions (user_lo, user_hi, status);
 `);
 
 // Seed the single admin row (email from config). Never overwrites an existing
