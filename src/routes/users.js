@@ -39,7 +39,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
 
   const rows = db
     .prepare(
-      `SELECT id, sender_id, recipient_id, body, created_at
+      `SELECT id, sender_id, recipient_id, body, kind, created_at
        FROM messages
        WHERE (sender_id = ? AND recipient_id = ?)
           OR (sender_id = ? AND recipient_id = ?)
@@ -54,6 +54,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       from: m.sender_id,
       to: m.recipient_id,
       body: m.body,
+      kind: m.kind || 'text',
       at: m.created_at,
       mine: m.sender_id === req.user.id,
     })),

@@ -11,7 +11,23 @@
     peopleCache: [],
     chatPeers: {},       // id -> peer summary for people we've chatted with
     typingTimer: null,
+    gifts: null,         // naughty-gift catalog, loaded lazily
+    giftsById: {},       // id -> gift for rendering
   };
+
+  // Fetch (and cache) the naughty-gift catalog.
+  async function loadGifts() {
+    if (state.gifts) return state.gifts;
+    try {
+      const { gifts } = await api.get('/api/social/gifts');
+      state.gifts = gifts || [];
+      state.giftsById = {};
+      state.gifts.forEach((g) => { state.giftsById[g.id] = g; });
+    } catch (_e) {
+      state.gifts = [];
+    }
+    return state.gifts;
+  }
 
   /* ---------- helpers ---------- */
   function esc(s) {
@@ -453,6 +469,7 @@
     connectSocket();
     renderList();
     refreshRequestBadge();
+    loadGifts(); // preload so live gifts render with the right emoji/name
   }
 
   // Update the sidebar "Requests" badge with the number of incoming requests.
@@ -531,9 +548,11 @@
         </div>
         <div class="chat-body" id="chatBody"></div>
         <div class="typing hidden" id="typing">typing…</div>
+        <div class="gift-picker hidden" id="giftPicker"></div>
         <div class="composer">
           <input type="file" id="fileInput" class="hidden" />
           <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
+          <button class="icon-btn" id="giftBtn" title="Send a naughty gift">🎁</button>
           <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" />
           <button class="primary" id="sendBtn">Send</button>
         </div>
@@ -564,10 +583,33 @@
       fileInput.value = '';
     });
 
-    // Load persisted text history.
+    // Naughty gift picker.
+    const giftPicker = view.querySelector('#giftPicker');
+    const giftBtn = view.querySelector('#giftBtn');
+    giftBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!giftPicker.classList.contains('hidden')) {
+        giftPicker.classList.add('hidden');
+        return;
+      }
+      await buildGiftPicker(giftPicker);
+      giftPicker.classList.remove('hidden');
+    });
+    // Dismiss the picker when clicking elsewhere.
+    document.addEventListener('click', function onDocClick(ev) {
+      if (!document.body.contains(giftPicker)) {
+        document.removeEventListener('click', onDocClick);
+        return;
+      }
+      if (!giftPicker.contains(ev.target) && ev.target !== giftBtn) {
+        giftPicker.classList.add('hidden');
+      }
+    });
+
+    // Load persisted history (text + gifts).
     try {
       const { messages } = await api.get(`/api/users/${peer.id}/messages`);
-      messages.forEach((m) => appendTextBubble(m.body, m.mine, m.at));
+      messages.forEach((m) => appendMessage(m));
     } catch (_e) {}
     scrollBody();
   }
@@ -606,6 +648,56 @@
     bubble.appendChild(el(`<span class="time">${fmtTime(meta.at || Date.now())}</span>`));
     b.appendChild(bubble);
     scrollBody();
+  }
+
+  // Route a message object (from history or live) to the right bubble.
+  function appendMessage(m) {
+    if (m.kind === 'gift') appendGiftBubble(m.body, m.mine, m.at);
+    else appendTextBubble(m.body, m.mine, m.at);
+  }
+
+  function appendGiftBubble(giftId, mine, at) {
+    const b = chatBody();
+    if (!b) return;
+    const gift = state.giftsById[giftId] || { emoji: '🎁', name: 'Gift' };
+    const bubble = el(`
+      <div class="bubble gift ${mine ? 'me' : 'them'}">
+        <span class="gift-emoji">${esc(gift.emoji)}</span>
+        <span class="gift-name">${mine ? 'You sent' : 'Sent you'} a ${esc(gift.name)}</span>
+      </div>
+    `);
+    bubble.appendChild(el(`<span class="time">${fmtTime(at)}</span>`));
+    b.appendChild(bubble);
+    scrollBody();
+  }
+
+  // Populate the gift picker grid (lazy-loads the catalog once).
+  async function buildGiftPicker(picker) {
+    const gifts = await loadGifts();
+    picker.innerHTML = '';
+    if (!gifts.length) {
+      picker.appendChild(el('<div class="hint" style="padding:10px">No gifts available.</div>'));
+      return;
+    }
+    picker.appendChild(el('<div class="gift-picker-title">Send a naughty gift</div>'));
+    const grid = el('<div class="gift-grid"></div>');
+    gifts.forEach((g) => {
+      const cell = el(`<button class="gift-cell" title="${esc(g.name)}"><span class="gift-emoji">${esc(g.emoji)}</span><span class="gift-cell-name">${esc(g.name)}</span></button>`);
+      cell.addEventListener('click', () => {
+        sendGift(g.id);
+        picker.classList.add('hidden');
+      });
+      grid.appendChild(cell);
+    });
+    picker.appendChild(grid);
+  }
+
+  function sendGift(giftId) {
+    if (!state.peer || !state.socket) return;
+    state.socket.emit('chat:gift', { to: state.peer.id, gift: giftId }, (res) => {
+      if (res && res.error) return notify(res.error);
+      appendGiftBubble(giftId, true, (res && res.message && res.message.at) || Date.now());
+    });
   }
 
   function sendMessage(input) {
@@ -649,7 +741,7 @@
       if (!state.chatPeers[m.to] && m.to !== state.me.id) rememberPeer(m.to);
       const peerId = state.peer && state.peer.id;
       const relevant = peerId && (m.from === peerId || m.to === peerId);
-      if (relevant) appendTextBubble(m.body, m.mine, m.at);
+      if (relevant) appendMessage(m);
       if (state.tab === 'chats') renderList();
     });
 
@@ -788,6 +880,7 @@
           <div class="pro-actions pv-actions">
             ${!isMe ? '<button class="primary" id="pvChat">💬 Message</button>' : ''}
             ${!isMe ? `<span id="pvFriend"></span>` : ''}
+            ${!isMe ? `<span id="pvBlock"></span>` : ''}
             ${isMe ? '<button class="ghost" id="pvEdit">✎ Edit profile</button>' : ''}
           </div>
         </div>
@@ -845,9 +938,13 @@
       });
     }
 
-    /* ----- friend button ----- */
+    /* ----- friend & block buttons ----- */
+    const anyBlock = !isMe && profile.blocked && (profile.blocked.iBlocked || profile.blocked.blockedMe);
     const friendSlot = view.querySelector('#pvFriend');
-    if (friendSlot) renderFriendButton(friendSlot, profile, () => showProfile(username));
+    // No friend actions while a block is in place either way.
+    if (friendSlot && !anyBlock) renderFriendButton(friendSlot, profile, () => showProfile(username));
+    const blockSlot = view.querySelector('#pvBlock');
+    if (blockSlot) renderBlockButton(blockSlot, profile, () => showProfile(username));
 
     /* ----- gallery ----- */
     const gal = view.querySelector('#pvGallery');
@@ -981,9 +1078,42 @@
     const editBtn = view.querySelector('#pvEdit');
     if (editBtn) editBtn.addEventListener('click', () => renderProfileEditor(false));
     const chatBtn = view.querySelector('#pvChat');
-    if (chatBtn) chatBtn.addEventListener('click', () => openChat({
-      id: profile.id, username: profile.username, displayName: profile.displayName, avatar: profile.avatar,
-    }));
+    if (chatBtn) {
+      if (anyBlock) {
+        chatBtn.remove(); // can't message across a block
+      } else {
+        chatBtn.addEventListener('click', () => openChat({
+          id: profile.id, username: profile.username, displayName: profile.displayName, avatar: profile.avatar,
+        }));
+      }
+    }
+  }
+
+  // Render the contextual block/unblock control into `slot`.
+  function renderBlockButton(slot, profile, refresh) {
+    slot.innerHTML = '';
+    const u = encodeURIComponent(profile.username);
+    const act = async (fn, confirmMsg) => {
+      if (confirmMsg && !confirm(confirmMsg)) return;
+      try { await fn(); refreshRequestBadge(); refresh(); } catch (e) { alert(e.message); }
+    };
+    const b = profile.blocked || {};
+    if (b.iBlocked) {
+      slot.appendChild(el('<span class="pill danger-pill">🚫 Blocked</span>'));
+      const btn = el('<button class="ghost small">Unblock</button>');
+      btn.addEventListener('click', () => act(() => api.del('/api/social/block/' + u)));
+      slot.appendChild(btn);
+    } else if (b.blockedMe) {
+      // They've blocked you — no actions are possible.
+      slot.appendChild(el('<span class="pill">Unavailable</span>'));
+    } else {
+      const btn = el('<button class="ghost small">🚫 Block</button>');
+      btn.addEventListener('click', () => act(
+        () => api.post('/api/social/block/' + u),
+        'Block @' + profile.username + '? This removes any friendship and stops all messages and gifts between you.'
+      ));
+      slot.appendChild(btn);
+    }
   }
 
   // Render the contextual friend action button into `slot` based on state.

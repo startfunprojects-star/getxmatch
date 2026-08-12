@@ -5,6 +5,8 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../auth');
 const { friendState, ratingSummary } = require('../profileData');
+const { areBlocked } = require('../relations');
+const { GIFTS } = require('../gifts');
 
 const router = express.Router();
 
@@ -126,6 +128,9 @@ router.post('/friend/:username', requireAuth, (req, res) => {
   if (target.id === req.user.id) {
     return res.status(400).json({ error: 'You cannot friend yourself.' });
   }
+  if (areBlocked(req.user.id, target.id)) {
+    return res.status(403).json({ error: 'You cannot send a request while a block is in place.' });
+  }
 
   const row = existingFriendship(req.user.id, target.id);
   if (row) {
@@ -224,6 +229,77 @@ router.get('/friends', requireAuth, (req, res) => {
     incoming: incoming.map(map),
     outgoing: outgoing.map(map),
   });
+});
+
+/* ---------------------------------------------------------------------------
+   Blocks
+--------------------------------------------------------------------------- */
+
+// POST /api/social/block/:username — block a user. Also tears down any
+// friendship or pending request between the two.
+router.post('/block/:username', requireAuth, (req, res) => {
+  const target = resolveTarget(req, res);
+  if (!target) return;
+  if (target.id === req.user.id) {
+    return res.status(400).json({ error: 'You cannot block yourself.' });
+  }
+
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO blocks (blocker_id, blocked_id, created_at) VALUES (?, ?, ?)
+     ON CONFLICT(blocker_id, blocked_id) DO NOTHING`
+  ).run(req.user.id, target.id, now);
+
+  // Remove any friendship/request in either direction.
+  db.prepare(
+    `DELETE FROM friendships
+     WHERE (requester_id = ? AND addressee_id = ?)
+        OR (requester_id = ? AND addressee_id = ?)`
+  ).run(req.user.id, target.id, target.id, req.user.id);
+
+  res.json({ state: 'blocked' });
+});
+
+// DELETE /api/social/block/:username — unblock a user.
+router.delete('/block/:username', requireAuth, (req, res) => {
+  const target = resolveTarget(req, res);
+  if (!target) return;
+  db.prepare('DELETE FROM blocks WHERE blocker_id = ? AND blocked_id = ?').run(
+    req.user.id,
+    target.id
+  );
+  res.json({ state: 'none' });
+});
+
+// GET /api/social/blocked — the users I have blocked
+router.get('/blocked', requireAuth, (req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT u.id, u.username, p.display_name, p.avatar
+       FROM blocks b
+       JOIN users u ON u.id = b.blocked_id
+       JOIN profiles p ON p.user_id = u.id
+       WHERE b.blocker_id = ?
+       ORDER BY b.created_at DESC`
+    )
+    .all(req.user.id);
+  res.json({
+    blocked: rows.map((r) => ({
+      id: r.id,
+      username: r.username,
+      displayName: r.display_name || r.username,
+      avatar: r.avatar ? `/uploads/${r.avatar}` : null,
+    })),
+  });
+});
+
+/* ---------------------------------------------------------------------------
+   Gifts
+--------------------------------------------------------------------------- */
+
+// GET /api/social/gifts — catalog of naughty gifts sendable in chat.
+router.get('/gifts', requireAuth, (_req, res) => {
+  res.json({ gifts: GIFTS });
 });
 
 module.exports = router;

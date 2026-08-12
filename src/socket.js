@@ -4,6 +4,8 @@ const cookie = require('cookie');
 const db = require('./db');
 const config = require('./config');
 const { userFromToken } = require('./auth');
+const { areBlocked } = require('./relations');
+const { getGift } = require('./gifts');
 
 // Map of userId -> Set of socket ids (a user may have multiple tabs open).
 const online = new Map();
@@ -55,13 +57,16 @@ function initSocket(io) {
 
         const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
+        if (areBlocked(me.id, to)) {
+          return ack && ack({ error: 'You cannot message this user — a block is in place.' });
+        }
 
         const now = Date.now();
         const info = db
-          .prepare('INSERT INTO messages (sender_id, recipient_id, body, created_at) VALUES (?, ?, ?, ?)')
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at) VALUES (?, ?, ?, 'text', ?)")
           .run(me.id, to, body, now);
 
-        const msg = { id: info.lastInsertRowid, from: me.id, to, body, at: now };
+        const msg = { id: info.lastInsertRowid, from: me.id, to, body, kind: 'text', at: now };
 
         // Deliver to recipient's sockets and echo to sender's other tabs.
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
@@ -87,6 +92,9 @@ function initSocket(io) {
         if (size > config.maxChatFileBytes) {
           return ack && ack({ error: 'File exceeds the size limit.' });
         }
+        if (areBlocked(me.id, to)) {
+          return ack && ack({ error: 'You cannot share files with this user — a block is in place.' });
+        }
         if (!isOnline(to)) {
           return ack && ack({ error: 'Recipient is offline. Files are only delivered live and are never stored.' });
         }
@@ -103,6 +111,36 @@ function initSocket(io) {
 
         io.to(`user:${to}`).emit('chat:file', meta);
         ack && ack({ ok: true });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // Naughty gift → persisted like a message (kind='gift', body holds the
+    // gift id) so it shows in history, then delivered live if online.
+    socket.on('chat:gift', (payload, ack) => {
+      try {
+        const to = parseInt(payload && payload.to, 10);
+        const gift = getGift(payload && payload.gift);
+        if (!to || !gift) return ack && ack({ error: 'Invalid gift.' });
+
+        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
+        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
+        if (areBlocked(me.id, to)) {
+          return ack && ack({ error: 'You cannot send a gift to this user — a block is in place.' });
+        }
+
+        const now = Date.now();
+        const info = db
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at) VALUES (?, ?, ?, 'gift', ?)")
+          .run(me.id, to, gift.id, now);
+
+        const msg = { id: info.lastInsertRowid, from: me.id, to, body: gift.id, kind: 'gift', at: now };
+
+        io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
+        socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
+
+        ack && ack({ ok: true, message: { ...msg, mine: true } });
       } catch (e) {
         ack && ack({ error: 'Server error.' });
       }

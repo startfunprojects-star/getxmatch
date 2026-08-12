@@ -409,6 +409,34 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .req-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .req-actions .pill { background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
 
+/* ---------- Naughty gifts ---------- */
+.pro-actions #pvBlock { display: inline-flex; gap: 8px; align-items: center; }
+.pill.danger-pill { color: var(--danger); border: 1px solid var(--danger); border-radius: 999px; padding: 3px 10px; }
+
+/* Gift bubble in the chat stream. */
+.bubble.gift { display: inline-flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; padding: 12px 18px; }
+.bubble.gift .gift-emoji { font-size: 40px; line-height: 1; }
+.bubble.gift .gift-name { font-size: 12px; opacity: .85; }
+
+/* Gift picker popover, sits just above the composer. */
+.gift-picker {
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 12px 16px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.gift-picker-title { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+.gift-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 8px; }
+.gift-cell {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: var(--bg-3); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 6px; cursor: pointer; transition: border-color .12s, transform .12s;
+}
+.gift-cell:hover { border-color: var(--accent); transform: translateY(-2px); }
+.gift-cell .gift-emoji { font-size: 28px; line-height: 1; }
+.gift-cell .gift-cell-name { font-size: 11px; color: var(--muted); }
+
 /* ---------- Admin: content management ---------- */
 .admin-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
 .admin-tabs button.active { background: var(--bg-3); border: 1px solid var(--accent); }

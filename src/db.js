@@ -102,6 +102,18 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_friendships_addressee
     ON friendships (addressee_id, status);
 
+  -- Blocks. blocker_id has blocked blocked_id. A block is directional in
+  -- storage but communication is cut both ways: either party blocking the
+  -- other prevents friend requests, chat messages, files and gifts between
+  -- them (see areBlocked() in src/relations.js).
+  CREATE TABLE IF NOT EXISTS blocks (
+    blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (blocker_id, blocked_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks (blocked_id);
+
   -- Single admin account (id is always 1). password_hash is null until the
   -- admin sets it via an emailed link.
   CREATE TABLE IF NOT EXISTS admin_account (
@@ -180,6 +192,16 @@ db.exec(`
     if (!cols.includes(name)) {
       db.exec(`ALTER TABLE profiles ADD COLUMN ${name} ${type};`);
     }
+  }
+})();
+
+// --- Migration: tag each chat message with a `kind` so gift messages can be
+// distinguished from plain text. Older rows default to 'text'. For gifts the
+// body holds the gift id (see src/gifts.js).
+(function migrateMessageKind() {
+  const cols = db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
+  if (!cols.includes('kind')) {
+    db.exec("ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'text';");
   }
 })();
 

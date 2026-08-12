@@ -2,6 +2,7 @@
 
 const db = require('./db');
 const { ageFromDob } = require('./profileFields');
+const { blockState } = require('./relations');
 
 // Compute the friendship state between the viewer and a profile owner.
 // Returns one of: 'self' | 'friends' | 'incoming' | 'outgoing' | 'none'.
@@ -134,6 +135,7 @@ function buildProfile(userId, viewerId) {
   // Email is the only private field and is never included in this payload.
   const fState = friendState(row.id, viewerId);
   const friendList = friendsOf(row.id);
+  const blocked = blockState(row.id, viewerId);
 
   return {
     id: row.id,
@@ -163,6 +165,7 @@ function buildProfile(userId, viewerId) {
       list: friendList,
       state: fState,
     },
+    blocked,
     isMe,
     updatedAt: row.updated_at,
   };
