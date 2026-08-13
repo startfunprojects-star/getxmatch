@@ -1,31 +1,16 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
 const cookie = require('cookie');
 const db = require('./db');
 const config = require('./config');
 const { userFromToken } = require('./auth');
 const { areBlocked } = require('./relations');
 const { getGift } = require('./gifts');
-const { getVoice } = require('./voices');
 const roleplay = require('./roleplay');
 
-// Emoji reactions a user may place on a message/gift/voice note. Server-side
-// allow-list so clients can't store arbitrary strings.
+// Emoji reactions a user may place on a message/gift. Server-side allow-list so
+// clients can't store arbitrary strings.
 const REACTION_EMOJIS = new Set(['❤️', '😂', '😮', '😢', '🔥', '👍', '😍', '🙏']);
-
-// Map a recorded/converted audio mime to a stored file extension.
-function voiceExt(mime) {
-  const m = String(mime || '').toLowerCase();
-  if (m.includes('webm')) return '.webm';
-  if (m.includes('ogg')) return '.ogg';
-  if (m.includes('mpeg') || m.includes('mp3')) return '.mp3';
-  if (m.includes('wav')) return '.wav';
-  if (m.includes('mp4') || m.includes('m4a') || m.includes('aac')) return '.m4a';
-  return '.bin';
-}
 
 // Map of userId -> Set of socket ids (a user may have multiple tabs open).
 const online = new Map();
@@ -111,8 +96,6 @@ function replyPreview(replyToId) {
     text = g ? `${g.emoji} ${g.name}` : 'a gift';
   } else if (row.kind === 'narration') {
     text = '🎭 Roleplay';
-  } else if (row.kind === 'voice') {
-    text = '🎤 Voice note';
   }
   return { id: row.id, from: row.sender_id, kind: row.kind || 'text', text: String(text).slice(0, 140) };
 }
@@ -245,46 +228,48 @@ function initSocket(io) {
       }
     });
 
-    // Voice note → the (possibly voice-changed) audio is uploaded here, stored
-    // on disk like profile media, and recorded as a kind='voice' message so it
-    // persists in history and can be reacted to. body holds a small JSON blob
-    // { f: filename, d: durationSeconds, v: voiceName|null }.
-    socket.on('chat:voice', (payload, ack) => {
+    /* --------------------------------------------------------------------
+       Video call signaling. The media itself is peer-to-peer WebRTC; the
+       server only relays SDP offers/answers and ICE candidates between the
+       two users' sockets. Nothing about the call is stored.
+    -------------------------------------------------------------------- */
+
+    // Caller offers a call. Blocked or offline recipients are rejected.
+    socket.on('call:offer', (payload, ack) => {
       try {
         const to = parseInt(payload && payload.to, 10);
-        const data = payload && payload.data;
-        if (!to || !data) return ack && ack({ error: 'Invalid voice note.' });
-
-        const size = data.byteLength != null ? data.byteLength : (data.length || 0);
-        if (!size) return ack && ack({ error: 'Empty recording.' });
-        if (size > config.maxVoiceBytes) return ack && ack({ error: 'Voice note is too long.' });
-
-        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
-        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
-        if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot send a voice note — a block is in place.' });
-        }
-
-        const filename = crypto.randomBytes(16).toString('hex') + voiceExt(payload.mime);
-        fs.writeFileSync(path.join(config.uploadsDir, filename), Buffer.from(data));
-
-        const voice = getVoice(payload && payload.voice);
-        const duration = Math.max(0, Math.min(600, Math.round(Number(payload && payload.duration) || 0)));
-        const body = JSON.stringify({ f: filename, d: duration, v: voice ? voice.name : null });
-
-        const now = Date.now();
-        const info = db
-          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at) VALUES (?, ?, ?, 'voice', ?)")
-          .run(me.id, to, body, now);
-
-        const msg = { id: info.lastInsertRowid, from: me.id, to, body, kind: 'voice', at: now };
-        io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
-        socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
-
-        ack && ack({ ok: true, message: { ...msg, mine: true } });
+        if (!to || !payload.sdp) return ack && ack({ error: 'Invalid call.' });
+        if (areBlocked(me.id, to)) return ack && ack({ error: 'You cannot call this user — a block is in place.' });
+        if (!isOnline(to)) return ack && ack({ error: 'User is offline.' });
+        io.to(`user:${to}`).emit('call:incoming', { from: me.id, fromName: me.username, sdp: payload.sdp });
+        ack && ack({ ok: true });
       } catch (e) {
         ack && ack({ error: 'Server error.' });
       }
+    });
+
+    // Callee accepts and returns an answer.
+    socket.on('call:answer', (payload) => {
+      const to = parseInt(payload && payload.to, 10);
+      if (to && payload.sdp) io.to(`user:${to}`).emit('call:answer', { from: me.id, sdp: payload.sdp });
+    });
+
+    // Trickle ICE candidates in both directions.
+    socket.on('call:ice', (payload) => {
+      const to = parseInt(payload && payload.to, 10);
+      if (to && payload.candidate) io.to(`user:${to}`).emit('call:ice', { from: me.id, candidate: payload.candidate });
+    });
+
+    // Callee rejects the call.
+    socket.on('call:decline', (payload) => {
+      const to = parseInt(payload && payload.to, 10);
+      if (to) io.to(`user:${to}`).emit('call:decline', { from: me.id });
+    });
+
+    // Either side hangs up.
+    socket.on('call:end', (payload) => {
+      const to = parseInt(payload && payload.to, 10);
+      if (to) io.to(`user:${to}`).emit('call:end', { from: me.id });
     });
 
     // Emoji reaction on a message (text/gift/voice). Toggling: same emoji again

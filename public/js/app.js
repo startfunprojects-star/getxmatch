@@ -530,8 +530,6 @@
   async function openChat(peer) {
     state.peer = peer;
     state.replyTo = null; // clear any half-composed reply from a previous chat
-    stopRecording();
-    cancelVoiceDraft();
     closeReactionPalette();
     state.chatPeers[peer.id] = peer;
     document.querySelectorAll('.list-item').forEach((r) =>
@@ -560,7 +558,7 @@
           <input type="file" id="fileInput" class="hidden" />
           <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
           <button class="icon-btn" id="giftBtn" title="Send a naughty gift">🎁</button>
-          <button class="icon-btn" id="micBtn" title="Record a voice note">🎤</button>
+          <button class="icon-btn" id="videoBtn" title="Start a video call">📹</button>
           <button class="icon-btn" id="rpBtn" title="Start a roleplay story">🎭</button>
           <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" />
           <button class="primary" id="sendBtn">Send</button>
@@ -571,8 +569,6 @@
 
     view.querySelector('#backToList').addEventListener('click', () => {
       document.getElementById('shell').classList.remove('viewing-main');
-      stopRecording();
-      cancelVoiceDraft();
       closeReactionPalette();
       state.peer = null;
     });
@@ -595,8 +591,8 @@
       fileInput.value = '';
     });
 
-    // Voice note recorder.
-    view.querySelector('#micBtn').addEventListener('click', toggleRecording);
+    // Video call.
+    view.querySelector('#videoBtn').addEventListener('click', () => startCall(peer));
 
     // Naughty gift picker.
     const giftPicker = view.querySelector('#giftPicker');
@@ -694,7 +690,7 @@
   function appendMessage(m) {
     if (m.kind === 'gift') appendGiftBubble(m);
     else if (m.kind === 'narration') appendNarrationBubble(m.body, m.at);
-    else if (m.kind === 'voice') appendVoiceBubble(m);
+    else if (m.kind === 'voice') return; // legacy voice notes (feature removed)
     else appendTextBubble(m);
   }
 
@@ -814,30 +810,6 @@
     scrollBody();
   }
 
-  // Voice note bubble. m.body is JSON: { f: filename, d: seconds, v: voiceName }.
-  function appendVoiceBubble(m) {
-    const b = chatBody();
-    if (!b) return;
-    let info = {};
-    try { info = JSON.parse(m.body) || {}; } catch (_e) { info = {}; }
-    const bubble = el(`<div class="bubble voice ${m.mine ? 'me' : 'them'}"></div>`);
-    if (m.id) bubble.dataset.id = m.id;
-    if (m.reply) bubble.appendChild(renderQuote(m.reply));
-    const label = el('<div class="voice-label">🎤 Voice note</div>');
-    if (info.v) label.appendChild(el(`<span class="voice-tag">${esc(info.v)} voice</span>`));
-    bubble.appendChild(label);
-    if (info.f) {
-      const audio = el('<audio class="voice-audio" controls preload="metadata"></audio>');
-      audio.src = '/uploads/' + encodeURIComponent(info.f);
-      bubble.appendChild(audio);
-    }
-    if (info.d) bubble.appendChild(el(`<span class="voice-dur">${fmtDur(info.d)}</span>`));
-    bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
-    attachBubbleActions(bubble, m);
-    b.appendChild(bubble);
-    scrollBody();
-  }
-
   // Restart the CSS pop animation on demand (send/receive fires it once; this
   // re-triggers it on click via a forced reflow).
   function replayPop(emoji) {
@@ -858,7 +830,6 @@
       const g = state.giftsById[m.body];
       return g ? `${g.emoji} ${g.name}` : 'a gift';
     }
-    if (m.kind === 'voice') return '🎤 Voice note';
     return String(m.body == null ? '' : m.body).slice(0, 140);
   }
 
@@ -1007,322 +978,221 @@
     banner.classList.remove('hidden');
   }
 
-  /* ---------- voice notes ---------- */
+  /* ---------- video calls (WebRTC over the socket) ---------- */
+
+  var RTC_CONFIG = { iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ] };
 
   function fmtDur(sec) {
     sec = Math.max(0, Math.round(sec || 0));
     return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
   }
 
-  function insertAboveComposer(node) {
-    const composer = document.querySelector('.chat-wrap .composer');
-    if (composer && composer.parentNode) composer.parentNode.insertBefore(node, composer);
+  // state.call = { pc, local, remote, peerId, peerName, status, timer, startedAt,
+  //   pendingOffer }.  status: 'outgoing' | 'incoming' | 'active'.
+
+  function callSupported() {
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.RTCPeerConnection);
   }
 
-  // Fetch (and cache) the voice-changer catalog.
-  async function loadVoices() {
-    if (state.voices) return state.voices;
-    try { state.voices = await api.get('/api/voice/voices'); }
-    catch (_e) { state.voices = { realistic: false, female: [], male: [] }; }
-    return state.voices;
+  async function getCallStream() {
+    return navigator.mediaDevices.getUserMedia({ video: true, audio: true });
   }
 
-  let mediaRec = null;
-  let recChunks = [];
-  let recStart = 0;
-  let recStream = null;
-  let recTimer = null;
-
-  async function toggleRecording() {
-    if (mediaRec && mediaRec.state === 'recording') { stopRecording(); return; }
-    if (state.voiceDraft) return; // finish the current draft first
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
-      return notify('Voice recording is not supported on this device/browser.');
-    }
-    try {
-      recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (_e) {
-      return notify('Microphone permission is needed to record a voice note.');
-    }
-    recChunks = [];
-    let opts;
-    if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm')) {
-      opts = { mimeType: 'audio/webm' };
-    }
-    mediaRec = new MediaRecorder(recStream, opts);
-    mediaRec.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
-    mediaRec.onstop = finishRecording;
-    mediaRec.start();
-    recStart = Date.now();
-    showRecordingBar();
-    setMicActive(true);
-  }
-
-  function stopRecording() {
-    if (recTimer) { clearInterval(recTimer); recTimer = null; }
-    if (mediaRec && mediaRec.state !== 'inactive') {
-      try { mediaRec.stop(); } catch (_e) {}
-    }
-    setMicActive(false);
-  }
-
-  function stopStream() {
-    if (recStream) { recStream.getTracks().forEach((t) => t.stop()); recStream = null; }
-  }
-
-  async function finishRecording() {
-    hideRecordingBar();
-    const type = (recChunks[0] && recChunks[0].type) || 'audio/webm';
-    const raw = new Blob(recChunks, { type });
-    const dur = Math.round((Date.now() - recStart) / 1000);
-    mediaRec = null;
-    stopStream();
-    if (!raw.size) return;
-    // Normalise to WAV/PCM immediately. MediaRecorder gives webm/opus (or mp4
-    // on iOS), and webm/opus is unplayable on iOS Safari — WAV plays anywhere.
-    let audio = raw;
-    try { audio = await transcodeToWav(raw); } catch (_e) { /* keep raw as a fallback */ }
-    state.voiceDraft = { original: audio, current: audio, voiceId: null, voiceName: null, duration: dur };
-    renderVoicePanel();
-  }
-
-  // Decode any recorded format and re-encode as compact mono WAV (16 kHz).
-  async function transcodeToWav(blob, targetRate) {
-    targetRate = targetRate || 16000;
-    const AC = window.AudioContext || window.webkitAudioContext;
-    const ac = new AC();
-    const decoded = await ac.decodeAudioData(await blob.arrayBuffer());
-    ac.close();
-    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-    const frames = Math.max(1, Math.ceil(decoded.duration * targetRate));
-    const off = new OAC(1, frames, targetRate); // mono + resample
-    const src = off.createBufferSource();
-    src.buffer = decoded;
-    src.connect(off.destination);
-    src.start();
-    const out = await off.startRendering();
-    normalizeBuffer(out); // boost quiet mic captures to an audible level
-    return audioBufferToWav(out);
-  }
-
-  // Peak-normalise an AudioBuffer in place. Many phone mics record very quietly
-  // (aggressive noise suppression / auto-gain), producing near-silent notes;
-  // this lifts the peak toward full scale, capped so we don't blow up noise.
-  function normalizeBuffer(buffer, target, maxGain) {
-    target = target || 0.97;
-    maxGain = maxGain || 60;
-    let peak = 0;
-    for (let c = 0; c < buffer.numberOfChannels; c++) {
-      const d = buffer.getChannelData(c);
-      for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > peak) peak = a; }
-    }
-    if (peak <= 0) return buffer;
-    const gain = Math.min(maxGain, target / peak);
-    if (gain <= 1.01) return buffer; // already loud enough
-    for (let c = 0; c < buffer.numberOfChannels; c++) {
-      const d = buffer.getChannelData(c);
-      for (let i = 0; i < d.length; i++) {
-        const v = d[i] * gain;
-        d[i] = v > 1 ? 1 : (v < -1 ? -1 : v);
+  function newPeerConnection(peerId) {
+    const pc = new RTCPeerConnection(RTC_CONFIG);
+    pc.onicecandidate = (e) => {
+      if (e.candidate && state.socket) {
+        state.socket.emit('call:ice', { to: peerId, candidate: e.candidate });
       }
-    }
-    return buffer;
-  }
-
-  function setMicActive(on) {
-    const btn = document.getElementById('micBtn');
-    if (btn) btn.classList.toggle('recording', !!on);
-  }
-
-  function showRecordingBar() {
-    let bar = document.getElementById('recordBar');
-    if (!bar) { bar = el('<div class="record-bar" id="recordBar"></div>'); insertAboveComposer(bar); }
-    bar.innerHTML = '<span class="rec-dot"></span><span class="rec-time" id="recTime">0:00</span>'
-      + '<span class="rec-hint">Recording… tap the mic again or Stop to finish</span>'
-      + '<button class="rec-stop" id="recStop">Stop</button>';
-    bar.classList.remove('hidden');
-    bar.querySelector('#recStop').addEventListener('click', stopRecording);
-    recTimer = setInterval(() => {
-      const t = document.getElementById('recTime');
-      if (t) t.textContent = fmtDur((Date.now() - recStart) / 1000);
-    }, 250);
-  }
-
-  function hideRecordingBar() {
-    if (recTimer) { clearInterval(recTimer); recTimer = null; }
-    const bar = document.getElementById('recordBar');
-    if (bar) bar.remove();
-  }
-
-  function cancelVoiceDraft() {
-    state.voiceDraft = null;
-    const p = document.getElementById('voicePanel');
-    if (p) p.remove();
-  }
-
-  // Preview panel: play back the recording, pick a voice, send.
-  async function renderVoicePanel() {
-    const d = state.voiceDraft;
-    if (!d) return;
-    let panel = document.getElementById('voicePanel');
-    if (!panel) { panel = el('<div class="voice-panel" id="voicePanel"></div>'); insertAboveComposer(panel); }
-    panel.innerHTML = '';
-
-    const head = el(`<div class="vp-head"><span>🎤 Voice note · ${fmtDur(d.duration)}${d.voiceName ? ' · ' + esc(d.voiceName) + ' voice' : ''}</span><button class="vp-cancel" title="Discard">×</button></div>`);
-    head.querySelector('.vp-cancel').addEventListener('click', cancelVoiceDraft);
-    panel.appendChild(head);
-
-    const audio = el('<audio class="vp-audio" controls></audio>');
-    audio.src = URL.createObjectURL(d.current);
-    panel.appendChild(audio);
-
-    const voices = await loadVoices();
-    const changer = el('<div class="vp-changer"></div>');
-    const topRow = el('<div class="vp-chips"></div>');
-    topRow.appendChild(voiceChip('🎙 Your voice', null, d.voiceId === null));
-    changer.appendChild(topRow);
-    changer.appendChild(voiceGroup('♀ Female voices', voices.female || [], d.voiceId));
-    changer.appendChild(voiceGroup('♂ Male voices', voices.male || [], d.voiceId));
-    panel.appendChild(changer);
-
-    if (!voices.realistic) {
-      panel.appendChild(el('<div class="vp-note">Voice changer uses a built-in effect. For realistic voices, the server admin can configure a provider (VOICE_API_URL).</div>'));
-    }
-
-    const actions = el('<div class="vp-actions"></div>');
-    const reRec = el('<button class="vp-rerec">Re-record</button>');
-    reRec.addEventListener('click', () => { cancelVoiceDraft(); toggleRecording(); });
-    const sendBtn = el('<button class="primary vp-send">Send voice note</button>');
-    sendBtn.addEventListener('click', sendVoiceDraft);
-    actions.appendChild(reRec);
-    actions.appendChild(sendBtn);
-    panel.appendChild(actions);
-    panel.classList.remove('hidden');
-  }
-
-  function voiceGroup(title, list, activeId) {
-    const g = el(`<div class="vp-group"><div class="vp-group-title">${esc(title)}</div><div class="vp-chips"></div></div>`);
-    const chips = g.querySelector('.vp-chips');
-    list.forEach((v) => chips.appendChild(voiceChip(v.name, v.id, activeId === v.id)));
-    return g;
-  }
-
-  function voiceChip(label, voiceId, active) {
-    const chip = el(`<button class="voice-chip${active ? ' active' : ''}">${esc(label)}</button>`);
-    chip.addEventListener('click', () => applyVoice(voiceId));
-    return chip;
-  }
-
-  async function applyVoice(voiceId) {
-    const d = state.voiceDraft;
-    if (!d) return;
-    if (voiceId === null) {
-      d.current = d.original; d.voiceId = null; d.voiceName = null;
-      return renderVoicePanel();
-    }
-    const voices = await loadVoices();
-    const v = [].concat(voices.female || [], voices.male || []).find((x) => x.id === voiceId);
-    if (!v) return;
-    try {
-      const out = voices.realistic
-        ? await convertViaServer(d.original, voiceId)
-        : await pitchShiftBlob(d.original, v.pitch, v.bright);
-      d.current = out; d.voiceId = voiceId; d.voiceName = v.name;
-    } catch (_e) {
-      notify('Voice conversion failed; keeping your original voice.');
-      d.current = d.original; d.voiceId = null; d.voiceName = null;
-    }
-    renderVoicePanel();
-  }
-
-  // Realistic path: let the server/provider convert.
-  async function convertViaServer(blob, voiceId) {
-    const fd = new FormData();
-    const ext = (blob.type && blob.type.indexOf('webm') >= 0) ? '.webm' : '.dat';
-    fd.append('audio', blob, 'note' + ext);
-    fd.append('voice', voiceId);
-    const res = await fetch('/api/voice/convert', { method: 'POST', body: fd, credentials: 'same-origin' });
-    const ct = res.headers.get('content-type') || '';
-    if (ct.indexOf('application/json') >= 0) {
-      const j = await res.json().catch(() => ({}));
-      throw new Error(j.error || 'fallback');
-    }
-    if (!res.ok) throw new Error('convert failed');
-    return await res.blob();
-  }
-
-  // Fallback path: browser audio effect (pitch shift + brightness). Not a truly
-  // realistic voice — a processed effect.
-  async function pitchShiftBlob(blob, semitones, brightDb) {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    const ac = new AC();
-    const buf = await ac.decodeAudioData(await blob.arrayBuffer());
-    ac.close();
-    const rate = Math.pow(2, (Number(semitones) || 0) / 12);
-    const frames = Math.max(1, Math.ceil(buf.length / rate));
-    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-    const off = new OAC(buf.numberOfChannels, frames, buf.sampleRate);
-    const src = off.createBufferSource();
-    src.buffer = buf;
-    src.playbackRate.value = rate;
-    let node = src;
-    if (brightDb) {
-      const hs = off.createBiquadFilter();
-      hs.type = 'highshelf';
-      hs.frequency.value = 2200;
-      hs.gain.value = Number(brightDb) || 0;
-      src.connect(hs);
-      node = hs;
-    }
-    node.connect(off.destination);
-    src.start();
-    const rendered = await off.startRendering();
-    return audioBufferToWav(rendered);
-  }
-
-  // Encode an AudioBuffer as a 16-bit PCM WAV Blob.
-  function audioBufferToWav(buffer) {
-    const numCh = buffer.numberOfChannels;
-    const sr = buffer.sampleRate;
-    const len = buffer.length;
-    const chans = [];
-    for (let c = 0; c < numCh; c++) chans.push(buffer.getChannelData(c));
-    const blockAlign = numCh * 2;
-    const dataLen = len * blockAlign;
-    const ab = new ArrayBuffer(44 + dataLen);
-    const dv = new DataView(ab);
-    let o = 0;
-    const ws = (s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o++, s.charCodeAt(i)); };
-    ws('RIFF'); dv.setUint32(o, 36 + dataLen, true); o += 4; ws('WAVE');
-    ws('fmt '); dv.setUint32(o, 16, true); o += 4;
-    dv.setUint16(o, 1, true); o += 2; dv.setUint16(o, numCh, true); o += 2;
-    dv.setUint32(o, sr, true); o += 4; dv.setUint32(o, sr * blockAlign, true); o += 4;
-    dv.setUint16(o, blockAlign, true); o += 2; dv.setUint16(o, 16, true); o += 2;
-    ws('data'); dv.setUint32(o, dataLen, true); o += 4;
-    for (let i = 0; i < len; i++) {
-      for (let c = 0; c < numCh; c++) {
-        let s = Math.max(-1, Math.min(1, chans[c][i]));
-        dv.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-        o += 2;
+    };
+    pc.ontrack = (e) => {
+      if (state.call) {
+        state.call.remote = e.streams[0];
+        const v = document.getElementById('remoteVideo');
+        if (v) v.srcObject = e.streams[0];
       }
-    }
-    return new Blob([ab], { type: 'audio/wav' });
+    };
+    pc.onconnectionstatechange = () => {
+      if (!state.call) return;
+      const s = pc.connectionState;
+      if (s === 'connected') markCallActive();
+      else if (s === 'failed' || s === 'disconnected' || s === 'closed') endCall(false);
+    };
+    return pc;
   }
 
-  async function sendVoiceDraft() {
-    const d = state.voiceDraft;
-    if (!d || !state.peer || !state.socket) return;
-    const blob = d.current;
-    const voiceId = d.voiceId;
-    const duration = d.duration;
-    cancelVoiceDraft();
-    const buf = await blob.arrayBuffer();
-    state.socket.emit('chat:voice',
-      { to: state.peer.id, data: buf, mime: blob.type || 'audio/webm', voice: voiceId, duration },
-      (res) => {
-        if (res && res.error) return notify(res.error);
-        if (res && res.message) appendMessage(res.message);
+  // Caller: place a call to `peer`.
+  async function startCall(peer) {
+    if (!peer || !state.socket) return;
+    if (state.call) return notify('You are already in a call.');
+    if (!callSupported()) return notify('Video calls are not supported on this device/browser.');
+    let local;
+    try { local = await getCallStream(); }
+    catch (_e) { return notify('Camera & microphone permission is needed for a video call.'); }
+    const pc = newPeerConnection(peer.id);
+    local.getTracks().forEach((t) => pc.addTrack(t, local));
+    state.call = { pc, local, remote: null, peerId: peer.id, peerName: peer.displayName || peer.username, status: 'outgoing' };
+    renderCallOverlay();
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      state.socket.emit('call:offer', { to: peer.id, sdp: offer }, (res) => {
+        if (res && res.error) { notify(res.error); endCall(false); }
       });
+    } catch (_e) { endCall(false); }
+  }
+
+  // Callee: an incoming offer arrived.
+  function onIncomingCall(from, fromName, sdp) {
+    if (state.call) { // already busy — auto-decline
+      if (state.socket) state.socket.emit('call:decline', { to: from });
+      return;
+    }
+    state.call = { pc: null, local: null, remote: null, peerId: from, peerName: fromName || ('User ' + from), status: 'incoming', pendingOffer: sdp };
+    renderCallOverlay();
+  }
+
+  async function acceptCall() {
+    const c = state.call;
+    if (!c || c.status !== 'incoming') return;
+    if (!callSupported()) { declineCall(); return; }
+    let local;
+    try { local = await getCallStream(); }
+    catch (_e) { notify('Camera & microphone permission is needed.'); declineCall(); return; }
+    const pc = newPeerConnection(c.peerId);
+    c.pc = pc; c.local = local;
+    local.getTracks().forEach((t) => pc.addTrack(t, local));
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(c.pendingOffer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      state.socket.emit('call:answer', { to: c.peerId, sdp: answer });
+      c.pendingOffer = null;
+      renderCallOverlay();
+    } catch (_e) { endCall(false); }
+  }
+
+  function declineCall() {
+    const c = state.call;
+    if (!c) return;
+    if (state.socket) state.socket.emit('call:decline', { to: c.peerId });
+    teardownCall();
+  }
+
+  // Answer received by the caller.
+  async function onCallAnswer(sdp) {
+    const c = state.call;
+    if (!c || !c.pc) return;
+    try { await c.pc.setRemoteDescription(new RTCSessionDescription(sdp)); }
+    catch (_e) { endCall(false); }
+  }
+
+  async function onCallIce(candidate) {
+    const c = state.call;
+    if (!c || !c.pc || !candidate) return;
+    try { await c.pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (_e) {}
+  }
+
+  function markCallActive() {
+    const c = state.call;
+    if (!c || c.status === 'active') return;
+    c.status = 'active';
+    c.startedAt = Date.now();
+    c.timer = setInterval(() => {
+      const t = document.getElementById('callTimer');
+      if (t) t.textContent = fmtDur((Date.now() - c.startedAt) / 1000);
+    }, 500);
+    renderCallOverlay();
+  }
+
+  // Hang up locally and tell the peer (unless the peer already ended it).
+  function endCall(notifyPeer) {
+    const c = state.call;
+    if (!c) return;
+    if (notifyPeer !== false && state.socket) state.socket.emit('call:end', { to: c.peerId });
+    teardownCall();
+  }
+
+  function teardownCall() {
+    const c = state.call;
+    if (!c) return;
+    if (c.timer) clearInterval(c.timer);
+    try { if (c.pc) c.pc.close(); } catch (_e) {}
+    if (c.local) c.local.getTracks().forEach((t) => t.stop());
+    state.call = null;
+    const o = document.getElementById('callOverlay');
+    if (o) o.remove();
+  }
+
+  function toggleMute() {
+    const c = state.call;
+    if (!c || !c.local) return;
+    const on = c.local.getAudioTracks().some((t) => t.enabled);
+    c.local.getAudioTracks().forEach((t) => (t.enabled = !on));
+    renderCallOverlay();
+  }
+
+  function toggleCam() {
+    const c = state.call;
+    if (!c || !c.local) return;
+    const on = c.local.getVideoTracks().some((t) => t.enabled);
+    c.local.getVideoTracks().forEach((t) => (t.enabled = !on));
+    renderCallOverlay();
+  }
+
+  // Build/refresh the call overlay for the current call state.
+  function renderCallOverlay() {
+    const c = state.call;
+    if (!c) return;
+    let o = document.getElementById('callOverlay');
+    if (!o) { o = el('<div class="call-overlay" id="callOverlay"></div>'); document.body.appendChild(o); }
+    o.innerHTML = '';
+
+    if (c.status === 'incoming') {
+      const box = el('<div class="call-incoming">'
+        + '<div class="call-avatar">📹</div>'
+        + '<div class="call-who">' + esc(c.peerName) + '</div>'
+        + '<div class="call-sub">Incoming video call…</div>'
+        + '<div class="call-inc-actions">'
+        + '<button class="call-btn decline" id="callDecline">Decline</button>'
+        + '<button class="call-btn accept" id="callAccept">Accept</button>'
+        + '</div></div>');
+      o.appendChild(box);
+      box.querySelector('#callAccept').addEventListener('click', acceptCall);
+      box.querySelector('#callDecline').addEventListener('click', declineCall);
+      return;
+    }
+
+    const stage = el('<div class="call-stage"></div>');
+    const remote = el('<video class="call-remote" id="remoteVideo" autoplay playsinline></video>');
+    if (c.remote) remote.srcObject = c.remote;
+    const localV = el('<video class="call-local" id="localVideo" autoplay playsinline muted></video>');
+    if (c.local) localV.srcObject = c.local;
+    stage.appendChild(remote);
+    stage.appendChild(localV);
+
+    const status = el('<div class="call-status"></div>');
+    status.textContent = c.status === 'outgoing' ? 'Calling ' + c.peerName + '…' : c.peerName;
+    if (c.status === 'active') { status.innerHTML = ''; status.appendChild(el('<span id="callTimer">0:00</span>')); }
+    stage.appendChild(status);
+
+    const micOn = c.local ? c.local.getAudioTracks().some((t) => t.enabled) : true;
+    const camOn = c.local ? c.local.getVideoTracks().some((t) => t.enabled) : true;
+    const controls = el('<div class="call-controls"></div>');
+    const mute = el('<button class="call-btn round" title="Mute">' + (micOn ? '🎙' : '🔇') + '</button>');
+    mute.addEventListener('click', toggleMute);
+    const cam = el('<button class="call-btn round" title="Camera">' + (camOn ? '📷' : '🚫') + '</button>');
+    cam.addEventListener('click', toggleCam);
+    const hang = el('<button class="call-btn round hangup" title="Hang up">📞</button>');
+    hang.addEventListener('click', () => endCall(true));
+    controls.appendChild(mute);
+    controls.appendChild(cam);
+    controls.appendChild(hang);
+    stage.appendChild(controls);
+    o.appendChild(stage);
   }
 
   // Populate the gift picker grid (lazy-loads the catalog once).
@@ -1432,6 +1302,13 @@
       // Only update the banner when the progress is for the open conversation.
       if (peerId && p && p.peerId === peerId) updateRoleplayBar(p);
     });
+
+    // --- Video call signaling ---
+    s.on('call:incoming', (p) => { if (p) onIncomingCall(p.from, p.fromName, p.sdp); });
+    s.on('call:answer', (p) => { if (p) onCallAnswer(p.sdp); });
+    s.on('call:ice', (p) => { if (p) onCallIce(p.candidate); });
+    s.on('call:decline', () => { if (state.call) { notify(state.call.peerName + ' declined the call.'); teardownCall(); } });
+    s.on('call:end', () => { if (state.call) teardownCall(); });
 
     s.on('connect_error', () => { /* auth or network issue; UI still works for browsing */ });
   }
