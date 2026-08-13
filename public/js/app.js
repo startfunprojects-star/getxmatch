@@ -1101,7 +1101,32 @@
     src.connect(off.destination);
     src.start();
     const out = await off.startRendering();
+    normalizeBuffer(out); // boost quiet mic captures to an audible level
     return audioBufferToWav(out);
+  }
+
+  // Peak-normalise an AudioBuffer in place. Many phone mics record very quietly
+  // (aggressive noise suppression / auto-gain), producing near-silent notes;
+  // this lifts the peak toward full scale, capped so we don't blow up noise.
+  function normalizeBuffer(buffer, target, maxGain) {
+    target = target || 0.97;
+    maxGain = maxGain || 60;
+    let peak = 0;
+    for (let c = 0; c < buffer.numberOfChannels; c++) {
+      const d = buffer.getChannelData(c);
+      for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > peak) peak = a; }
+    }
+    if (peak <= 0) return buffer;
+    const gain = Math.min(maxGain, target / peak);
+    if (gain <= 1.01) return buffer; // already loud enough
+    for (let c = 0; c < buffer.numberOfChannels; c++) {
+      const d = buffer.getChannelData(c);
+      for (let i = 0; i < d.length; i++) {
+        const v = d[i] * gain;
+        d[i] = v > 1 ? 1 : (v < -1 ? -1 : v);
+      }
+    }
+    return buffer;
   }
 
   function setMicActive(on) {
