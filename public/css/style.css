@@ -117,6 +117,37 @@ a { color: var(--accent); text-decoration: none; }
 .ephemeral-note { font-size: 11px; opacity: .7; font-style: italic; }
 .typing { align-self: flex-start; color: var(--muted); font-size: 13px; padding: 4px 8px; }
 
+/* ---------- Reply / quote ---------- */
+.bubble { position: relative; }
+/* Small ↩ that appears on hover to reply to that message. */
+.reply-btn {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--bg-2); color: var(--text);
+  display: grid; place-items: center; cursor: pointer; font-size: 13px;
+  opacity: 0; transition: opacity .12s; z-index: 2; padding: 0;
+}
+.bubble:hover .reply-btn { opacity: .95; }
+.bubble.them .reply-btn { right: -34px; }
+.bubble.me .reply-btn { left: -34px; }
+/* Quoted message shown inside a reply bubble; click to jump to the original. */
+.reply-quote {
+  display: block; cursor: pointer; margin-bottom: 6px; padding: 4px 8px;
+  border-left: 3px solid var(--accent); border-radius: 4px;
+  background: rgba(128, 128, 128, .16); font-size: 12px; line-height: 1.3;
+}
+.reply-quote .rq-who { display: block; font-weight: 700; font-size: 11px; opacity: .9; }
+.reply-quote .rq-text { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 230px; opacity: .85; }
+/* Brief highlight when a quote is clicked and the original scrolls into view. */
+.bubble.flash { animation: bubbleFlash 1.2s ease-out; }
+@keyframes bubbleFlash { 0%, 40% { box-shadow: 0 0 0 2px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
+/* Compose banner showing which message you're replying to. */
+.reply-banner { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-top: 1px solid var(--border); background: var(--bg-3); }
+.reply-banner .rb-body { flex: 1; min-width: 0; border-left: 3px solid var(--accent); padding-left: 8px; }
+.reply-banner .rb-who { font-weight: 700; font-size: 12px; color: var(--accent); }
+.reply-banner .rb-text { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: var(--muted); }
+.reply-banner .rb-cancel { cursor: pointer; border: none; background: none; color: var(--muted); font-size: 20px; line-height: 1; padding: 0 4px; }
+
 .composer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg-2); align-items: center; }
 .composer input[type=text] { flex: 1; }
 .icon-btn { background: var(--bg-3); width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center; flex: none; font-size: 18px; padding: 0; }
@@ -416,10 +447,11 @@ table.users tbody tr:hover { background: var(--bg-3); }
 /* Gift bubble in the chat stream. */
 .bubble.gift { display: inline-flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; padding: 12px 18px; }
 .bubble.gift .gift-emoji {
-  font-size: 40px; line-height: 1;
+  font-size: 40px; line-height: 1; cursor: pointer;
   transform-origin: center bottom;
-  /* Bouncy pop as the gift lands, then a gentle idle float that loops. */
-  animation: giftPop .6s cubic-bezier(.18, .89, .32, 1.28) both, giftFloat 2.8s ease-in-out .6s infinite;
+  /* One bouncy pop as the gift lands. No idle loop — it only animates on
+     send/receive, and again on click (JS restarts it via a reflow). */
+  animation: giftPop .6s cubic-bezier(.18, .89, .32, 1.28) both;
 }
 .bubble.gift .gift-name { font-size: 12px; opacity: .85; }
 
@@ -428,11 +460,6 @@ table.users tbody tr:hover { background: var(--bg-3); }
   0%   { transform: scale(0) rotate(-25deg); opacity: 0; }
   60%  { transform: scale(1.25) rotate(8deg); opacity: 1; }
   100% { transform: scale(1) rotate(0); opacity: 1; }
-}
-/* Idle: subtle breathing bob so gifts stay lively in the stream. */
-@keyframes giftFloat {
-  0%, 100% { transform: translateY(0) scale(1); }
-  50%      { transform: translateY(-4px) scale(1.06); }
 }
 /* Picker cell emoji wiggle on hover — reads as "tap me". */
 @keyframes giftWiggle {

@@ -205,6 +205,15 @@ db.exec(`
   }
 })();
 
+// --- Migration: allow a message to quote/reply to an earlier one. reply_to
+// holds the id of the message being replied to (NULL for normal messages).
+(function migrateMessageReplyTo() {
+  const cols = db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
+  if (!cols.includes('reply_to')) {
+    db.exec('ALTER TABLE messages ADD COLUMN reply_to INTEGER;');
+  }
+})();
+
 // --- Content & engagement features: quizzes, polls, blogs, profile
 // and admin-authored events. Created idempotently so existing
 // databases pick them up on next boot.

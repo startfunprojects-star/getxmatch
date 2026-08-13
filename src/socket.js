@@ -65,6 +65,37 @@ function applyRoleplayOutcome(io, senderId, otherId, outcome) {
   }
 }
 
+/* --------------------------------------------------------------------------
+   Reply helpers
+-------------------------------------------------------------------------- */
+
+// Validate a replyTo id: it must be a real message exchanged between these two
+// users (either direction). Returns the numeric id or null.
+function resolveReplyTo(raw, a, b) {
+  const id = parseInt(raw, 10);
+  if (!id) return null;
+  const row = db
+    .prepare('SELECT id FROM messages WHERE id = ? AND ((sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?))')
+    .get(id, a, b, b, a);
+  return row ? id : null;
+}
+
+// A compact snapshot of the quoted message so the client can render it without
+// a second lookup. gift bodies hold a gift id (resolved to a label here).
+function replyPreview(replyToId) {
+  if (!replyToId) return null;
+  const row = db.prepare('SELECT id, sender_id, body, kind FROM messages WHERE id = ?').get(replyToId);
+  if (!row) return null;
+  let text = row.body;
+  if (row.kind === 'gift') {
+    const g = getGift(row.body);
+    text = g ? `${g.emoji} ${g.name}` : 'a gift';
+  } else if (row.kind === 'narration') {
+    text = '🎭 Roleplay';
+  }
+  return { id: row.id, from: row.sender_id, kind: row.kind || 'text', text: String(text).slice(0, 140) };
+}
+
 function initSocket(io) {
   // Authenticate every socket from the httpOnly auth cookie.
   io.use((socket, next) => {
@@ -100,12 +131,16 @@ function initSocket(io) {
           return ack && ack({ error: 'You cannot message this user — a block is in place.' });
         }
 
+        // Optional reply: only accept an id that belongs to THIS conversation.
+        const replyTo = resolveReplyTo(payload && payload.replyTo, me.id, to);
+
         const now = Date.now();
         const info = db
-          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at) VALUES (?, ?, ?, 'text', ?)")
-          .run(me.id, to, body, now);
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at) VALUES (?, ?, ?, 'text', ?, ?)")
+          .run(me.id, to, body, replyTo, now);
 
-        const msg = { id: info.lastInsertRowid, from: me.id, to, body, kind: 'text', at: now };
+        const reply = replyPreview(replyTo);
+        const msg = { id: info.lastInsertRowid, from: me.id, to, body, kind: 'text', at: now, replyTo, reply };
 
         // Deliver to recipient's sockets and echo to sender's other tabs.
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });

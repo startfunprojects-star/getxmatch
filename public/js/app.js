@@ -529,6 +529,7 @@
   ====================================================================== */
   async function openChat(peer) {
     state.peer = peer;
+    state.replyTo = null; // clear any half-composed reply from a previous chat
     state.chatPeers[peer.id] = peer;
     document.querySelectorAll('.list-item').forEach((r) =>
       r.classList.toggle('active', Number(r.dataset.id) === peer.id));
@@ -551,6 +552,7 @@
         <div class="roleplay-bar hidden" id="roleplayBar"></div>
         <div class="gift-picker hidden" id="giftPicker"></div>
         <div class="rp-picker hidden" id="rpPicker"></div>
+        <div class="reply-banner hidden" id="replyBanner"></div>
         <div class="composer">
           <input type="file" id="fileInput" class="hidden" />
           <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
@@ -641,12 +643,16 @@
   function chatBody() { return document.getElementById('chatBody'); }
   function scrollBody() { const b = chatBody(); if (b) b.scrollTop = b.scrollHeight; }
 
-  function appendTextBubble(body, mine, at) {
+  // m: { body, mine, at, id?, reply? }
+  function appendTextBubble(m) {
     const b = chatBody();
     if (!b) return;
-    const bubble = el(`<div class="bubble ${mine ? 'me' : 'them'}"></div>`);
-    bubble.appendChild(document.createTextNode(body));
-    bubble.appendChild(el(`<span class="time">${fmtTime(at)}</span>`));
+    const bubble = el(`<div class="bubble ${m.mine ? 'me' : 'them'}"></div>`);
+    if (m.id) bubble.dataset.id = m.id;
+    if (m.reply) bubble.appendChild(renderQuote(m.reply));
+    bubble.appendChild(document.createTextNode(m.body));
+    bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
+    attachReplyBtn(bubble, m);
     b.appendChild(bubble);
     scrollBody();
   }
@@ -676,9 +682,9 @@
 
   // Route a message object (from history or live) to the right bubble.
   function appendMessage(m) {
-    if (m.kind === 'gift') appendGiftBubble(m.body, m.mine, m.at);
+    if (m.kind === 'gift') appendGiftBubble(m);
     else if (m.kind === 'narration') appendNarrationBubble(m.body, m.at);
-    else appendTextBubble(m.body, m.mine, m.at);
+    else appendTextBubble(m);
   }
 
   // Roleplay narration card. `raw` is the JSON payload stored in the message.
@@ -775,19 +781,114 @@
     if (end) end.addEventListener('click', stopRoleplay);
   }
 
-  function appendGiftBubble(giftId, mine, at) {
+  // m: { body: giftId, mine, at, id?, reply? }
+  function appendGiftBubble(m) {
     const b = chatBody();
     if (!b) return;
-    const gift = state.giftsById[giftId] || { emoji: '🎁', name: 'Gift' };
+    const gift = state.giftsById[m.body] || { emoji: '🎁', name: 'Gift' };
     const bubble = el(`
-      <div class="bubble gift ${mine ? 'me' : 'them'}">
+      <div class="bubble gift ${m.mine ? 'me' : 'them'}">
         <span class="gift-emoji">${esc(gift.emoji)}</span>
-        <span class="gift-name">${mine ? 'You sent' : 'Sent you'} a ${esc(gift.name)}</span>
+        <span class="gift-name">${m.mine ? 'You sent' : 'Sent you'} a ${esc(gift.name)}</span>
       </div>
     `);
-    bubble.appendChild(el(`<span class="time">${fmtTime(at)}</span>`));
+    if (m.id) bubble.dataset.id = m.id;
+    if (m.reply) bubble.insertBefore(renderQuote(m.reply), bubble.firstChild);
+    // Click the emoji to replay its pop animation.
+    const emoji = bubble.querySelector('.gift-emoji');
+    emoji.addEventListener('click', () => replayPop(emoji));
+    bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
+    attachReplyBtn(bubble, m);
     b.appendChild(bubble);
     scrollBody();
+  }
+
+  // Restart the CSS pop animation on demand (send/receive fires it once; this
+  // re-triggers it on click via a forced reflow).
+  function replayPop(emoji) {
+    emoji.style.animation = 'none';
+    void emoji.offsetWidth;
+    emoji.style.animation = '';
+  }
+
+  /* ---------- reply / quote ---------- */
+
+  function peerLabel() {
+    return (state.peer && (state.peer.displayName || state.peer.username)) || 'Them';
+  }
+
+  // A short text snapshot of a message, for quoting.
+  function previewTextOf(m) {
+    if (m.kind === 'gift') {
+      const g = state.giftsById[m.body];
+      return g ? `${g.emoji} ${g.name}` : 'a gift';
+    }
+    return String(m.body == null ? '' : m.body).slice(0, 140);
+  }
+
+  // Render the quoted block placed at the top of a reply bubble.
+  // reply: { id, mine? | from?, text }
+  function renderQuote(reply) {
+    const mine = reply.mine != null ? reply.mine : (reply.from === state.me.id);
+    const q = el('<div class="reply-quote"><span class="rq-who"></span><span class="rq-text"></span></div>');
+    q.querySelector('.rq-who').textContent = mine ? 'You' : peerLabel();
+    q.querySelector('.rq-text').textContent = reply.text || '';
+    if (reply.id) q.addEventListener('click', () => scrollToMessage(reply.id));
+    return q;
+  }
+
+  function scrollToMessage(id) {
+    const b = chatBody();
+    if (!b) return;
+    const target = b.querySelector(`.bubble[data-id="${id}"]`);
+    if (!target) return;
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    target.classList.remove('flash');
+    void target.offsetWidth;
+    target.classList.add('flash');
+  }
+
+  // Add the hover ↩ button so a message can be replied to. Only persisted
+  // messages (with an id) can be quoted.
+  function attachReplyBtn(bubble, m) {
+    if (!m || !m.id) return;
+    const btn = el('<button class="reply-btn" title="Reply">↩</button>');
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      startReply(m);
+    });
+    bubble.appendChild(btn);
+  }
+
+  function startReply(m) {
+    state.replyTo = { id: m.id, mine: m.mine, text: previewTextOf(m) };
+    renderReplyBanner();
+    const input = document.getElementById('msgInput');
+    if (input) input.focus();
+  }
+
+  function cancelReply() {
+    state.replyTo = null;
+    renderReplyBanner();
+  }
+
+  function renderReplyBanner() {
+    const banner = document.getElementById('replyBanner');
+    if (!banner) return;
+    if (!state.replyTo) {
+      banner.classList.add('hidden');
+      banner.innerHTML = '';
+      return;
+    }
+    banner.innerHTML = '';
+    const body = el('<div class="rb-body"><span class="rb-who"></span> <span class="rb-text"></span></div>');
+    body.querySelector('.rb-who').textContent = 'Replying to ' + (state.replyTo.mine ? 'yourself' : peerLabel());
+    body.querySelector('.rb-text').textContent = state.replyTo.text;
+    const x = el('<button class="rb-cancel" title="Cancel reply">×</button>');
+    x.addEventListener('click', cancelReply);
+    banner.appendChild(body);
+    banner.appendChild(x);
+    banner.classList.remove('hidden');
   }
 
   // Populate the gift picker grid (lazy-loads the catalog once).
@@ -815,7 +916,8 @@
     if (!state.peer || !state.socket) return;
     state.socket.emit('chat:gift', { to: state.peer.id, gift: giftId }, (res) => {
       if (res && res.error) return notify(res.error);
-      appendGiftBubble(giftId, true, (res && res.message && res.message.at) || Date.now());
+      const m = (res && res.message) || {};
+      appendGiftBubble({ body: giftId, mine: true, at: m.at || Date.now(), id: m.id });
     });
   }
 
@@ -823,10 +925,17 @@
     const body = input.value.trim();
     if (!body || !state.peer || !state.socket) return;
     input.value = '';
-    state.socket.emit('chat:message', { to: state.peer.id, body }, (res) => {
+    // Capture and clear the reply target before the round-trip.
+    const replyTo = state.replyTo ? state.replyTo.id : null;
+    const replySnapshot = state.replyTo
+      ? { id: state.replyTo.id, mine: state.replyTo.mine, text: state.replyTo.text }
+      : null;
+    cancelReply();
+    state.socket.emit('chat:message', { to: state.peer.id, body, replyTo }, (res) => {
       if (res && res.error) return notify(res.error);
       // Echo is handled here for the sending tab.
-      appendTextBubble(body, true, (res && res.message && res.message.at) || Date.now());
+      const m = (res && res.message) || {};
+      appendTextBubble({ body, mine: true, at: m.at || Date.now(), id: m.id, reply: m.reply || replySnapshot });
     });
   }
 
