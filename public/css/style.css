@@ -415,8 +415,35 @@ table.users tbody tr:hover { background: var(--bg-3); }
 
 /* Gift bubble in the chat stream. */
 .bubble.gift { display: inline-flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; padding: 12px 18px; }
-.bubble.gift .gift-emoji { font-size: 40px; line-height: 1; }
+.bubble.gift .gift-emoji {
+  font-size: 40px; line-height: 1;
+  transform-origin: center bottom;
+  /* Bouncy pop as the gift lands, then a gentle idle float that loops. */
+  animation: giftPop .6s cubic-bezier(.18, .89, .32, 1.28) both, giftFloat 2.8s ease-in-out .6s infinite;
+}
 .bubble.gift .gift-name { font-size: 12px; opacity: .85; }
+
+/* Entrance: overshoot-scale + spin so the emoji feels like it drops in. */
+@keyframes giftPop {
+  0%   { transform: scale(0) rotate(-25deg); opacity: 0; }
+  60%  { transform: scale(1.25) rotate(8deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+/* Idle: subtle breathing bob so gifts stay lively in the stream. */
+@keyframes giftFloat {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%      { transform: translateY(-4px) scale(1.06); }
+}
+/* Picker cell emoji wiggle on hover — reads as "tap me". */
+@keyframes giftWiggle {
+  0%, 100% { transform: rotate(0); }
+  25%      { transform: rotate(-12deg) scale(1.15); }
+  75%      { transform: rotate(12deg) scale(1.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bubble.gift .gift-emoji { animation: none; }
+  .gift-cell:hover .gift-emoji { animation: none; }
+}
 
 /* Gift picker popover, sits just above the composer. */
 .gift-picker {
@@ -434,7 +461,8 @@ table.users tbody tr:hover { background: var(--bg-3); }
   padding: 10px 6px; cursor: pointer; transition: border-color .12s, transform .12s;
 }
 .gift-cell:hover { border-color: var(--accent); transform: translateY(-2px); }
-.gift-cell .gift-emoji { font-size: 28px; line-height: 1; }
+.gift-cell .gift-emoji { font-size: 28px; line-height: 1; display: inline-block; transition: transform .12s; }
+.gift-cell:hover .gift-emoji { animation: giftWiggle .5s ease-in-out infinite; }
 .gift-cell .gift-cell-name { font-size: 11px; color: var(--muted); }
 
 /* ---------- Roleplay ---------- */
