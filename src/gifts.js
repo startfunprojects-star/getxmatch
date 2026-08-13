@@ -20,6 +20,24 @@ const GIFTS = [
   { id: 'lollipop', emoji: '🍭', name: 'Lollipop' },
   { id: 'hotface', emoji: '🥵', name: 'Hot & bothered' },
   { id: 'wine', emoji: '🍷', name: 'Nightcap' },
+  // Sweet & romantic — nothing naughty, for a softer flirt.
+  { id: 'heart', emoji: '❤️', name: 'Heart' },
+  { id: 'bouquet', emoji: '💐', name: 'Bouquet' },
+  { id: 'chocolate', emoji: '🍫', name: 'Chocolate' },
+  { id: 'teddy', emoji: '🧸', name: 'Teddy bear' },
+  { id: 'loveletter', emoji: '💌', name: 'Love letter' },
+  { id: 'ring', emoji: '💍', name: 'Ring' },
+  { id: 'star', emoji: '⭐', name: 'You’re a star' },
+  { id: 'coffee', emoji: '☕', name: 'Coffee date' },
+  // More adult — turning up the heat.
+  { id: 'champagne', emoji: '🍾', name: 'Pop the bubbly' },
+  { id: 'cocktail', emoji: '🍸', name: 'One more drink?' },
+  { id: 'bed', emoji: '🛏️', name: 'Come over' },
+  { id: 'key', emoji: '🔑', name: 'My place' },
+  { id: 'devil', emoji: '😈', name: 'Feeling naughty' },
+  { id: 'honey', emoji: '🍯', name: 'Sweet & sticky' },
+  { id: 'banana', emoji: '🍌', name: 'Banana' },
+  { id: 'donut', emoji: '🍩', name: 'Glazed' },
 ];
 
 const byId = new Map(GIFTS.map((g) => [g.id, g]));
