@@ -228,51 +228,7 @@ function initSocket(io) {
       }
     });
 
-    /* --------------------------------------------------------------------
-       Video call signaling. The media itself is peer-to-peer WebRTC; the
-       server only relays SDP offers/answers and ICE candidates between the
-       two users' sockets. Nothing about the call is stored.
-    -------------------------------------------------------------------- */
-
-    // Caller offers a call. Blocked or offline recipients are rejected.
-    socket.on('call:offer', (payload, ack) => {
-      try {
-        const to = parseInt(payload && payload.to, 10);
-        if (!to || !payload.sdp) return ack && ack({ error: 'Invalid call.' });
-        if (areBlocked(me.id, to)) return ack && ack({ error: 'You cannot call this user — a block is in place.' });
-        if (!isOnline(to)) return ack && ack({ error: 'User is offline.' });
-        io.to(`user:${to}`).emit('call:incoming', { from: me.id, fromName: me.username, sdp: payload.sdp });
-        ack && ack({ ok: true });
-      } catch (e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
-    // Callee accepts and returns an answer.
-    socket.on('call:answer', (payload) => {
-      const to = parseInt(payload && payload.to, 10);
-      if (to && payload.sdp) io.to(`user:${to}`).emit('call:answer', { from: me.id, sdp: payload.sdp });
-    });
-
-    // Trickle ICE candidates in both directions.
-    socket.on('call:ice', (payload) => {
-      const to = parseInt(payload && payload.to, 10);
-      if (to && payload.candidate) io.to(`user:${to}`).emit('call:ice', { from: me.id, candidate: payload.candidate });
-    });
-
-    // Callee rejects the call.
-    socket.on('call:decline', (payload) => {
-      const to = parseInt(payload && payload.to, 10);
-      if (to) io.to(`user:${to}`).emit('call:decline', { from: me.id });
-    });
-
-    // Either side hangs up.
-    socket.on('call:end', (payload) => {
-      const to = parseInt(payload && payload.to, 10);
-      if (to) io.to(`user:${to}`).emit('call:end', { from: me.id });
-    });
-
-    // Emoji reaction on a message (text/gift/voice). Toggling: same emoji again
+    // Emoji reaction on a message (text/gift). Toggling: same emoji again
     // clears it, a different emoji replaces it. Broadcast to both users so all
     // tabs stay in sync.
     socket.on('chat:react', (payload, ack) => {

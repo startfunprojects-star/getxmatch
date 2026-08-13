@@ -558,7 +558,6 @@
           <input type="file" id="fileInput" class="hidden" />
           <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
           <button class="icon-btn" id="giftBtn" title="Send a naughty gift">🎁</button>
-          <button class="icon-btn" id="videoBtn" title="Start a video call">📹</button>
           <button class="icon-btn" id="rpBtn" title="Start a roleplay story">🎭</button>
           <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" />
           <button class="primary" id="sendBtn">Send</button>
@@ -591,8 +590,6 @@
       fileInput.value = '';
     });
 
-    // Video call.
-    view.querySelector('#videoBtn').addEventListener('click', () => startCall(peer));
 
     // Naughty gift picker.
     const giftPicker = view.querySelector('#giftPicker');
@@ -978,223 +975,6 @@
     banner.classList.remove('hidden');
   }
 
-  /* ---------- video calls (WebRTC over the socket) ---------- */
-
-  var RTC_CONFIG = { iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ] };
-
-  function fmtDur(sec) {
-    sec = Math.max(0, Math.round(sec || 0));
-    return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
-  }
-
-  // state.call = { pc, local, remote, peerId, peerName, status, timer, startedAt,
-  //   pendingOffer }.  status: 'outgoing' | 'incoming' | 'active'.
-
-  function callSupported() {
-    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.RTCPeerConnection);
-  }
-
-  async function getCallStream() {
-    return navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-  }
-
-  function newPeerConnection(peerId) {
-    const pc = new RTCPeerConnection(RTC_CONFIG);
-    pc.onicecandidate = (e) => {
-      if (e.candidate && state.socket) {
-        state.socket.emit('call:ice', { to: peerId, candidate: e.candidate });
-      }
-    };
-    pc.ontrack = (e) => {
-      if (state.call) {
-        state.call.remote = e.streams[0];
-        const v = document.getElementById('remoteVideo');
-        if (v) v.srcObject = e.streams[0];
-      }
-    };
-    pc.onconnectionstatechange = () => {
-      if (!state.call) return;
-      const s = pc.connectionState;
-      if (s === 'connected') markCallActive();
-      else if (s === 'failed' || s === 'disconnected' || s === 'closed') endCall(false);
-    };
-    return pc;
-  }
-
-  // Caller: place a call to `peer`.
-  async function startCall(peer) {
-    if (!peer || !state.socket) return;
-    if (state.call) return notify('You are already in a call.');
-    if (!callSupported()) return notify('Video calls are not supported on this device/browser.');
-    let local;
-    try { local = await getCallStream(); }
-    catch (_e) { return notify('Camera & microphone permission is needed for a video call.'); }
-    const pc = newPeerConnection(peer.id);
-    local.getTracks().forEach((t) => pc.addTrack(t, local));
-    state.call = { pc, local, remote: null, peerId: peer.id, peerName: peer.displayName || peer.username, status: 'outgoing' };
-    renderCallOverlay();
-    try {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      state.socket.emit('call:offer', { to: peer.id, sdp: offer }, (res) => {
-        if (res && res.error) { notify(res.error); endCall(false); }
-      });
-    } catch (_e) { endCall(false); }
-  }
-
-  // Callee: an incoming offer arrived.
-  function onIncomingCall(from, fromName, sdp) {
-    if (state.call) { // already busy — auto-decline
-      if (state.socket) state.socket.emit('call:decline', { to: from });
-      return;
-    }
-    state.call = { pc: null, local: null, remote: null, peerId: from, peerName: fromName || ('User ' + from), status: 'incoming', pendingOffer: sdp };
-    renderCallOverlay();
-  }
-
-  async function acceptCall() {
-    const c = state.call;
-    if (!c || c.status !== 'incoming') return;
-    if (!callSupported()) { declineCall(); return; }
-    let local;
-    try { local = await getCallStream(); }
-    catch (_e) { notify('Camera & microphone permission is needed.'); declineCall(); return; }
-    const pc = newPeerConnection(c.peerId);
-    c.pc = pc; c.local = local;
-    local.getTracks().forEach((t) => pc.addTrack(t, local));
-    try {
-      await pc.setRemoteDescription(new RTCSessionDescription(c.pendingOffer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      state.socket.emit('call:answer', { to: c.peerId, sdp: answer });
-      c.pendingOffer = null;
-      renderCallOverlay();
-    } catch (_e) { endCall(false); }
-  }
-
-  function declineCall() {
-    const c = state.call;
-    if (!c) return;
-    if (state.socket) state.socket.emit('call:decline', { to: c.peerId });
-    teardownCall();
-  }
-
-  // Answer received by the caller.
-  async function onCallAnswer(sdp) {
-    const c = state.call;
-    if (!c || !c.pc) return;
-    try { await c.pc.setRemoteDescription(new RTCSessionDescription(sdp)); }
-    catch (_e) { endCall(false); }
-  }
-
-  async function onCallIce(candidate) {
-    const c = state.call;
-    if (!c || !c.pc || !candidate) return;
-    try { await c.pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (_e) {}
-  }
-
-  function markCallActive() {
-    const c = state.call;
-    if (!c || c.status === 'active') return;
-    c.status = 'active';
-    c.startedAt = Date.now();
-    c.timer = setInterval(() => {
-      const t = document.getElementById('callTimer');
-      if (t) t.textContent = fmtDur((Date.now() - c.startedAt) / 1000);
-    }, 500);
-    renderCallOverlay();
-  }
-
-  // Hang up locally and tell the peer (unless the peer already ended it).
-  function endCall(notifyPeer) {
-    const c = state.call;
-    if (!c) return;
-    if (notifyPeer !== false && state.socket) state.socket.emit('call:end', { to: c.peerId });
-    teardownCall();
-  }
-
-  function teardownCall() {
-    const c = state.call;
-    if (!c) return;
-    if (c.timer) clearInterval(c.timer);
-    try { if (c.pc) c.pc.close(); } catch (_e) {}
-    if (c.local) c.local.getTracks().forEach((t) => t.stop());
-    state.call = null;
-    const o = document.getElementById('callOverlay');
-    if (o) o.remove();
-  }
-
-  function toggleMute() {
-    const c = state.call;
-    if (!c || !c.local) return;
-    const on = c.local.getAudioTracks().some((t) => t.enabled);
-    c.local.getAudioTracks().forEach((t) => (t.enabled = !on));
-    renderCallOverlay();
-  }
-
-  function toggleCam() {
-    const c = state.call;
-    if (!c || !c.local) return;
-    const on = c.local.getVideoTracks().some((t) => t.enabled);
-    c.local.getVideoTracks().forEach((t) => (t.enabled = !on));
-    renderCallOverlay();
-  }
-
-  // Build/refresh the call overlay for the current call state.
-  function renderCallOverlay() {
-    const c = state.call;
-    if (!c) return;
-    let o = document.getElementById('callOverlay');
-    if (!o) { o = el('<div class="call-overlay" id="callOverlay"></div>'); document.body.appendChild(o); }
-    o.innerHTML = '';
-
-    if (c.status === 'incoming') {
-      const box = el('<div class="call-incoming">'
-        + '<div class="call-avatar">📹</div>'
-        + '<div class="call-who">' + esc(c.peerName) + '</div>'
-        + '<div class="call-sub">Incoming video call…</div>'
-        + '<div class="call-inc-actions">'
-        + '<button class="call-btn decline" id="callDecline">Decline</button>'
-        + '<button class="call-btn accept" id="callAccept">Accept</button>'
-        + '</div></div>');
-      o.appendChild(box);
-      box.querySelector('#callAccept').addEventListener('click', acceptCall);
-      box.querySelector('#callDecline').addEventListener('click', declineCall);
-      return;
-    }
-
-    const stage = el('<div class="call-stage"></div>');
-    const remote = el('<video class="call-remote" id="remoteVideo" autoplay playsinline></video>');
-    if (c.remote) remote.srcObject = c.remote;
-    const localV = el('<video class="call-local" id="localVideo" autoplay playsinline muted></video>');
-    if (c.local) localV.srcObject = c.local;
-    stage.appendChild(remote);
-    stage.appendChild(localV);
-
-    const status = el('<div class="call-status"></div>');
-    status.textContent = c.status === 'outgoing' ? 'Calling ' + c.peerName + '…' : c.peerName;
-    if (c.status === 'active') { status.innerHTML = ''; status.appendChild(el('<span id="callTimer">0:00</span>')); }
-    stage.appendChild(status);
-
-    const micOn = c.local ? c.local.getAudioTracks().some((t) => t.enabled) : true;
-    const camOn = c.local ? c.local.getVideoTracks().some((t) => t.enabled) : true;
-    const controls = el('<div class="call-controls"></div>');
-    const mute = el('<button class="call-btn round" title="Mute">' + (micOn ? '🎙' : '🔇') + '</button>');
-    mute.addEventListener('click', toggleMute);
-    const cam = el('<button class="call-btn round" title="Camera">' + (camOn ? '📷' : '🚫') + '</button>');
-    cam.addEventListener('click', toggleCam);
-    const hang = el('<button class="call-btn round hangup" title="Hang up">📞</button>');
-    hang.addEventListener('click', () => endCall(true));
-    controls.appendChild(mute);
-    controls.appendChild(cam);
-    controls.appendChild(hang);
-    stage.appendChild(controls);
-    o.appendChild(stage);
-  }
-
   // Populate the gift picker grid (lazy-loads the catalog once).
   async function buildGiftPicker(picker) {
     const gifts = await loadGifts();
@@ -1302,13 +1082,6 @@
       // Only update the banner when the progress is for the open conversation.
       if (peerId && p && p.peerId === peerId) updateRoleplayBar(p);
     });
-
-    // --- Video call signaling ---
-    s.on('call:incoming', (p) => { if (p) onIncomingCall(p.from, p.fromName, p.sdp); });
-    s.on('call:answer', (p) => { if (p) onCallAnswer(p.sdp); });
-    s.on('call:ice', (p) => { if (p) onCallIce(p.candidate); });
-    s.on('call:decline', () => { if (state.call) { notify(state.call.peerName + ' declined the call.'); teardownCall(); } });
-    s.on('call:end', () => { if (state.call) teardownCall(); });
 
     s.on('connect_error', () => { /* auth or network issue; UI still works for browsing */ });
   }

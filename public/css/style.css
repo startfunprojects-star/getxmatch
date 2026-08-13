@@ -154,29 +154,6 @@ a { color: var(--accent); text-decoration: none; }
 .reaction-chip.mine { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, var(--bg-2)); }
 .reaction-chip .rc-count { font-size: 11px; opacity: .8; }
 
-/* ---------- Video calls ---------- */
-.call-overlay { position: fixed; inset: 0; z-index: 100; background: #000; display: flex; align-items: center; justify-content: center; }
-
-/* Incoming-call prompt. */
-.call-incoming { text-align: center; color: #fff; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 24px; }
-.call-avatar { width: 88px; height: 88px; border-radius: 50%; background: var(--bg-3); display: grid; place-items: center; font-size: 40px; }
-.call-who { font-size: 22px; font-weight: 700; }
-.call-sub { color: #bbb; }
-.call-inc-actions { display: flex; gap: 24px; margin-top: 16px; }
-
-/* Active/outgoing call stage. */
-.call-stage { position: relative; width: 100%; height: 100%; }
-.call-remote { width: 100%; height: 100%; object-fit: cover; background: #111; }
-.call-local { position: absolute; right: 16px; top: 16px; width: 120px; max-width: 32vw; aspect-ratio: 3/4; object-fit: cover; border-radius: 12px; border: 2px solid rgba(255,255,255,.5); background: #222; transform: scaleX(-1); }
-.call-status { position: absolute; top: 18px; left: 18px; color: #fff; font-weight: 600; text-shadow: 0 1px 4px rgba(0,0,0,.8); font-variant-numeric: tabular-nums; }
-.call-controls { position: absolute; left: 0; right: 0; bottom: 28px; display: flex; justify-content: center; gap: 18px; }
-
-.call-btn { cursor: pointer; border: none; font-size: 15px; font-weight: 600; }
-.call-btn.round { width: 58px; height: 58px; border-radius: 50%; background: rgba(255,255,255,.18); color: #fff; font-size: 22px; display: grid; place-items: center; }
-.call-btn.round:hover { background: rgba(255,255,255,.3); }
-.call-btn.round.hangup { background: var(--danger); transform: rotate(135deg); }
-.call-btn.accept { background: var(--ok); color: #fff; border-radius: 999px; padding: 12px 28px; }
-.call-btn.decline { background: var(--danger); color: #fff; border-radius: 999px; padding: 12px 28px; }
 /* Quoted message shown inside a reply bubble; click to jump to the original. */
 .reply-quote {
   display: block; cursor: pointer; margin-bottom: 6px; padding: 4px 8px;

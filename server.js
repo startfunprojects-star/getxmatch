@@ -32,7 +32,6 @@ app.use(
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'blob:'],
-        mediaSrc: ["'self'", 'data:', 'blob:'],
         connectSrc: ["'self'", 'ws:', 'wss:'],
         objectSrc: ["'none'"],
       },
