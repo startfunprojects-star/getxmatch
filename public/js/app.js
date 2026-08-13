@@ -530,6 +530,9 @@
   async function openChat(peer) {
     state.peer = peer;
     state.replyTo = null; // clear any half-composed reply from a previous chat
+    stopRecording();
+    cancelVoiceDraft();
+    closeReactionPalette();
     state.chatPeers[peer.id] = peer;
     document.querySelectorAll('.list-item').forEach((r) =>
       r.classList.toggle('active', Number(r.dataset.id) === peer.id));
@@ -557,6 +560,7 @@
           <input type="file" id="fileInput" class="hidden" />
           <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
           <button class="icon-btn" id="giftBtn" title="Send a naughty gift">🎁</button>
+          <button class="icon-btn" id="micBtn" title="Record a voice note">🎤</button>
           <button class="icon-btn" id="rpBtn" title="Start a roleplay story">🎭</button>
           <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" />
           <button class="primary" id="sendBtn">Send</button>
@@ -567,6 +571,9 @@
 
     view.querySelector('#backToList').addEventListener('click', () => {
       document.getElementById('shell').classList.remove('viewing-main');
+      stopRecording();
+      cancelVoiceDraft();
+      closeReactionPalette();
       state.peer = null;
     });
     const openPeerProfile = () => showProfile(peer.username);
@@ -587,6 +594,9 @@
       if (fileInput.files[0]) sendFile(fileInput.files[0]);
       fileInput.value = '';
     });
+
+    // Voice note recorder.
+    view.querySelector('#micBtn').addEventListener('click', toggleRecording);
 
     // Naughty gift picker.
     const giftPicker = view.querySelector('#giftPicker');
@@ -652,7 +662,7 @@
     if (m.reply) bubble.appendChild(renderQuote(m.reply));
     bubble.appendChild(document.createTextNode(m.body));
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
-    attachReplyBtn(bubble, m);
+    attachBubbleActions(bubble, m);
     b.appendChild(bubble);
     scrollBody();
   }
@@ -684,6 +694,7 @@
   function appendMessage(m) {
     if (m.kind === 'gift') appendGiftBubble(m);
     else if (m.kind === 'narration') appendNarrationBubble(m.body, m.at);
+    else if (m.kind === 'voice') appendVoiceBubble(m);
     else appendTextBubble(m);
   }
 
@@ -798,7 +809,31 @@
     const emoji = bubble.querySelector('.gift-emoji');
     emoji.addEventListener('click', () => replayPop(emoji));
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
-    attachReplyBtn(bubble, m);
+    attachBubbleActions(bubble, m);
+    b.appendChild(bubble);
+    scrollBody();
+  }
+
+  // Voice note bubble. m.body is JSON: { f: filename, d: seconds, v: voiceName }.
+  function appendVoiceBubble(m) {
+    const b = chatBody();
+    if (!b) return;
+    let info = {};
+    try { info = JSON.parse(m.body) || {}; } catch (_e) { info = {}; }
+    const bubble = el(`<div class="bubble voice ${m.mine ? 'me' : 'them'}"></div>`);
+    if (m.id) bubble.dataset.id = m.id;
+    if (m.reply) bubble.appendChild(renderQuote(m.reply));
+    const label = el('<div class="voice-label">🎤 Voice note</div>');
+    if (info.v) label.appendChild(el(`<span class="voice-tag">${esc(info.v)} voice</span>`));
+    bubble.appendChild(label);
+    if (info.f) {
+      const audio = el('<audio class="voice-audio" controls preload="metadata"></audio>');
+      audio.src = '/uploads/' + encodeURIComponent(info.f);
+      bubble.appendChild(audio);
+    }
+    if (info.d) bubble.appendChild(el(`<span class="voice-dur">${fmtDur(info.d)}</span>`));
+    bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
+    attachBubbleActions(bubble, m);
     b.appendChild(bubble);
     scrollBody();
   }
@@ -823,6 +858,7 @@
       const g = state.giftsById[m.body];
       return g ? `${g.emoji} ${g.name}` : 'a gift';
     }
+    if (m.kind === 'voice') return '🎤 Voice note';
     return String(m.body == null ? '' : m.body).slice(0, 140);
   }
 
@@ -848,16 +884,96 @@
     target.classList.add('flash');
   }
 
-  // Add the hover ↩ button so a message can be replied to. Only persisted
-  // messages (with an id) can be quoted.
-  function attachReplyBtn(bubble, m) {
+  // Hover actions (reply ↩ + react 🙂) and the reactions row. Only persisted
+  // messages (with an id) can be replied to or reacted to.
+  function attachBubbleActions(bubble, m) {
     if (!m || !m.id) return;
-    const btn = el('<button class="reply-btn" title="Reply">↩</button>');
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      startReply(m);
+    const actions = el('<div class="bubble-actions"></div>');
+    const reply = el('<button class="act-btn" title="Reply">↩</button>');
+    reply.addEventListener('click', (e) => { e.stopPropagation(); startReply(m); });
+    const react = el('<button class="act-btn" title="React">🙂</button>');
+    react.addEventListener('click', (e) => { e.stopPropagation(); openReactionPalette(react, m.id); });
+    actions.appendChild(reply);
+    actions.appendChild(react);
+    bubble.appendChild(actions);
+
+    bubble._reactions = Array.isArray(m.reactions) ? m.reactions.slice() : [];
+    const rc = el('<div class="reactions hidden"></div>');
+    bubble.appendChild(rc);
+    bubble._reactionsEl = rc;
+    renderReactions(bubble);
+  }
+
+  /* ---------- emoji reactions ---------- */
+
+  var REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '🔥', '👍', '😍', '🙏'];
+
+  function sendReaction(messageId, emoji) {
+    if (!state.peer || !state.socket || !messageId) return;
+    state.socket.emit('chat:react', { to: state.peer.id, messageId, emoji }, (res) => {
+      if (res && res.error) notify(res.error);
+      // The authoritative update arrives via the 'chat:reaction' broadcast.
     });
-    bubble.appendChild(btn);
+  }
+
+  function openReactionPalette(anchorBtn, messageId) {
+    closeReactionPalette();
+    const pal = el('<div class="react-palette"></div>');
+    REACTION_EMOJIS.forEach((emoji) => {
+      const b = el(`<button class="rp-emoji">${emoji}</button>`);
+      b.addEventListener('click', (e) => { e.stopPropagation(); sendReaction(messageId, emoji); closeReactionPalette(); });
+      pal.appendChild(b);
+    });
+    document.body.appendChild(pal);
+    const r = anchorBtn.getBoundingClientRect();
+    pal.style.top = Math.max(8, r.top - 46) + 'px';
+    pal.style.left = Math.max(8, Math.min(window.innerWidth - pal.offsetWidth - 8, r.left - 70)) + 'px';
+    state._reactPalette = pal;
+    setTimeout(() => document.addEventListener('click', closeReactionPaletteOnce), 0);
+  }
+
+  function closeReactionPaletteOnce(ev) {
+    if (state._reactPalette && !state._reactPalette.contains(ev.target)) closeReactionPalette();
+  }
+
+  function closeReactionPalette() {
+    if (state._reactPalette) {
+      state._reactPalette.remove();
+      state._reactPalette = null;
+      document.removeEventListener('click', closeReactionPaletteOnce);
+    }
+  }
+
+  // Re-render the reaction chips under a bubble from its ._reactions list.
+  function renderReactions(bubble) {
+    const rc = bubble._reactionsEl;
+    if (!rc) return;
+    rc.innerHTML = '';
+    const list = bubble._reactions || [];
+    if (!list.length) { rc.classList.add('hidden'); return; }
+    rc.classList.remove('hidden');
+    const counts = {};
+    const mine = {};
+    list.forEach((r) => {
+      counts[r.emoji] = (counts[r.emoji] || 0) + 1;
+      if (r.userId === state.me.id) mine[r.emoji] = true;
+    });
+    Object.keys(counts).forEach((emoji) => {
+      const chip = el(`<button class="reaction-chip${mine[emoji] ? ' mine' : ''}"><span>${emoji}</span><span class="rc-count">${counts[emoji]}</span></button>`);
+      chip.addEventListener('click', (e) => { e.stopPropagation(); sendReaction(Number(bubble.dataset.id), emoji); });
+      rc.appendChild(chip);
+    });
+  }
+
+  // Apply a live reaction change (emoji === null means the user cleared it).
+  function updateReaction(messageId, userId, emoji) {
+    const b = chatBody();
+    if (!b) return;
+    const bubble = b.querySelector(`.bubble[data-id="${messageId}"]`);
+    if (!bubble || !bubble._reactions) return;
+    bubble._reactions = bubble._reactions.filter((r) => r.userId !== userId);
+    if (emoji) bubble._reactions.push({ userId, emoji });
+    renderReactions(bubble);
   }
 
   function startReply(m) {
@@ -889,6 +1005,277 @@
     banner.appendChild(body);
     banner.appendChild(x);
     banner.classList.remove('hidden');
+  }
+
+  /* ---------- voice notes ---------- */
+
+  function fmtDur(sec) {
+    sec = Math.max(0, Math.round(sec || 0));
+    return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+  }
+
+  function insertAboveComposer(node) {
+    const composer = document.querySelector('.chat-wrap .composer');
+    if (composer && composer.parentNode) composer.parentNode.insertBefore(node, composer);
+  }
+
+  // Fetch (and cache) the voice-changer catalog.
+  async function loadVoices() {
+    if (state.voices) return state.voices;
+    try { state.voices = await api.get('/api/voice/voices'); }
+    catch (_e) { state.voices = { realistic: false, female: [], male: [] }; }
+    return state.voices;
+  }
+
+  let mediaRec = null;
+  let recChunks = [];
+  let recStart = 0;
+  let recStream = null;
+  let recTimer = null;
+
+  async function toggleRecording() {
+    if (mediaRec && mediaRec.state === 'recording') { stopRecording(); return; }
+    if (state.voiceDraft) return; // finish the current draft first
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+      return notify('Voice recording is not supported on this device/browser.');
+    }
+    try {
+      recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (_e) {
+      return notify('Microphone permission is needed to record a voice note.');
+    }
+    recChunks = [];
+    let opts;
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm')) {
+      opts = { mimeType: 'audio/webm' };
+    }
+    mediaRec = new MediaRecorder(recStream, opts);
+    mediaRec.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
+    mediaRec.onstop = finishRecording;
+    mediaRec.start();
+    recStart = Date.now();
+    showRecordingBar();
+    setMicActive(true);
+  }
+
+  function stopRecording() {
+    if (recTimer) { clearInterval(recTimer); recTimer = null; }
+    if (mediaRec && mediaRec.state !== 'inactive') {
+      try { mediaRec.stop(); } catch (_e) {}
+    }
+    setMicActive(false);
+  }
+
+  function stopStream() {
+    if (recStream) { recStream.getTracks().forEach((t) => t.stop()); recStream = null; }
+  }
+
+  function finishRecording() {
+    hideRecordingBar();
+    const type = (recChunks[0] && recChunks[0].type) || 'audio/webm';
+    const blob = new Blob(recChunks, { type });
+    const dur = Math.round((Date.now() - recStart) / 1000);
+    mediaRec = null;
+    stopStream();
+    if (!blob.size) return;
+    state.voiceDraft = { original: blob, current: blob, voiceId: null, voiceName: null, duration: dur };
+    renderVoicePanel();
+  }
+
+  function setMicActive(on) {
+    const btn = document.getElementById('micBtn');
+    if (btn) btn.classList.toggle('recording', !!on);
+  }
+
+  function showRecordingBar() {
+    let bar = document.getElementById('recordBar');
+    if (!bar) { bar = el('<div class="record-bar" id="recordBar"></div>'); insertAboveComposer(bar); }
+    bar.innerHTML = '<span class="rec-dot"></span><span class="rec-time" id="recTime">0:00</span>'
+      + '<span class="rec-hint">Recording… tap the mic again or Stop to finish</span>'
+      + '<button class="rec-stop" id="recStop">Stop</button>';
+    bar.classList.remove('hidden');
+    bar.querySelector('#recStop').addEventListener('click', stopRecording);
+    recTimer = setInterval(() => {
+      const t = document.getElementById('recTime');
+      if (t) t.textContent = fmtDur((Date.now() - recStart) / 1000);
+    }, 250);
+  }
+
+  function hideRecordingBar() {
+    if (recTimer) { clearInterval(recTimer); recTimer = null; }
+    const bar = document.getElementById('recordBar');
+    if (bar) bar.remove();
+  }
+
+  function cancelVoiceDraft() {
+    state.voiceDraft = null;
+    const p = document.getElementById('voicePanel');
+    if (p) p.remove();
+  }
+
+  // Preview panel: play back the recording, pick a voice, send.
+  async function renderVoicePanel() {
+    const d = state.voiceDraft;
+    if (!d) return;
+    let panel = document.getElementById('voicePanel');
+    if (!panel) { panel = el('<div class="voice-panel" id="voicePanel"></div>'); insertAboveComposer(panel); }
+    panel.innerHTML = '';
+
+    const head = el(`<div class="vp-head"><span>🎤 Voice note · ${fmtDur(d.duration)}${d.voiceName ? ' · ' + esc(d.voiceName) + ' voice' : ''}</span><button class="vp-cancel" title="Discard">×</button></div>`);
+    head.querySelector('.vp-cancel').addEventListener('click', cancelVoiceDraft);
+    panel.appendChild(head);
+
+    const audio = el('<audio class="vp-audio" controls></audio>');
+    audio.src = URL.createObjectURL(d.current);
+    panel.appendChild(audio);
+
+    const voices = await loadVoices();
+    const changer = el('<div class="vp-changer"></div>');
+    const topRow = el('<div class="vp-chips"></div>');
+    topRow.appendChild(voiceChip('🎙 Your voice', null, d.voiceId === null));
+    changer.appendChild(topRow);
+    changer.appendChild(voiceGroup('♀ Female voices', voices.female || [], d.voiceId));
+    changer.appendChild(voiceGroup('♂ Male voices', voices.male || [], d.voiceId));
+    panel.appendChild(changer);
+
+    if (!voices.realistic) {
+      panel.appendChild(el('<div class="vp-note">Voice changer uses a built-in effect. For realistic voices, the server admin can configure a provider (VOICE_API_URL).</div>'));
+    }
+
+    const actions = el('<div class="vp-actions"></div>');
+    const reRec = el('<button class="vp-rerec">Re-record</button>');
+    reRec.addEventListener('click', () => { cancelVoiceDraft(); toggleRecording(); });
+    const sendBtn = el('<button class="primary vp-send">Send voice note</button>');
+    sendBtn.addEventListener('click', sendVoiceDraft);
+    actions.appendChild(reRec);
+    actions.appendChild(sendBtn);
+    panel.appendChild(actions);
+    panel.classList.remove('hidden');
+  }
+
+  function voiceGroup(title, list, activeId) {
+    const g = el(`<div class="vp-group"><div class="vp-group-title">${esc(title)}</div><div class="vp-chips"></div></div>`);
+    const chips = g.querySelector('.vp-chips');
+    list.forEach((v) => chips.appendChild(voiceChip(v.name, v.id, activeId === v.id)));
+    return g;
+  }
+
+  function voiceChip(label, voiceId, active) {
+    const chip = el(`<button class="voice-chip${active ? ' active' : ''}">${esc(label)}</button>`);
+    chip.addEventListener('click', () => applyVoice(voiceId));
+    return chip;
+  }
+
+  async function applyVoice(voiceId) {
+    const d = state.voiceDraft;
+    if (!d) return;
+    if (voiceId === null) {
+      d.current = d.original; d.voiceId = null; d.voiceName = null;
+      return renderVoicePanel();
+    }
+    const voices = await loadVoices();
+    const v = [].concat(voices.female || [], voices.male || []).find((x) => x.id === voiceId);
+    if (!v) return;
+    try {
+      const out = voices.realistic
+        ? await convertViaServer(d.original, voiceId)
+        : await pitchShiftBlob(d.original, v.pitch, v.bright);
+      d.current = out; d.voiceId = voiceId; d.voiceName = v.name;
+    } catch (_e) {
+      notify('Voice conversion failed; keeping your original voice.');
+      d.current = d.original; d.voiceId = null; d.voiceName = null;
+    }
+    renderVoicePanel();
+  }
+
+  // Realistic path: let the server/provider convert.
+  async function convertViaServer(blob, voiceId) {
+    const fd = new FormData();
+    const ext = (blob.type && blob.type.indexOf('webm') >= 0) ? '.webm' : '.dat';
+    fd.append('audio', blob, 'note' + ext);
+    fd.append('voice', voiceId);
+    const res = await fetch('/api/voice/convert', { method: 'POST', body: fd, credentials: 'same-origin' });
+    const ct = res.headers.get('content-type') || '';
+    if (ct.indexOf('application/json') >= 0) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j.error || 'fallback');
+    }
+    if (!res.ok) throw new Error('convert failed');
+    return await res.blob();
+  }
+
+  // Fallback path: browser audio effect (pitch shift + brightness). Not a truly
+  // realistic voice — a processed effect.
+  async function pitchShiftBlob(blob, semitones, brightDb) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ac = new AC();
+    const buf = await ac.decodeAudioData(await blob.arrayBuffer());
+    ac.close();
+    const rate = Math.pow(2, (Number(semitones) || 0) / 12);
+    const frames = Math.max(1, Math.ceil(buf.length / rate));
+    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const off = new OAC(buf.numberOfChannels, frames, buf.sampleRate);
+    const src = off.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    let node = src;
+    if (brightDb) {
+      const hs = off.createBiquadFilter();
+      hs.type = 'highshelf';
+      hs.frequency.value = 2200;
+      hs.gain.value = Number(brightDb) || 0;
+      src.connect(hs);
+      node = hs;
+    }
+    node.connect(off.destination);
+    src.start();
+    const rendered = await off.startRendering();
+    return audioBufferToWav(rendered);
+  }
+
+  // Encode an AudioBuffer as a 16-bit PCM WAV Blob.
+  function audioBufferToWav(buffer) {
+    const numCh = buffer.numberOfChannels;
+    const sr = buffer.sampleRate;
+    const len = buffer.length;
+    const chans = [];
+    for (let c = 0; c < numCh; c++) chans.push(buffer.getChannelData(c));
+    const blockAlign = numCh * 2;
+    const dataLen = len * blockAlign;
+    const ab = new ArrayBuffer(44 + dataLen);
+    const dv = new DataView(ab);
+    let o = 0;
+    const ws = (s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o++, s.charCodeAt(i)); };
+    ws('RIFF'); dv.setUint32(o, 36 + dataLen, true); o += 4; ws('WAVE');
+    ws('fmt '); dv.setUint32(o, 16, true); o += 4;
+    dv.setUint16(o, 1, true); o += 2; dv.setUint16(o, numCh, true); o += 2;
+    dv.setUint32(o, sr, true); o += 4; dv.setUint32(o, sr * blockAlign, true); o += 4;
+    dv.setUint16(o, blockAlign, true); o += 2; dv.setUint16(o, 16, true); o += 2;
+    ws('data'); dv.setUint32(o, dataLen, true); o += 4;
+    for (let i = 0; i < len; i++) {
+      for (let c = 0; c < numCh; c++) {
+        let s = Math.max(-1, Math.min(1, chans[c][i]));
+        dv.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+        o += 2;
+      }
+    }
+    return new Blob([ab], { type: 'audio/wav' });
+  }
+
+  async function sendVoiceDraft() {
+    const d = state.voiceDraft;
+    if (!d || !state.peer || !state.socket) return;
+    const blob = d.current;
+    const voiceId = d.voiceId;
+    const duration = d.duration;
+    cancelVoiceDraft();
+    const buf = await blob.arrayBuffer();
+    state.socket.emit('chat:voice',
+      { to: state.peer.id, data: buf, mime: blob.type || 'audio/webm', voice: voiceId, duration },
+      (res) => {
+        if (res && res.error) return notify(res.error);
+        if (res && res.message) appendMessage(res.message);
+      });
   }
 
   // Populate the gift picker grid (lazy-loads the catalog once).
@@ -987,6 +1374,10 @@
     s.on('chat:typing', (p) => {
       const peerId = state.peer && state.peer.id;
       if (peerId && p.from === peerId) showTyping();
+    });
+
+    s.on('chat:reaction', (e) => {
+      if (e && e.messageId != null) updateReaction(e.messageId, e.userId, e.emoji);
     });
 
     s.on('roleplay:progress', (p) => {

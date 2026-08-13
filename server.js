@@ -19,6 +19,7 @@ const contentRoutes = require('./src/routes/content');
 const leaderboardRoutes = require('./src/routes/leaderboard');
 const eventsRoutes = require('./src/routes/events');
 const roleplayRoutes = require('./src/routes/roleplay');
+const voiceRoutes = require('./src/routes/voice');
 
 const app = express();
 app.set('trust proxy', 1); // behind nginx on the VPS
@@ -32,6 +33,9 @@ app.use(
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'blob:'],
+        // Voice-note playback: recorded/converted audio previewed from a blob:
+        // URL, plus stored notes served from /uploads (same-origin).
+        mediaSrc: ["'self'", 'data:', 'blob:'],
         connectSrc: ["'self'", 'ws:', 'wss:'],
         objectSrc: ["'none'"],
       },
@@ -57,6 +61,7 @@ app.use('/api/content', contentRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/roleplay', roleplayRoutes);
+app.use('/api/voice', voiceRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 

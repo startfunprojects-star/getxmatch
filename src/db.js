@@ -214,6 +214,21 @@ db.exec(`
   }
 })();
 
+// --- Emoji reactions on chat messages (text / gift / voice note). One row per
+// (message, user): a user has at most one reaction per message; picking a new
+// emoji replaces it, picking the same one again clears it.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS message_reactions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji       TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    UNIQUE (message_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_reactions_msg ON message_reactions (message_id);
+`);
+
 // --- Content & engagement features: quizzes, polls, blogs, profile
 // and admin-authored events. Created idempotently so existing
 // databases pick them up on next boot.

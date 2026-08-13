@@ -16,6 +16,16 @@ const config = {
   tokenTtl: '7d',
   maxUploadBytes: (parseInt(process.env.MAX_UPLOAD_MB, 10) || 5) * 1024 * 1024,
   maxChatFileBytes: (parseInt(process.env.MAX_CHAT_FILE_MB, 10) || 15) * 1024 * 1024,
+  // Stored voice notes are kept small; recorded opus/webm is very compact.
+  maxVoiceBytes: (parseInt(process.env.MAX_VOICE_MB, 10) || 8) * 1024 * 1024,
+
+  // Optional realistic voice-changer provider. When both are set, recorded
+  // voice notes are converted server-side via this API (see src/voice.js);
+  // otherwise the client falls back to a browser audio effect.
+  voiceApi: {
+    url: process.env.VOICE_API_URL || '',
+    key: process.env.VOICE_API_KEY || '',
+  },
   dataDir: path.join(ROOT, 'data'),
   uploadsDir: path.join(ROOT, 'uploads'),
   dbPath: path.join(ROOT, 'data', 'getxmatch.db'),

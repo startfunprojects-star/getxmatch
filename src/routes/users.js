@@ -15,6 +15,8 @@ function buildReplyPreview(row) {
     text = g ? `${g.emoji} ${g.name}` : 'a gift';
   } else if (row.reply_kind === 'narration') {
     text = '🎭 Roleplay';
+  } else if (row.reply_kind === 'voice') {
+    text = '🎤 Voice note';
   }
   return { id: row.reply_id, from: row.reply_sender, kind: row.reply_kind || 'text', text: String(text).slice(0, 140) };
 }
@@ -65,6 +67,22 @@ router.get('/:id/messages', requireAuth, (req, res) => {
     )
     .all(req.user.id, otherId, otherId, req.user.id);
 
+  // Reactions across this whole conversation, grouped by message.
+  const reactionRows = db
+    .prepare(
+      `SELECT mr.message_id, mr.user_id, mr.emoji
+       FROM message_reactions mr
+       JOIN messages m ON m.id = mr.message_id
+       WHERE (m.sender_id = ? AND m.recipient_id = ?)
+          OR (m.sender_id = ? AND m.recipient_id = ?)`
+    )
+    .all(req.user.id, otherId, otherId, req.user.id);
+  const reactionsByMsg = new Map();
+  for (const r of reactionRows) {
+    if (!reactionsByMsg.has(r.message_id)) reactionsByMsg.set(r.message_id, []);
+    reactionsByMsg.get(r.message_id).push({ userId: r.user_id, emoji: r.emoji });
+  }
+
   res.json({
     messages: rows.map((m) => ({
       id: m.id,
@@ -76,6 +94,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       mine: m.sender_id === req.user.id,
       replyTo: m.reply_to || null,
       reply: buildReplyPreview(m),
+      reactions: reactionsByMsg.get(m.id) || [],
     })),
   });
 });
