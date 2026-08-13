@@ -1070,16 +1070,38 @@
     if (recStream) { recStream.getTracks().forEach((t) => t.stop()); recStream = null; }
   }
 
-  function finishRecording() {
+  async function finishRecording() {
     hideRecordingBar();
     const type = (recChunks[0] && recChunks[0].type) || 'audio/webm';
-    const blob = new Blob(recChunks, { type });
+    const raw = new Blob(recChunks, { type });
     const dur = Math.round((Date.now() - recStart) / 1000);
     mediaRec = null;
     stopStream();
-    if (!blob.size) return;
-    state.voiceDraft = { original: blob, current: blob, voiceId: null, voiceName: null, duration: dur };
+    if (!raw.size) return;
+    // Normalise to WAV/PCM immediately. MediaRecorder gives webm/opus (or mp4
+    // on iOS), and webm/opus is unplayable on iOS Safari — WAV plays anywhere.
+    let audio = raw;
+    try { audio = await transcodeToWav(raw); } catch (_e) { /* keep raw as a fallback */ }
+    state.voiceDraft = { original: audio, current: audio, voiceId: null, voiceName: null, duration: dur };
     renderVoicePanel();
+  }
+
+  // Decode any recorded format and re-encode as compact mono WAV (16 kHz).
+  async function transcodeToWav(blob, targetRate) {
+    targetRate = targetRate || 16000;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ac = new AC();
+    const decoded = await ac.decodeAudioData(await blob.arrayBuffer());
+    ac.close();
+    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const frames = Math.max(1, Math.ceil(decoded.duration * targetRate));
+    const off = new OAC(1, frames, targetRate); // mono + resample
+    const src = off.createBufferSource();
+    src.buffer = decoded;
+    src.connect(off.destination);
+    src.start();
+    const out = await off.startRendering();
+    return audioBufferToWav(out);
   }
 
   function setMicActive(on) {
