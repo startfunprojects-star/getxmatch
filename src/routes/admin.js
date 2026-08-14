@@ -13,6 +13,7 @@ const config = require('../config');
 const { sendAdminResetLink } = require('../mail');
 const { isOnline } = require('../socket');
 const { imageUpload } = require('../upload');
+const { isFakeActivityEnabled, setFakeActivityEnabled } = require('../settings');
 const {
   ADMIN_COOKIE,
   signAdminToken,
@@ -511,6 +512,7 @@ router.delete('/events/:id', requireAdmin, (req, res) => {
 router.get('/fake-activities', requireAdmin, (req, res) => {
   const rows = db.prepare('SELECT id, person_a, activity, person_b, created_at FROM fake_activities ORDER BY created_at DESC').all();
   res.json({
+    enabled: isFakeActivityEnabled(),
     activities: rows.map((r) => ({
       id: r.id,
       personA: r.person_a,
@@ -519,6 +521,14 @@ router.get('/fake-activities', requireAdmin, (req, res) => {
       createdAt: r.created_at,
     })),
   });
+});
+
+// POST /api/admin/fake-activities/settings  { enabled } — global on/off toggle.
+// (Distinct path from the :id routes below, so no route conflict.)
+router.post('/fake-activities/settings', requireAdmin, (req, res) => {
+  const enabled = !!(req.body && (req.body.enabled === true || req.body.enabled === 'true' || req.body.enabled === 1 || req.body.enabled === '1'));
+  setFakeActivityEnabled(enabled);
+  res.json({ enabled });
 });
 
 // POST /api/admin/fake-activities  { personA, activity, personB }

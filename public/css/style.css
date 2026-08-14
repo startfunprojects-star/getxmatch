@@ -692,3 +692,18 @@ a.share-link:hover { text-decoration: underline; }
   .fake-row-head { display: none; }
   .fake-add, .fake-row { grid-template-columns: 1fr 1fr; }
 }
+
+/* Live-streamed activity item: subtle slide/fade in */
+@keyframes feedIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+.feed-item.feed-new { animation: feedIn .35s ease; }
+
+/* Admin: fake-activity on/off switch */
+.fake-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.fake-toggle-row h2 { margin: 0; }
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch-slider { position: relative; width: 42px; height: 24px; background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; transition: background .15s; flex: none; }
+.switch-slider::before { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); transition: transform .15s, background .15s; }
+.switch input:checked + .switch-slider { background: color-mix(in srgb, var(--ok) 55%, var(--bg-3)); border-color: var(--ok); }
+.switch input:checked + .switch-slider::before { transform: translateX(18px); background: #fff; }
+.switch-label { font-size: 13px; color: var(--muted); min-width: 22px; }

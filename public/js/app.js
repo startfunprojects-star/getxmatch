@@ -2025,6 +2025,23 @@
 
   /* ---------- Recent Activity ---------- */
 
+  // Build one feed row. `live` items (streamed fake activity) show "just now".
+  function feedItemEl(ev, live) {
+    const item = el(`
+      <div class="feed-item${live ? ' feed-new' : ''}">
+        <div class="feed-icon">${ev.icon || '•'}</div>
+        <div class="feed-main">
+          ${ev.type === 'admin' && ev.title ? '<div class="feed-title"></div>' : ''}
+          <div class="feed-text"></div>
+          <div class="feed-time hint">${live ? 'just now' : `${fmtDate(ev.at)} · ${fmtTime(ev.at)}`}</div>
+        </div>
+      </div>
+    `);
+    if (ev.type === 'admin' && ev.title) item.querySelector('.feed-title').textContent = ev.title;
+    item.querySelector('.feed-text').textContent = ev.text;
+    return item;
+  }
+
   // Shared recent-activity renderer. Deliberately non-interactive: names are
   // plain text (no profile links, no friend buttons), so members can't act on
   // each other from the feed. Real activity and admin "fake" activity are shown
@@ -2037,23 +2054,62 @@
     catch (e) { container.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
     if (!events.length) { container.innerHTML = '<div class="empty-main">Nothing happening yet.</div>'; return; }
     const feed = el(`<div class="${opts.compact ? 'activity-side' : 'feed card'}"></div>`);
-    events.forEach((ev) => {
-      const item = el(`
-        <div class="feed-item">
-          <div class="feed-icon">${ev.icon || '•'}</div>
-          <div class="feed-main">
-            ${ev.type === 'admin' && ev.title ? '<div class="feed-title"></div>' : ''}
-            <div class="feed-text"></div>
-            <div class="feed-time hint">${fmtDate(ev.at)} · ${fmtTime(ev.at)}</div>
-          </div>
-        </div>
-      `);
-      if (ev.type === 'admin' && ev.title) item.querySelector('.feed-title').textContent = ev.title;
-      item.querySelector('.feed-text').textContent = ev.text;
-      feed.appendChild(item);
-    });
+    events.forEach((ev) => feed.appendChild(feedItemEl(ev, false)));
     container.innerHTML = '';
     container.appendChild(feed);
+    registerActivityFeed(feed);
+  }
+
+  /* ---- live fake-activity ticker: streams new combinations every 2–15s ---- */
+  const activityFeeds = []; // { feed } for each mounted feed element
+  let fakeTicker = null;
+
+  function fakeIcon(activity) {
+    const a = String(activity).toLowerCase();
+    if (/(chat|messag|talk)/.test(a)) return '💬';
+    if (/(flirt|crush|love|kiss)/.test(a)) return '😍';
+    if (/(match|paired|connect)/.test(a)) return '💘';
+    if (/(rat|star|review)/.test(a)) return '⭐';
+    if (/(gift|sent)/.test(a)) return '🎁';
+    if (/(view|check|look|profile)/.test(a)) return '👀';
+    if (/(friend|follow)/.test(a)) return '🤝';
+    return '✨';
+  }
+
+  async function loadFakePool() {
+    if (state.fakePool) return state.fakePool;
+    try { state.fakePool = await api.get('/api/events/fake-pool'); }
+    catch (_e) { state.fakePool = { enabled: false, females: [], males: [], activities: [] }; }
+    return state.fakePool;
+  }
+
+  function registerActivityFeed(feed) {
+    activityFeeds.push(feed);
+    ensureFakeTicker();
+  }
+
+  function ensureFakeTicker() {
+    if (fakeTicker) return;
+    const schedule = () => { fakeTicker = setTimeout(tick, 2000 + Math.random() * 13000); }; // 2–15s
+    const tick = async () => {
+      // Drop feeds that are no longer on the page.
+      for (let i = activityFeeds.length - 1; i >= 0; i--) {
+        if (!document.body.contains(activityFeeds[i])) activityFeeds.splice(i, 1);
+      }
+      if (!activityFeeds.length) { fakeTicker = null; return; } // stops; restarts on next render
+      const pool = await loadFakePool();
+      if (pool.enabled && pool.females.length && pool.males.length && pool.activities.length) {
+        const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+        const act = pick(pool.activities);
+        const ev = { type: 'fake', icon: fakeIcon(act), at: Date.now(), text: `${pick(pool.females)} ${act} ${pick(pool.males)}` };
+        activityFeeds.forEach((feed) => {
+          feed.insertBefore(feedItemEl(ev, true), feed.firstChild);
+          while (feed.children.length > 60) feed.removeChild(feed.lastChild);
+        });
+      }
+      schedule();
+    };
+    schedule();
   }
 
   async function renderEvents() {

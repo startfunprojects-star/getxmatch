@@ -915,15 +915,22 @@
     const host = tabHost();
     host.innerHTML = `
       <div class="admin-card">
-        <h2>Fake activity</h2>
-        <p class="count">Each row is <b>Person A · activity · Person B</b>. Names and activities are recombined at random and mixed into the members' recent-activity feed (names are never clickable). Example: <i>Priya · flirting with · Sam</i>.</p>
+        <div class="fake-toggle-row">
+          <h2>Fake activity</h2>
+          <label class="switch" title="Turn fake activity on or off">
+            <input type="checkbox" id="faEnabled" />
+            <span class="switch-slider"></span>
+            <span class="switch-label" id="faEnabledLabel">…</span>
+          </label>
+        </div>
+        <p class="count">Each row is <b>Female · activity · Male</b>. Names and activities are recombined at random and streamed continuously into the members' recent-activity feed (names are never clickable). Example: <i>Priya · flirting with · Sam</i>.</p>
         <div class="fake-row-head">
-          <span>Person A</span><span>Activity</span><span>Person B</span><span></span>
+          <span>Female</span><span>Activity</span><span>Male</span><span></span>
         </div>
         <div class="fake-add">
-          <input id="faA" placeholder="e.g. Priya" />
-          <input id="faAct" placeholder="e.g. flirting with" />
-          <input id="faB" placeholder="e.g. Sam" />
+          <input id="faA" placeholder="Female name, e.g. Priya" />
+          <input id="faAct" placeholder="Activity, e.g. flirting with" />
+          <input id="faB" placeholder="Male name, e.g. Sam" />
           <button type="button" class="primary small" id="faAdd">Add</button>
         </div>
         <div class="msg" id="faMsg"></div>
@@ -933,6 +940,17 @@
         <div id="faList" class="count">Loading…</div>
       </div>
     `;
+    const toggle = host.querySelector('#faEnabled');
+    const toggleLabel = host.querySelector('#faEnabledLabel');
+    toggle.addEventListener('change', async () => {
+      try {
+        const { enabled } = await api.post('/api/admin/fake-activities/settings', { enabled: toggle.checked });
+        toggleLabel.textContent = enabled ? 'On' : 'Off';
+      } catch (e) {
+        toggle.checked = !toggle.checked; // revert on failure
+        alert(e.message);
+      }
+    });
     const msg = host.querySelector('#faMsg');
     const add = async () => {
       msg.className = 'msg';
@@ -958,9 +976,13 @@
   async function loadFakeList() {
     const box = document.getElementById('faList');
     if (!box) return;
-    let activities;
-    try { activities = (await api.get('/api/admin/fake-activities')).activities; }
+    let data;
+    try { data = await api.get('/api/admin/fake-activities'); }
     catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
+    const activities = data.activities;
+    const toggle = document.getElementById('faEnabled');
+    const toggleLabel = document.getElementById('faEnabledLabel');
+    if (toggle) { toggle.checked = !!data.enabled; toggleLabel.textContent = data.enabled ? 'On' : 'Off'; }
     if (!activities.length) { box.innerHTML = '<div class="count">No fake activity yet. Add a few rows above.</div>'; return; }
     box.innerHTML = '';
     const table = el('<div class="fake-table"></div>');

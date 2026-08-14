@@ -373,10 +373,16 @@ db.exec(`
 db.exec(`
   CREATE TABLE IF NOT EXISTS fake_activities (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    person_a   TEXT NOT NULL,
+    person_a   TEXT NOT NULL,   -- female name (column 1)
     activity   TEXT NOT NULL,
-    person_b   TEXT NOT NULL,
+    person_b   TEXT NOT NULL,   -- male name (column 3)
     created_at INTEGER NOT NULL
+  );
+
+  -- Simple key/value store for global app settings (e.g. fake-activity on/off).
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
   );
 `);
 

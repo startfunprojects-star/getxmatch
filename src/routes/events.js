@@ -14,6 +14,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../auth');
 const { friendState } = require('../profileData');
+const { isFakeActivityEnabled } = require('../settings');
 
 const router = express.Router();
 
@@ -52,25 +53,30 @@ function activityIcon(activity) {
 
 const uniq = (arr) => [...new Set(arr.map((s) => String(s).trim()).filter(Boolean))];
 
+// The admin's fake-activity pools: female names (col 1), male names (col 3),
+// and activities (col 2). Combined at random as "<female> <activity> <male>".
+function fakePools() {
+  const rows = db.prepare('SELECT person_a, activity, person_b FROM fake_activities').all();
+  return {
+    females: uniq(rows.map((r) => r.person_a)),
+    males: uniq(rows.map((r) => r.person_b)),
+    activities: uniq(rows.map((r) => r.activity)),
+  };
+}
+
 // Build randomly recombined fake-activity events from the admin's pool.
 function fakeActivityEvents() {
-  const rows = db.prepare('SELECT person_a, activity, person_b FROM fake_activities').all();
-  if (!rows.length) return [];
-
-  const names = uniq([...rows.map((r) => r.person_a), ...rows.map((r) => r.person_b)]);
-  const activities = uniq(rows.map((r) => r.activity));
-  if (names.length < 2 || !activities.length) return [];
+  if (!isFakeActivityEnabled()) return [];
+  const { females, males, activities } = fakePools();
+  if (!females.length || !males.length || !activities.length) return [];
 
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-  const count = Math.min(30, Math.max(rows.length, 12));
+  const count = Math.min(30, Math.max(females.length + males.length, 12));
   const now = Date.now();
   const out = [];
   for (let i = 0; i < count; i++) {
-    const a = pick(names);
-    let b = pick(names);
-    let guard = 0;
-    while (b === a && guard++ < 5) b = pick(names);
-    if (b === a) continue;
+    const f = pick(females);
+    const m = pick(males);
     const act = pick(activities);
     out.push({
       id: 'fake-' + i,
@@ -79,11 +85,19 @@ function fakeActivityEvents() {
       icon: activityIcon(act),
       actor: null,
       target: null,
-      text: `${a} ${act} ${b}`,
+      text: `${f} ${act} ${m}`,
     });
   }
   return out;
 }
+
+// GET /api/events/fake-pool — the raw pools + on/off flag, so the client can
+// stream new fake activity continuously (see the ticker in the SPA).
+router.get('/fake-pool', requireAuth, (req, res) => {
+  const enabled = isFakeActivityEnabled();
+  const pools = enabled ? fakePools() : { females: [], males: [], activities: [] };
+  res.json({ enabled, ...pools });
+});
 
 // GET /api/events — merged recent activity.
 router.get('/', requireAuth, (req, res) => {
