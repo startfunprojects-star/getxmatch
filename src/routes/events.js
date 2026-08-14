@@ -78,6 +78,8 @@ function fakeActivityEvents() {
     const f = pick(females);
     const m = pick(males);
     const act = pick(activities);
+    // Randomly order the pair: female→male or male→female.
+    const text = Math.random() < 0.5 ? `${f} ${act} ${m}` : `${m} ${act} ${f}`;
     out.push({
       id: 'fake-' + i,
       type: 'fake',
@@ -85,7 +87,7 @@ function fakeActivityEvents() {
       icon: activityIcon(act),
       actor: null,
       target: null,
-      text: `${f} ${act} ${m}`,
+      text,
     });
   }
   return out;

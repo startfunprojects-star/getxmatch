@@ -2101,7 +2101,11 @@
       if (pool.enabled && pool.females.length && pool.males.length && pool.activities.length) {
         const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
         const act = pick(pool.activities);
-        const ev = { type: 'fake', icon: fakeIcon(act), at: Date.now(), text: `${pick(pool.females)} ${act} ${pick(pool.males)}` };
+        const f = pick(pool.females);
+        const m = pick(pool.males);
+        // Randomly order the pair: female→male or male→female.
+        const text = Math.random() < 0.5 ? `${f} ${act} ${m}` : `${m} ${act} ${f}`;
+        const ev = { type: 'fake', icon: fakeIcon(act), at: Date.now(), text };
         activityFeeds.forEach((feed) => {
           feed.insertBefore(feedItemEl(ev, true), feed.firstChild);
           while (feed.children.length > 60) feed.removeChild(feed.lastChild);
