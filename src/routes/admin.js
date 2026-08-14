@@ -534,10 +534,10 @@ router.post('/fake-activities/settings', requireAdmin, (req, res) => {
 // POST /api/admin/fake-activities  { personA, activity, personB }
 router.post('/fake-activities', requireAdmin, (req, res) => {
   const personA = ((req.body && req.body.personA) || '').trim().slice(0, 60);
-  const activity = ((req.body && req.body.activity) || '').trim().slice(0, 60);
+  const activity = ((req.body && req.body.activity) || '').trim().slice(0, 60); // optional
   const personB = ((req.body && req.body.personB) || '').trim().slice(0, 60);
-  if (!personA || !activity || !personB) {
-    return res.status(400).json({ error: 'Person A, activity and person B are all required.' });
+  if (!personA || !personB) {
+    return res.status(400).json({ error: 'Female and Male names are required.' });
   }
   const info = db.prepare(
     'INSERT INTO fake_activities (person_a, activity, person_b, created_at) VALUES (?, ?, ?, ?)'
@@ -550,10 +550,10 @@ router.put('/fake-activities/:id', requireAdmin, (req, res) => {
   const row = db.prepare('SELECT id FROM fake_activities WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Activity not found.' });
   const personA = ((req.body && req.body.personA) || '').trim().slice(0, 60);
-  const activity = ((req.body && req.body.activity) || '').trim().slice(0, 60);
+  const activity = ((req.body && req.body.activity) || '').trim().slice(0, 60); // optional
   const personB = ((req.body && req.body.personB) || '').trim().slice(0, 60);
-  if (!personA || !activity || !personB) {
-    return res.status(400).json({ error: 'Person A, activity and person B are all required.' });
+  if (!personA || !personB) {
+    return res.status(400).json({ error: 'Female and Male names are required.' });
   }
   db.prepare('UPDATE fake_activities SET person_a = ?, activity = ?, person_b = ? WHERE id = ?')
     .run(personA, activity, personB, row.id);

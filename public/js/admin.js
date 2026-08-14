@@ -923,13 +923,13 @@
             <span class="switch-label" id="faEnabledLabel">…</span>
           </label>
         </div>
-        <p class="count">Each row is <b>Female · activity · Male</b>. Names and activities are recombined at random and streamed continuously into the members' recent-activity feed (names are never clickable). Example: <i>Priya · flirting with · Sam</i>.</p>
+        <p class="count">Each row is <b>Female · activity · Male</b>. Names and activities are recombined at random and streamed continuously into the members' recent-activity feed (names are never clickable). The <b>Activity</b> column is optional. Example: <i>Priya · flirting with · Sam</i>.</p>
         <div class="fake-row-head">
-          <span>Female</span><span>Activity</span><span>Male</span><span></span>
+          <span>Female</span><span>Activity (optional)</span><span>Male</span><span></span>
         </div>
         <div class="fake-add">
           <input id="faA" placeholder="Female name, e.g. Priya" />
-          <input id="faAct" placeholder="Activity, e.g. flirting with" />
+          <input id="faAct" placeholder="Activity (optional)" />
           <input id="faB" placeholder="Male name, e.g. Sam" />
           <button type="button" class="primary small" id="faAdd">Add</button>
         </div>
@@ -955,9 +955,9 @@
     const add = async () => {
       msg.className = 'msg';
       const personA = host.querySelector('#faA').value.trim();
-      const activity = host.querySelector('#faAct').value.trim();
+      const activity = host.querySelector('#faAct').value.trim(); // optional
       const personB = host.querySelector('#faB').value.trim();
-      if (!personA || !activity || !personB) { msg.className = 'msg error'; msg.textContent = 'All three fields are required.'; return; }
+      if (!personA || !personB) { msg.className = 'msg error'; msg.textContent = 'Female and Male names are required.'; return; }
       try {
         await api.post('/api/admin/fake-activities', { personA, activity, personB });
         host.querySelector('#faA').value = '';
@@ -990,7 +990,7 @@
       const row = el(`
         <div class="fake-row">
           <span class="fake-name">${esc(a.personA)}</span>
-          <span class="fake-act">${esc(a.activity)}</span>
+          <span class="fake-act">${a.activity ? esc(a.activity) : '<span class="fake-empty">—</span>'}</span>
           <span class="fake-name">${esc(a.personB)}</span>
           <button class="danger small" data-del title="Delete">✕</button>
         </div>
