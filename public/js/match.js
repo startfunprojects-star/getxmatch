@@ -23,7 +23,7 @@
     try { data = await api.get('/api/match/' + encodeURIComponent(token)); }
     catch (e) { return renderError(e.message); }
 
-    if (data.state === 'done') return renderResult(data.result, data.quizTitle, data.isInitiator);
+    if (data.state === 'done') return renderResult(data);
     if (data.state === 'expired') return renderError('This link has expired. Ask your friend to send a fresh one.');
     if (data.state === 'waiting') return renderWaiting(data);
     if (data.state === 'open') return renderForm(data);
@@ -35,19 +35,22 @@
     root.appendChild(el(`<div class="match-empty"><div class="match-emoji">🙈</div><h2>${esc(msg)}</h2></div>`));
   }
 
-  // The initiator opened their own link before anyone answered.
+  // The initiator opened their own link before anyone answered. Auto-poll so the
+  // result appears for them the moment their match finishes.
+  let pollTimer = null;
   function renderWaiting(data) {
+    if (pollTimer) clearTimeout(pollTimer);
     root.innerHTML = '';
     root.appendChild(el(`
       <div class="match-empty">
         <div class="match-emoji">⏳</div>
         <h2>Waiting for your match</h2>
-        <p class="match-sub">You answered “${esc(data.quizTitle)}”. Share the link with someone and reopen it here once they've answered to reveal your compatibility score.</p>
+        <p class="match-sub">You answered “${esc(data.quizTitle)}”. Share the link with someone — this page updates automatically the moment they finish.</p>
         <p class="hint">${expiryLine(data.expiresAt)}</p>
-        <button class="primary" id="refresh">Refresh</button>
+        <div class="waiting-dots">Listening for your result…</div>
       </div>
     `));
-    root.querySelector('#refresh').addEventListener('click', load);
+    pollTimer = setTimeout(load, 4000); // re-check every 4s until they answer
   }
 
   function expiryLine(expiresAt) {
@@ -100,7 +103,8 @@
       submit.disabled = true;
       try {
         const out = await api.post('/api/match/' + encodeURIComponent(token) + '/answer', { name, answers });
-        renderResult(out.result, data.quizTitle, false);
+        if (!out.quizTitle) out.quizTitle = data.quizTitle;
+        renderResult(out);
       } catch (e) {
         submit.disabled = false;
         msg.className = 'msg error';
@@ -109,7 +113,10 @@
     });
   }
 
-  function renderResult(r, quizTitle, isInitiator) {
+  function renderResult(data) {
+    if (pollTimer) clearTimeout(pollTimer);
+    const r = data.result;
+    const quizTitle = data.quizTitle;
     root.innerHTML = '';
     const pct = r.percent;
     const verdict =
@@ -145,9 +152,29 @@
     });
     root.appendChild(list);
 
-    if (!isInitiator) {
-      root.appendChild(el('<p class="hint" style="text-align:center;margin-top:16px">Want your own matches? <a href="/">Join getxmatch</a>.</p>'));
+    // Chat call-to-action based on who's viewing and whether they can chat.
+    const chat = data.chat || {};
+    const cta = el('<div class="match-cta"></div>');
+    if (chat.canChat && chat.otherUsername) {
+      cta.appendChild(el(`
+        <a class="primary chat-cta" href="/?chat=${encodeURIComponent(chat.otherUsername)}">
+          💬 Chat with ${esc(chat.otherName || 'your match')}
+        </a>
+      `));
+      cta.appendChild(el('<p class="hint">Hit it off? Take the conversation into getxmatch.</p>'));
+    } else if (chat.needSignup && chat.otherUsername) {
+      cta.appendChild(el(`
+        <a class="primary chat-cta" href="/?signup=1&chat=${encodeURIComponent(chat.otherUsername)}">
+          💬 Sign up to chat with ${esc(chat.otherName || 'your match')}
+        </a>
+      `));
+      cta.appendChild(el('<p class="hint">Create a free getxmatch account to message them and make your own matches.</p>'));
+    } else if (data.viewer === 'a') {
+      cta.appendChild(el(`<p class="hint">${esc(chat.otherName || 'Your match')} answered as a guest. When they join getxmatch you'll be able to chat.</p>`));
+    } else {
+      cta.appendChild(el('<p class="hint"><a href="/">Join getxmatch</a> to make your own matches.</p>'));
     }
+    root.appendChild(cta);
   }
 
   load();

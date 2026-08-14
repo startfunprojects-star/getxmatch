@@ -27,6 +27,45 @@ function loadMatch(token) {
   return db.prepare('SELECT * FROM quiz_matches WHERE token = ?').get(token);
 }
 
+function usernameOf(userId) {
+  if (!userId) return null;
+  const r = db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
+  return r ? r.username : null;
+}
+
+// Work out who the viewer is relative to a completed match, and how (or whether)
+// they can chat with the other party. A is always a registered user; B may be a
+// guest who answered anonymously.
+function chatContext(m, reqUser) {
+  let viewer = 'guest';
+  if (reqUser && m.a_user_id && reqUser.id === m.a_user_id) viewer = 'a';
+  else if (reqUser && m.b_user_id && reqUser.id === m.b_user_id) viewer = 'b';
+
+  if (viewer === 'a') {
+    const bRegistered = !!m.b_user_id;
+    return {
+      viewer,
+      chat: {
+        canChat: bRegistered,
+        otherName: m.b_name,
+        otherUsername: bRegistered ? usernameOf(m.b_user_id) : null,
+        needSignup: false,
+      },
+    };
+  }
+  // viewer is B (registered) or a guest — either way the person they'd chat
+  // with is the initiator A, who is always registered.
+  return {
+    viewer,
+    chat: {
+      canChat: viewer === 'b',
+      otherName: m.a_name,
+      otherUsername: usernameOf(m.a_user_id),
+      needSignup: viewer === 'guest',
+    },
+  };
+}
+
 // Shape the completed-result payload (safe to show to either party).
 function resultPayload(m, questions) {
   const aAns = parseJson(m.a_answers, []);
@@ -68,6 +107,7 @@ router.get('/:token', optionalAuth, (req, res) => {
       quizTitle: quiz.title,
       isInitiator,
       result: resultPayload(m, questions),
+      ...chatContext(m, req.user),
     });
   }
 
@@ -110,7 +150,7 @@ router.post('/:token/answer', optionalAuth, (req, res) => {
     return res.status(403).json({ error: 'You started this quiz — share the link with someone else.' });
   }
 
-  const quiz = db.prepare('SELECT questions FROM quizzes WHERE id = ?').get(m.quiz_id);
+  const quiz = db.prepare('SELECT title, questions FROM quizzes WHERE id = ?').get(m.quiz_id);
   if (!quiz) return res.status(404).json({ error: 'This quiz no longer exists.' });
   const questions = parseJson(quiz.questions, []);
 
@@ -138,7 +178,12 @@ router.post('/:token/answer', optionalAuth, (req, res) => {
   ).run(req.user ? req.user.id : null, finalName, JSON.stringify(bAns), score, now, m.id);
 
   const updated = loadMatch(req.params.token);
-  res.json({ state: 'done', result: resultPayload(updated, questions) });
+  res.json({
+    state: 'done',
+    quizTitle: quiz.title,
+    result: resultPayload(updated, questions),
+    ...chatContext(updated, req.user),
+  });
 });
 
 module.exports = router;

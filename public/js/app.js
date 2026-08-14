@@ -101,14 +101,29 @@
   /* ======================================================================
      BOOT
   ====================================================================== */
+  // Deep-link intent from a shared quiz result page (/?chat=<username>&signup=1).
+  let pendingChatUser = null;
+
+  async function openChatByUsername(username) {
+    if (!username) return;
+    try {
+      const { profile } = await api.get('/api/profile/' + encodeURIComponent(username));
+      openChat({ id: profile.id, username: profile.username, displayName: profile.displayName, avatar: profile.avatar });
+    } catch (_e) { /* user may not exist / be blocked */ }
+  }
+
   async function boot() {
+    const params = new URLSearchParams(location.search);
+    const wantSignup = params.get('signup') === '1';
+    pendingChatUser = params.get('chat');
+    if (location.search) history.replaceState(null, '', location.pathname); // tidy the URL
     try {
       const { user, hasProfile } = await api.get('/api/auth/me');
       state.me = user;
       if (!hasProfile) return renderProfileEditor(true);
       return enterApp();
     } catch (e) {
-      return renderAuth();
+      return renderAuth(wantSignup ? 'signup' : 'login');
     }
   }
 
@@ -470,6 +485,13 @@
     renderList();
     refreshRequestBadge();
     loadGifts(); // preload so live gifts render with the right emoji/name
+
+    // Honor a "chat with X" deep link from a shared quiz result page.
+    if (pendingChatUser) {
+      const u = pendingChatUser;
+      pendingChatUser = null;
+      openChatByUsername(u);
+    }
   }
 
   // Update the sidebar "Requests" badge with the number of incoming requests.
@@ -646,6 +668,73 @@
   function chatBody() { return document.getElementById('chatBody'); }
   function scrollBody() { const b = chatBody(); if (b) b.scrollTop = b.scrollHeight; }
 
+  /* ---------- rich message bodies: clickable links + inline media ---------- */
+  const URL_RE = /(https?:\/\/[^\s<]+)/gi;
+
+  function youtubeId(url) {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.replace(/^www\./, '');
+      if (host === 'youtu.be') return (u.pathname.slice(1).split('/')[0]) || null;
+      if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtube-nocookie.com') {
+        if (u.pathname === '/watch') return u.searchParams.get('v');
+        const mm = u.pathname.match(/^\/(embed|shorts|v)\/([^/?#]+)/);
+        if (mm) return mm[2];
+      }
+    } catch (_e) { /* not a url */ }
+    return null;
+  }
+  const isImageUrl = (url) => /\.(jpe?g|png|gif|webp|bmp|svg)(\?|#|$)/i.test(url);
+  const isVideoUrl = (url) => /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url);
+
+  // Append `text` to `container`, turning URLs into links and embedding any
+  // image / video / YouTube links as playable media below the text.
+  function appendRichText(container, text) {
+    const str = String(text == null ? '' : text);
+    const textWrap = document.createElement('span');
+    textWrap.className = 'msg-text';
+    const media = document.createElement('div');
+    media.className = 'msg-media';
+    let hasMedia = false;
+    let last = 0;
+    let m;
+    const re = new RegExp(URL_RE.source, 'gi');
+    while ((m = re.exec(str)) !== null) {
+      const url = m[0];
+      if (m.index > last) textWrap.appendChild(document.createTextNode(str.slice(last, m.index)));
+      const a = document.createElement('a');
+      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.className = 'msg-link'; a.textContent = url;
+      textWrap.appendChild(a);
+      last = m.index + url.length;
+
+      const yt = youtubeId(url);
+      if (yt) {
+        const f = document.createElement('iframe');
+        f.className = 'msg-embed';
+        f.src = 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(yt);
+        f.setAttribute('allow', 'accelerometer; encrypted-media; picture-in-picture');
+        f.setAttribute('allowfullscreen', '');
+        f.loading = 'lazy';
+        media.appendChild(f); hasMedia = true;
+      } else if (isImageUrl(url)) {
+        const link = document.createElement('a');
+        link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+        const img = document.createElement('img');
+        img.className = 'msg-img'; img.loading = 'lazy'; img.src = url;
+        img.addEventListener('error', () => link.remove());
+        link.appendChild(img); media.appendChild(link); hasMedia = true;
+      } else if (isVideoUrl(url)) {
+        const v = document.createElement('video');
+        v.className = 'msg-video'; v.controls = true; v.preload = 'metadata'; v.src = url;
+        media.appendChild(v); hasMedia = true;
+      }
+    }
+    if (last < str.length) textWrap.appendChild(document.createTextNode(str.slice(last)));
+    container.appendChild(textWrap);
+    if (hasMedia) container.appendChild(media);
+  }
+
   // m: { body, mine, at, id?, reply? }
   function appendTextBubble(m) {
     const b = chatBody();
@@ -653,7 +742,7 @@
     const bubble = el(`<div class="bubble ${m.mine ? 'me' : 'them'}"></div>`);
     if (m.id) bubble.dataset.id = m.id;
     if (m.reply) bubble.appendChild(renderQuote(m.reply));
-    bubble.appendChild(document.createTextNode(m.body));
+    appendRichText(bubble, m.body);
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
     attachBubbleActions(bubble, m);
     b.appendChild(bubble);
@@ -1703,7 +1792,7 @@
     host.innerHTML = `
       <label class="share-label">Your private link</label>
       <div class="share-row">
-        <input class="share-input" readonly value="${esc(link)}" />
+        <a class="share-input share-link" href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(link)}</a>
         <button type="button" class="primary small" data-copy>Copy</button>
       </div>
       <div class="share-actions">
@@ -1715,8 +1804,15 @@
     `;
     const copyBtn = host.querySelector('[data-copy]');
     copyBtn.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(link); copyBtn.textContent = 'Copied!'; }
-      catch (_e) { host.querySelector('.share-input').select(); document.execCommand('copy'); copyBtn.textContent = 'Copied!'; }
+      try {
+        await navigator.clipboard.writeText(link);
+      } catch (_e) {
+        const ta = document.createElement('textarea');
+        ta.value = link; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch (_e2) { /* ignore */ }
+        ta.remove();
+      }
+      copyBtn.textContent = 'Copied!';
       setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
     });
   }

@@ -32,7 +32,11 @@ app.use(
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", 'data:', 'blob:'],
+        // Allow external images/video links shared in chat to render inline.
+        imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+        mediaSrc: ["'self'", 'blob:', 'data:', 'https:'],
+        // Allow YouTube links shared in chat to embed as players.
+        frameSrc: ["'self'", 'https://www.youtube-nocookie.com', 'https://www.youtube.com'],
         connectSrc: ["'self'", 'ws:', 'wss:'],
         objectSrc: ["'none'"],
       },

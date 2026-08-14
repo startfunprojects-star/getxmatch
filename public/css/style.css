@@ -617,3 +617,22 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .bd-q { font-weight: 600; margin-bottom: 6px; }
 .bd-answers { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted); }
 .bd-mark { margin-left: auto; }
+
+/* Inline media + links in chat bubbles */
+.msg-text { white-space: pre-wrap; word-break: break-word; }
+.msg-link { color: #cfe0ff; text-decoration: underline; }
+.bubble.me .msg-link { color: #fff; }
+.msg-media { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.msg-img { max-width: 260px; max-height: 320px; width: auto; border-radius: 10px; display: block; }
+.msg-video { max-width: 280px; width: 100%; border-radius: 10px; background: #000; }
+.msg-embed { width: 280px; max-width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; border-radius: 10px; }
+
+/* Share link shown as a clickable anchor styled like the input */
+a.share-link { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; color: var(--accent); line-height: 1.4; }
+a.share-link:hover { text-decoration: underline; }
+
+/* Match result: chat CTA + waiting state */
+.match-cta { text-align: center; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+.chat-cta { display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 999px; color: #fff; font-weight: 700; text-decoration: none; }
+.match-cta .hint { margin-top: 10px; }
+.waiting-dots { color: var(--muted); margin-top: 14px; font-size: 14px; }
