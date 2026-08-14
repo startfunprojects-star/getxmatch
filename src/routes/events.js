@@ -37,6 +37,54 @@ function userMini(id, viewerId) {
   };
 }
 
+// Pick an emoji that suits the activity verb, so fake rows blend in visually.
+function activityIcon(activity) {
+  const a = String(activity).toLowerCase();
+  if (/(chat|messag|talk)/.test(a)) return '💬';
+  if (/(flirt|crush|love|kiss)/.test(a)) return '😍';
+  if (/(match|paired|connect)/.test(a)) return '💘';
+  if (/(rat|star|review)/.test(a)) return '⭐';
+  if (/(gift|sent)/.test(a)) return '🎁';
+  if (/(view|check|look|profile)/.test(a)) return '👀';
+  if (/(friend|follow)/.test(a)) return '🤝';
+  return '✨';
+}
+
+const uniq = (arr) => [...new Set(arr.map((s) => String(s).trim()).filter(Boolean))];
+
+// Build randomly recombined fake-activity events from the admin's pool.
+function fakeActivityEvents() {
+  const rows = db.prepare('SELECT person_a, activity, person_b FROM fake_activities').all();
+  if (!rows.length) return [];
+
+  const names = uniq([...rows.map((r) => r.person_a), ...rows.map((r) => r.person_b)]);
+  const activities = uniq(rows.map((r) => r.activity));
+  if (names.length < 2 || !activities.length) return [];
+
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  const count = Math.min(30, Math.max(rows.length, 12));
+  const now = Date.now();
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const a = pick(names);
+    let b = pick(names);
+    let guard = 0;
+    while (b === a && guard++ < 5) b = pick(names);
+    if (b === a) continue;
+    const act = pick(activities);
+    out.push({
+      id: 'fake-' + i,
+      type: 'fake',
+      at: now - Math.floor(Math.random() * 3 * 24 * 60 * 60 * 1000), // within ~3 days
+      icon: activityIcon(act),
+      actor: null,
+      target: null,
+      text: `${a} ${act} ${b}`,
+    });
+  }
+  return out;
+}
+
 // GET /api/events — merged recent activity.
 router.get('/', requireAuth, (req, res) => {
   const me = req.user.id;
@@ -117,6 +165,11 @@ router.get('/', requireAuth, (req, res) => {
         text: e.body || e.title,
       });
     });
+
+  // 5) Admin "fake" activity, recombined at random. Names and activities are
+  //    drawn from the admin's pool and paired randomly so the feed looks busy.
+  //    These carry no actor/target, so their names are never clickable.
+  fakeActivityEvents().forEach((f) => events.push(f));
 
   events.sort((a, b) => b.at - a.at);
   res.json({ events: events.slice(0, 100) });

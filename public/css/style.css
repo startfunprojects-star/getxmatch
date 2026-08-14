@@ -653,3 +653,42 @@ a.share-link:hover { text-decoration: underline; }
 .seo-check { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--text); font-size: 13px; }
 .seo-check input { width: auto; }
 @media (max-width: 560px) { .seo-grid { grid-template-columns: 1fr; } }
+
+/* ===========================================================================
+   Recent-activity feed (compact sidebar variant) + multi-chat tabs
+=========================================================================== */
+.avatar.xs { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; background: var(--bg-3); flex: none; }
+
+/* Compact activity feed shown in the sidebar in place of the user list */
+.activity-side { display: flex; flex-direction: column; }
+.activity-side .feed-item { padding: 10px 14px; gap: 10px; }
+.activity-side .feed-icon { width: 30px; height: 30px; font-size: 15px; border-radius: 9px; }
+.activity-side .feed-text { font-size: 13px; }
+.activity-side .feed-time { font-size: 11px; }
+
+/* Open-chat tab bar */
+.chat-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 8px 10px 0; background: var(--bg-2); border-bottom: 1px solid var(--border); }
+.chat-tabs:empty { display: none; }
+.chat-tab { display: inline-flex; align-items: center; gap: 6px; flex: none; max-width: 180px; padding: 7px 10px; border: 1px solid var(--border); border-bottom: none; border-radius: 10px 10px 0 0; background: var(--bg-3); color: var(--muted); cursor: pointer; }
+.chat-tab.active { background: var(--bg); color: var(--text); border-color: var(--accent); }
+.chat-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.chat-tab.unread .chat-tab-name::after { content: ''; display: inline-block; width: 7px; height: 7px; margin-left: 5px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
+.chat-tab-close { border: none; background: none; color: inherit; cursor: pointer; font-size: 12px; padding: 0 2px; line-height: 1; border-radius: 4px; }
+.chat-tab-close:hover { background: rgba(255,255,255,.12); color: #fff; }
+
+/* ===========================================================================
+   Admin: Fake Activity editor
+=========================================================================== */
+.fake-row-head, .fake-add, .fake-row { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; align-items: center; }
+.fake-row-head { margin-top: 10px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+.fake-add { margin-top: 6px; }
+.fake-table { margin-top: 4px; }
+.fake-row { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.fake-row:last-child { border-bottom: none; }
+.fake-name { font-weight: 600; }
+.fake-act { color: var(--muted); }
+.fake-row .danger.small { justify-self: end; padding: 4px 9px; }
+@media (max-width: 560px) {
+  .fake-row-head { display: none; }
+  .fake-add, .fake-row { grid-template-columns: 1fr 1fr; }
+}

@@ -8,6 +8,8 @@
     socket: null,
     tab: 'people',       // 'people' | 'chats'
     peer: null,          // active chat peer
+    openChats: [],       // ordered list of open chat tabs (peer objects)
+    unread: {},          // peerId -> true when a background tab has new messages
     peopleCache: [],
     chatPeers: {},       // id -> peer summary for people we've chatted with
     typingTimer: null,
@@ -425,7 +427,7 @@
             <button data-view="polls">📊 Polls</button>
             <button data-view="blogs">📝 Blogs</button>
             <button data-view="leaderboard">🏆 Leaderboard</button>
-            <button data-view="events">✨ Recent Events</button>
+            <button data-view="events">✨ Recent Activity</button>
           </div>
           <div class="search"><input id="searchInput" placeholder="Search people…" /></div>
           <div class="list" id="list"></div>
@@ -434,8 +436,8 @@
           <div class="empty-main">
             <div>
               <div style="font-size:40px">💬</div>
-              <p>Pick someone from <b>People</b> to start chatting.</p>
-              <p class="hint">Shared files are delivered live and never stored on the server.</p>
+              <p>Search for someone to start chatting.</p>
+              <p class="hint">Open chats appear as tabs — you can talk to several people at once. Shared files are delivered live and never stored.</p>
             </div>
           </div>
         </section>
@@ -512,6 +514,12 @@
     if (!listEl) return;
     const q = (document.getElementById('searchInput').value || '').trim();
 
+    // People tab with no search term → show the recent-activity feed instead of
+    // a raw user list. Searching still surfaces real, clickable users to chat.
+    if (state.tab === 'people' && !q) {
+      return renderActivityInto(listEl, { compact: true });
+    }
+
     let items = [];
     if (state.tab === 'people') {
       try {
@@ -549,11 +557,67 @@
   /* ======================================================================
      CHAT
   ====================================================================== */
+  function emptyMainHtml() {
+    return `
+      <div class="empty-main">
+        <div>
+          <div style="font-size:40px">💬</div>
+          <p>Search for someone to start chatting.</p>
+          <p class="hint">Open chats appear as tabs above — you can talk to several people at once.</p>
+        </div>
+      </div>`;
+  }
+
+  // Render the row of open-chat tabs at the top of the chat pane.
+  function renderChatTabs() {
+    const bar = document.getElementById('chatTabs');
+    if (!bar) return;
+    bar.innerHTML = '';
+    state.openChats.forEach((p) => {
+      const active = state.peer && state.peer.id === p.id;
+      const tab = el(`
+        <div class="chat-tab${active ? ' active' : ''}${state.unread[p.id] ? ' unread' : ''}" data-id="${p.id}">
+          <img class="avatar xs" src="${avatarUrl(p.avatar)}" />
+          <span class="chat-tab-name">${esc(p.displayName || p.username)}</span>
+          <button class="chat-tab-close" title="Close">✕</button>
+        </div>
+      `);
+      tab.addEventListener('click', (e) => {
+        if (e.target.classList.contains('chat-tab-close')) return;
+        if (!active) openChat(p);
+      });
+      tab.querySelector('.chat-tab-close').addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeChatTab(p.id);
+      });
+      bar.appendChild(tab);
+    });
+  }
+
+  function closeChatTab(id) {
+    const idx = state.openChats.findIndex((p) => p.id === id);
+    if (idx === -1) return;
+    const wasActive = state.peer && state.peer.id === id;
+    state.openChats.splice(idx, 1);
+    delete state.unread[id];
+    if (!wasActive) { renderChatTabs(); return; }
+    const next = state.openChats[idx] || state.openChats[idx - 1];
+    if (next) return openChat(next);
+    state.peer = null;
+    document.getElementById('shell').classList.remove('viewing-main');
+    document.getElementById('main').innerHTML = emptyMainHtml();
+  }
+
   async function openChat(peer) {
     state.peer = peer;
     state.replyTo = null; // clear any half-composed reply from a previous chat
     closeReactionPalette();
     state.chatPeers[peer.id] = peer;
+    delete state.unread[peer.id];
+    // Register (or refresh) this conversation as an open tab.
+    const existing = state.openChats.findIndex((p) => p.id === peer.id);
+    if (existing === -1) state.openChats.push(peer);
+    else state.openChats[existing] = peer;
     document.querySelectorAll('.list-item').forEach((r) =>
       r.classList.toggle('active', Number(r.dataset.id) === peer.id));
     document.getElementById('shell').classList.add('viewing-main');
@@ -562,6 +626,7 @@
     main.innerHTML = '';
     const view = el(`
       <div class="chat-wrap">
+        <div class="chat-tabs" id="chatTabs"></div>
         <div class="chat-head">
           <button class="icon-btn small" id="backToList" title="Back">←</button>
           <img class="avatar sm" id="peerAvatar" src="${avatarUrl(peer.avatar)}" style="cursor:pointer" />
@@ -587,6 +652,7 @@
       </div>
     `);
     main.appendChild(view);
+    renderChatTabs();
 
     view.querySelector('#backToList').addEventListener('click', () => {
       document.getElementById('shell').classList.remove('viewing-main');
@@ -1143,6 +1209,14 @@
       const peerId = state.peer && state.peer.id;
       const relevant = peerId && (m.from === peerId || m.to === peerId);
       if (relevant) appendMessage(m);
+      else {
+        // Message for a non-active conversation: flag its tab if it's open.
+        const otherId = m.from === state.me.id ? m.to : m.from;
+        if (state.openChats.some((p) => p.id === otherId)) {
+          state.unread[otherId] = true;
+          renderChatTabs();
+        }
+      }
       if (state.tab === 'chats') renderList();
     });
 
@@ -1949,40 +2023,43 @@
     body.appendChild(list);
   }
 
-  /* ---------- Recent Events ---------- */
-  async function renderEvents() {
-    const main = openMainView();
-    main.appendChild(sectionShell('Recent Events', 'New friendships, chats, quizzes and announcements.'));
-    const body = main.querySelector('#sectionBody');
+  /* ---------- Recent Activity ---------- */
+
+  // Shared recent-activity renderer. Deliberately non-interactive: names are
+  // plain text (no profile links, no friend buttons), so members can't act on
+  // each other from the feed. Real activity and admin "fake" activity are shown
+  // the same way. Used both in the sidebar (compact) and on the activity page.
+  async function renderActivityInto(container, opts) {
+    opts = opts || {};
+    container.innerHTML = '<div class="hint" style="padding:16px">Loading activity…</div>';
     let events;
     try { events = (await api.get('/api/events')).events; }
-    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
-    if (!events.length) { body.innerHTML = '<div class="empty-main">Nothing happening yet.</div>'; return; }
-    body.innerHTML = '';
-    const feed = el('<div class="feed card"></div>');
+    catch (e) { container.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+    if (!events.length) { container.innerHTML = '<div class="empty-main">Nothing happening yet.</div>'; return; }
+    const feed = el(`<div class="${opts.compact ? 'activity-side' : 'feed card'}"></div>`);
     events.forEach((ev) => {
       const item = el(`
         <div class="feed-item">
           <div class="feed-icon">${ev.icon || '•'}</div>
           <div class="feed-main">
-            ${ev.type === 'admin' && ev.title ? `<div class="feed-title">${esc(ev.title)}</div>` : ''}
+            ${ev.type === 'admin' && ev.title ? '<div class="feed-title"></div>' : ''}
             <div class="feed-text"></div>
             <div class="feed-time hint">${fmtDate(ev.at)} · ${fmtTime(ev.at)}</div>
           </div>
-          <div class="feed-action"></div>
         </div>
       `);
+      if (ev.type === 'admin' && ev.title) item.querySelector('.feed-title').textContent = ev.title;
       item.querySelector('.feed-text').textContent = ev.text;
-      // Offer a friend action for the actor (when not yourself).
-      if (ev.actor && !ev.actor.isMe) {
-        const fb = friendButtonEl(ev.actor.username, ev.actor.friendState, renderEvents);
-        if (fb) item.querySelector('.feed-action').appendChild(fb);
-        item.querySelector('.feed-icon').style.cursor = 'pointer';
-        item.querySelector('.feed-icon').addEventListener('click', () => showProfile(ev.actor.username));
-      }
       feed.appendChild(item);
     });
-    body.appendChild(feed);
+    container.innerHTML = '';
+    container.appendChild(feed);
+  }
+
+  async function renderEvents() {
+    const main = openMainView();
+    main.appendChild(sectionShell('Recent Activity', 'What members are up to right now.'));
+    await renderActivityInto(main.querySelector('#sectionBody'), { compact: false });
   }
 
   boot();

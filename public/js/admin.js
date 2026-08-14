@@ -286,6 +286,7 @@
     ['blogs', 'Blogs'],
     ['roleplays', 'Roleplays'],
     ['events', 'Recent Events'],
+    ['fake', 'Fake Activity'],
     ['leaderboard', 'Leaderboard'],
   ];
 
@@ -332,6 +333,7 @@
     if (tab === 'blogs') return renderBlogsTab();
     if (tab === 'roleplays') return renderRoleplaysTab();
     if (tab === 'events') return renderEventsTab();
+    if (tab === 'fake') return renderFakeActivityTab();
     if (tab === 'leaderboard') return renderLeaderboardTab();
   }
 
@@ -904,6 +906,79 @@
       });
       box.appendChild(item);
     });
+  }
+
+  /* ==================================================================
+     Fake Activity tab
+  ================================================================== */
+  async function renderFakeActivityTab() {
+    const host = tabHost();
+    host.innerHTML = `
+      <div class="admin-card">
+        <h2>Fake activity</h2>
+        <p class="count">Each row is <b>Person A · activity · Person B</b>. Names and activities are recombined at random and mixed into the members' recent-activity feed (names are never clickable). Example: <i>Priya · flirting with · Sam</i>.</p>
+        <div class="fake-row-head">
+          <span>Person A</span><span>Activity</span><span>Person B</span><span></span>
+        </div>
+        <div class="fake-add">
+          <input id="faA" placeholder="e.g. Priya" />
+          <input id="faAct" placeholder="e.g. flirting with" />
+          <input id="faB" placeholder="e.g. Sam" />
+          <button type="button" class="primary small" id="faAdd">Add</button>
+        </div>
+        <div class="msg" id="faMsg"></div>
+      </div>
+      <div class="admin-card">
+        <h2>Activity pool</h2>
+        <div id="faList" class="count">Loading…</div>
+      </div>
+    `;
+    const msg = host.querySelector('#faMsg');
+    const add = async () => {
+      msg.className = 'msg';
+      const personA = host.querySelector('#faA').value.trim();
+      const activity = host.querySelector('#faAct').value.trim();
+      const personB = host.querySelector('#faB').value.trim();
+      if (!personA || !activity || !personB) { msg.className = 'msg error'; msg.textContent = 'All three fields are required.'; return; }
+      try {
+        await api.post('/api/admin/fake-activities', { personA, activity, personB });
+        host.querySelector('#faA').value = '';
+        host.querySelector('#faAct').value = '';
+        host.querySelector('#faB').value = '';
+        host.querySelector('#faA').focus();
+        loadFakeList();
+      } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
+    };
+    host.querySelector('#faAdd').addEventListener('click', add);
+    host.querySelectorAll('#faA, #faAct, #faB').forEach((i) =>
+      i.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); }));
+    await loadFakeList();
+  }
+
+  async function loadFakeList() {
+    const box = document.getElementById('faList');
+    if (!box) return;
+    let activities;
+    try { activities = (await api.get('/api/admin/fake-activities')).activities; }
+    catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
+    if (!activities.length) { box.innerHTML = '<div class="count">No fake activity yet. Add a few rows above.</div>'; return; }
+    box.innerHTML = '';
+    const table = el('<div class="fake-table"></div>');
+    activities.forEach((a) => {
+      const row = el(`
+        <div class="fake-row">
+          <span class="fake-name">${esc(a.personA)}</span>
+          <span class="fake-act">${esc(a.activity)}</span>
+          <span class="fake-name">${esc(a.personB)}</span>
+          <button class="danger small" data-del title="Delete">✕</button>
+        </div>
+      `);
+      row.querySelector('[data-del]').addEventListener('click', async () => {
+        try { await api.del('/api/admin/fake-activities/' + a.id); loadFakeList(); } catch (e) { alert(e.message); }
+      });
+      table.appendChild(row);
+    });
+    box.appendChild(table);
   }
 
   /* ==================================================================

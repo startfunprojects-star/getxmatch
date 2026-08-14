@@ -366,6 +366,20 @@ db.exec(`
     ON roleplay_sessions (user_lo, user_hi, status);
 `);
 
+// Admin-authored "fake" activity used to make the recent-activity feed feel
+// busy. Each row is a triple: person A, an activity, person B. The feed
+// recombines these names/activities at random and mixes them with real
+// activity. Names here are plain strings — never linked to real accounts.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS fake_activities (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_a   TEXT NOT NULL,
+    activity   TEXT NOT NULL,
+    person_b   TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+`);
+
 // On-page SEO metadata for content tables. Stored as a single JSON blob so the
 // field set can grow without further migrations. Added idempotently for
 // databases created before the SEO feature.
