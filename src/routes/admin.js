@@ -214,6 +214,8 @@ function removeUpload(filename) {
 }
 
 // Validate + normalise a quiz's questions array. Returns { value } or { error }.
+// Compatibility quizzes have no "correct" option — every question is just a
+// prompt plus the choices two people can match on.
 function normalizeQuestions(raw) {
   const arr = parseJson(raw, null);
   if (!Array.isArray(arr) || arr.length === 0) return { error: 'A quiz needs at least one question.' };
@@ -223,11 +225,9 @@ function normalizeQuestions(raw) {
     const options = Array.isArray(q && q.options)
       ? q.options.map((o) => String(o).trim()).filter(Boolean)
       : [];
-    const answer = parseInt(q && q.answer, 10);
     if (!prompt) return { error: 'Every question needs a prompt.' };
     if (options.length < 2) return { error: 'Every question needs at least two options.' };
-    if (!(answer >= 0 && answer < options.length)) return { error: 'Every question needs a valid correct answer.' };
-    out.push({ prompt: prompt.slice(0, 300), options: options.slice(0, 8), answer });
+    out.push({ prompt: prompt.slice(0, 300), options: options.slice(0, 8) });
   }
   return { value: out };
 }

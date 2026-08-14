@@ -1607,10 +1607,10 @@
     body.appendChild(outWrap);
   }
 
-  /* ---------- Quizzes ---------- */
+  /* ---------- Quizzes (compatibility matching) ---------- */
   async function renderQuizzes() {
     const main = openMainView();
-    main.appendChild(sectionShell('Quizzes', 'Test yourself and climb the leaderboard.'));
+    main.appendChild(sectionShell('Compatibility Quizzes', 'Answer a quiz, then share your link — see how well you match.'));
     const body = main.querySelector('#sectionBody');
     let quizzes;
     try { quizzes = (await api.get('/api/content/quizzes')).quizzes; }
@@ -1619,17 +1619,15 @@
     body.innerHTML = '';
     const grid = el('<div class="card-grid"></div>');
     quizzes.forEach((q) => {
-      const best = q.myBest ? `Your best: ${q.myBest.score}/${q.myBest.total}` : 'Not attempted yet';
       const card = el(`
         <div class="tile">
           <h3>${esc(q.title)}</h3>
           <p class="rich">${esc(q.description || '')}</p>
           <div class="tile-meta">
             <span class="pill">${q.questionCount} question${q.questionCount === 1 ? '' : 's'}</span>
-            <span class="pill">${q.attempts} attempt${q.attempts === 1 ? '' : 's'}</span>
+            <span class="pill">${q.matches} match${q.matches === 1 ? '' : 'es'}</span>
           </div>
-          <div class="hint" style="margin:8px 0">${esc(best)}</div>
-          <button class="primary small" data-take="${q.id}">Take quiz →</button>
+          <button class="primary small" data-take="${q.id}">Start & share →</button>
         </div>
       `);
       card.querySelector('[data-take]').addEventListener('click', () => openQuiz(q.id));
@@ -1651,6 +1649,7 @@
 
     body.innerHTML = '';
     const form = el('<div class="quiz-form card"></div>');
+    form.appendChild(el('<p class="hint">Pick the answer that fits you for each question. When you finish you\'ll get a private link to send to someone — your match score is revealed once they answer too.</p>'));
     quiz.questions.forEach((qq, qi) => {
       const block = el(`<div class="quiz-q"><div class="quiz-prompt">${qi + 1}. ${esc(qq.prompt)}</div></div>`);
       qq.options.forEach((opt, oi) => {
@@ -1660,13 +1659,15 @@
       form.appendChild(block);
     });
     const actions = el('<div class="row-actions"></div>');
-    const submit = el('<button class="primary">Submit answers</button>');
+    const submit = el('<button class="primary">Get my share link</button>');
     const back = el('<button class="ghost">Back to quizzes</button>');
     back.addEventListener('click', renderQuizzes);
     actions.appendChild(submit); actions.appendChild(back);
     form.appendChild(actions);
     const result = el('<div class="msg" id="quizResult"></div>');
     form.appendChild(result);
+    const share = el('<div class="share-box" hidden></div>');
+    form.appendChild(share);
     body.appendChild(form);
 
     submit.addEventListener('click', async () => {
@@ -1674,23 +1675,49 @@
         const sel = form.querySelector(`input[name="q${qi}"]:checked`);
         return sel ? Number(sel.value) : -1;
       });
+      if (answers.some((a) => a < 0)) {
+        result.className = 'msg error';
+        result.textContent = 'Please answer every question first.';
+        return;
+      }
+      submit.disabled = true;
       try {
-        const out = await api.post('/api/content/quizzes/' + id + '/attempt', { answers });
+        const out = await api.post('/api/content/quizzes/' + id + '/match', { answers });
         result.className = 'msg ok';
-        result.textContent = `You scored ${out.score} / ${out.total}!`;
-        // Mark each option correct/incorrect.
-        out.review.forEach((r, qi) => {
-          const block = form.querySelectorAll('.quiz-q')[qi];
-          if (!block) return;
-          const opts = block.querySelectorAll('.quiz-opt');
-          opts.forEach((o, oi) => {
-            o.classList.remove('correct', 'wrong');
-            if (oi === r.correct) o.classList.add('correct');
-            else if (oi === r.picked && !r.right) o.classList.add('wrong');
-          });
-        });
-        submit.disabled = true;
-      } catch (e) { result.className = 'msg error'; result.textContent = e.message; }
+        result.textContent = 'Your answers are locked in. Share this link — it stays active for 1 hour.';
+        renderShareBox(share, out.token);
+        form.querySelectorAll('input[type=radio]').forEach((r) => { r.disabled = true; });
+      } catch (e) {
+        submit.disabled = false;
+        result.className = 'msg error';
+        result.textContent = e.message;
+      }
+    });
+  }
+
+  // Render the shareable link + copy / WhatsApp / Telegram buttons.
+  function renderShareBox(host, token) {
+    const link = location.origin + '/m/' + token;
+    const text = 'Take this compatibility quiz with me — let\'s see how well we match! ' + link;
+    host.hidden = false;
+    host.innerHTML = `
+      <label class="share-label">Your private link</label>
+      <div class="share-row">
+        <input class="share-input" readonly value="${esc(link)}" />
+        <button type="button" class="primary small" data-copy>Copy</button>
+      </div>
+      <div class="share-actions">
+        <a class="chip-btn wa" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(text)}">WhatsApp</a>
+        <a class="chip-btn tg" target="_blank" rel="noopener" href="https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('Take this compatibility quiz with me!')}">Telegram</a>
+        <a class="chip-btn" target="_blank" rel="noopener" href="${esc(link)}">Open link</a>
+      </div>
+      <p class="hint">Once your friend answers, reopen this link to see your compatibility score.</p>
+    `;
+    const copyBtn = host.querySelector('[data-copy]');
+    copyBtn.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(link); copyBtn.textContent = 'Copied!'; }
+      catch (_e) { host.querySelector('.share-input').select(); document.execCommand('copy'); copyBtn.textContent = 'Copied!'; }
+      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
     });
   }
 

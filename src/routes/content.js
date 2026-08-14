@@ -3,12 +3,27 @@
 // Public (authenticated-user) read + interaction endpoints for the content
 // features managed by the admin: quizzes, polls, and blogs.
 
+const crypto = require('crypto');
 const express = require('express');
 
 const db = require('../db');
 const { requireAuth } = require('../auth');
 
 const router = express.Router();
+
+const MATCH_TTL_MS = 60 * 60 * 1000; // shared links live for one hour
+
+// Best display name for a logged-in user: their profile name, else @username.
+function userDisplayName(userId) {
+  const row = db
+    .prepare(
+      `SELECT COALESCE(NULLIF(p.display_name, ''), u.username) AS name
+       FROM users u LEFT JOIN profiles p ON p.user_id = u.id
+       WHERE u.id = ?`
+    )
+    .get(userId);
+  return (row && row.name) || 'Someone';
+}
 
 function parseJson(raw, fallback) {
   if (!raw) return fallback;
@@ -24,7 +39,7 @@ function parseJson(raw, fallback) {
    Quizzes
 =========================================================================== */
 
-// GET /api/content/quizzes — list quizzes (no answers leaked).
+// GET /api/content/quizzes — list quizzes.
 router.get('/quizzes', requireAuth, (req, res) => {
   const rows = db
     .prepare('SELECT id, title, description, questions, created_at FROM quizzes ORDER BY created_at DESC')
@@ -32,21 +47,15 @@ router.get('/quizzes', requireAuth, (req, res) => {
 
   const quizzes = rows.map((r) => {
     const questions = parseJson(r.questions, []);
-    const attempt = db
-      .prepare(
-        'SELECT score, total, created_at FROM quiz_attempts WHERE quiz_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1'
-      )
-      .get(r.id, req.user.id);
-    const attempts = db
-      .prepare('SELECT COUNT(*) AS n FROM quiz_attempts WHERE quiz_id = ?')
+    const matches = db
+      .prepare('SELECT COUNT(*) AS n FROM quiz_matches WHERE quiz_id = ?')
       .get(r.id).n;
     return {
       id: r.id,
       title: r.title,
       description: r.description,
       questionCount: questions.length,
-      attempts,
-      myBest: attempt ? { score: attempt.score, total: attempt.total } : null,
+      matches,
       createdAt: r.created_at,
     };
   });
@@ -54,7 +63,7 @@ router.get('/quizzes', requireAuth, (req, res) => {
   res.json({ quizzes });
 });
 
-// GET /api/content/quizzes/:id — full quiz WITHOUT the correct answers.
+// GET /api/content/quizzes/:id — full quiz (prompts + options; no answers exist).
 router.get('/quizzes/:id', requireAuth, (req, res) => {
   const row = db.prepare('SELECT id, title, description, questions FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Quiz not found.' });
@@ -65,28 +74,43 @@ router.get('/quizzes/:id', requireAuth, (req, res) => {
   res.json({ quiz: { id: row.id, title: row.title, description: row.description, questions } });
 });
 
-// POST /api/content/quizzes/:id/attempt  { answers: [index, ...] } — grade it.
-router.post('/quizzes/:id/attempt', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT id, title, questions FROM quizzes WHERE id = ?').get(req.params.id);
+// POST /api/content/quizzes/:id/match  { answers: [index, ...] }
+// The logged-in initiator records their answers and gets a shareable token.
+router.post('/quizzes/:id/match', requireAuth, (req, res) => {
+  const row = db.prepare('SELECT id, questions FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Quiz not found.' });
 
   const questions = parseJson(row.questions, []);
-  const answers = Array.isArray(req.body && req.body.answers) ? req.body.answers : [];
+  if (!questions.length) return res.status(400).json({ error: 'This quiz has no questions.' });
 
-  let score = 0;
-  const review = questions.map((q, i) => {
-    const correct = Number(q.answer);
-    const picked = Number(answers[i]);
-    const right = picked === correct;
-    if (right) score += 1;
-    return { correct, picked: Number.isInteger(picked) ? picked : null, right };
+  const raw = Array.isArray(req.body && req.body.answers) ? req.body.answers : [];
+  const answers = questions.map((q, i) => {
+    const opts = Array.isArray(q.options) ? q.options : [];
+    const idx = Number(raw[i]);
+    return Number.isInteger(idx) && idx >= 0 && idx < opts.length ? idx : -1;
   });
+  if (answers.some((a) => a < 0)) {
+    return res.status(400).json({ error: 'Please answer every question before sharing.' });
+  }
 
+  const now = Date.now();
+  const token = crypto.randomBytes(9).toString('base64url'); // ~12 url-safe chars
   db.prepare(
-    'INSERT INTO quiz_attempts (quiz_id, user_id, score, total, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(row.id, req.user.id, score, questions.length, Date.now());
+    `INSERT INTO quiz_matches
+       (token, quiz_id, a_user_id, a_name, a_answers, total, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    token,
+    row.id,
+    req.user.id,
+    userDisplayName(req.user.id),
+    JSON.stringify(answers),
+    questions.length,
+    now,
+    now + MATCH_TTL_MS
+  );
 
-  res.json({ score, total: questions.length, review });
+  res.status(201).json({ token, expiresAt: now + MATCH_TTL_MS });
 });
 
 /* ===========================================================================

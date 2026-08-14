@@ -303,17 +303,16 @@
     await loadQuizList();
   }
 
-  function optionRowHtml(qIdx, value, checked) {
+  function optionRowHtml(value) {
     return `
       <div class="qb-option-row">
-        <input type="radio" name="correct-${qIdx}"${checked ? ' checked' : ''} title="Mark as correct answer" />
         <input type="text" class="qb-opt" value="${esc(value || '')}" placeholder="Option text" />
         <button type="button" class="danger small qb-rm-opt">✕</button>
       </div>`;
   }
 
   function questionBlock(qIdx, q) {
-    q = q || { prompt: '', options: ['', ''], answer: 0 };
+    q = q || { prompt: '', options: ['', ''] };
     const block = el(`
       <div class="qb-question" data-q="${qIdx}">
         <label>Question ${qIdx + 1}</label>
@@ -326,21 +325,17 @@
       </div>
     `);
     const optsBox = block.querySelector('.qb-options');
-    (q.options.length ? q.options : ['', '']).forEach((opt, oi) => {
-      optsBox.appendChild(el(optionRowHtml(qIdx, opt, oi === q.answer)));
-    });
-    optsBox.querySelectorAll('.qb-rm-opt').forEach((b) => b.addEventListener('click', (e) => {
+    const removeOpt = (row) => {
       if (optsBox.children.length <= 2) return alert('At least two options are required.');
-      e.target.closest('.qb-option-row').remove();
-    }));
-    block.querySelector('.qb-add-opt').addEventListener('click', () => {
-      const row = el(optionRowHtml(qIdx, '', false));
-      row.querySelector('.qb-rm-opt').addEventListener('click', () => {
-        if (optsBox.children.length <= 2) return alert('At least two options are required.');
-        row.remove();
-      });
+      row.remove();
+    };
+    const addOptRow = (value) => {
+      const row = el(optionRowHtml(value));
+      row.querySelector('.qb-rm-opt').addEventListener('click', () => removeOpt(row));
       optsBox.appendChild(row);
-    });
+    };
+    (q.options && q.options.length ? q.options : ['', '']).forEach((opt) => addOptRow(opt));
+    block.querySelector('.qb-add-opt').addEventListener('click', () => addOptRow(''));
     block.querySelector('.qb-rm-q').addEventListener('click', () => block.remove());
     return block;
   }
@@ -352,6 +347,7 @@
       <label>Title</label><input id="quizTitle" value="${esc(quiz ? quiz.title : '')}" />
       <label>Description</label><input id="quizDesc" value="${esc(quiz ? quiz.description : '')}" />
       <label>Questions</label>
+      <p class="count">Compatibility quiz — there are no right or wrong answers. Two people answer the same questions and get a match score based on how many they pick in common.</p>
       <div id="quizQuestions"></div>
       <div class="admin-item-actions">
         <button type="button" class="ghost small" id="addQuestion">+ Add question</button>
@@ -378,9 +374,7 @@
       qBox.querySelectorAll('.qb-question').forEach((block) => {
         const prompt = block.querySelector('.qb-prompt').value.trim();
         const options = Array.from(block.querySelectorAll('.qb-opt')).map((i) => i.value.trim()).filter(Boolean);
-        const radios = Array.from(block.querySelectorAll('input[type=radio]'));
-        const answer = radios.findIndex((r) => r.checked);
-        questionsOut.push({ prompt, options, answer: answer < 0 ? 0 : answer });
+        questionsOut.push({ prompt, options });
       });
       try {
         const payload = { title, description, questions: questionsOut };

@@ -19,6 +19,7 @@ const contentRoutes = require('./src/routes/content');
 const leaderboardRoutes = require('./src/routes/leaderboard');
 const eventsRoutes = require('./src/routes/events');
 const roleplayRoutes = require('./src/routes/roleplay');
+const matchRoutes = require('./src/routes/match');
 
 const app = express();
 app.set('trust proxy', 1); // behind nginx on the VPS
@@ -57,6 +58,7 @@ app.use('/api/content', contentRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/roleplay', roleplayRoutes);
+app.use('/api/match', matchRoutes); // public: shared compatibility-quiz links
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
@@ -67,6 +69,12 @@ const publicDir = path.join(config.root, 'public');
 // the /admin/reset?token=... link) before the main SPA fallback below.
 app.get(/^\/admin(\/.*)?$/, (req, res) => {
   res.sendFile(path.join(publicDir, 'admin.html'));
+});
+
+// Shared compatibility-quiz link (/m/<token>). Its own tiny standalone page so
+// it works for logged-out recipients without the auth-gated main SPA.
+app.get(/^\/m(\/.*)?$/, (req, res) => {
+  res.sendFile(path.join(publicDir, 'match.html'));
 });
 
 app.use(express.static(publicDir, { index: 'index.html' }));

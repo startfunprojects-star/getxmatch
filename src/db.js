@@ -255,6 +255,29 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_quiz_attempts_recent
     ON quiz_attempts (created_at);
 
+  -- Compatibility matches: one row per shared quiz link. The initiator (A)
+  -- answers first, gets a token/link valid for one hour, and shares it. The
+  -- responder (B) opens the link and answers; the score is how many answers
+  -- the two picked in common. B may be anonymous (no account), so b_user_id
+  -- is nullable.
+  CREATE TABLE IF NOT EXISTS quiz_matches (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    token        TEXT NOT NULL UNIQUE,
+    quiz_id      INTEGER NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
+    a_user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    a_name       TEXT NOT NULL,
+    a_answers    TEXT NOT NULL,            -- JSON: [optionIndex, ...]
+    b_user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    b_name       TEXT,
+    b_answers    TEXT,                     -- JSON, null until B answers
+    score        INTEGER,                  -- matching answers, null until done
+    total        INTEGER NOT NULL,
+    created_at   INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL,
+    completed_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_quiz_matches_token ON quiz_matches (token);
+
   /* ---------------- Polls ---------------- */
   CREATE TABLE IF NOT EXISTS polls (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

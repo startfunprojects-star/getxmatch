@@ -578,3 +578,42 @@ table.users tbody tr:hover { background: var(--bg-3); }
   .shell:not(.viewing-main) .main { display: none; }
   .lb-stats { display: none; }
 }
+
+/* ===========================================================================
+   Compatibility quiz: share box (in-app) + standalone /m/<token> page
+=========================================================================== */
+.share-box { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 16px; }
+.share-label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.share-row { display: flex; gap: 8px; align-items: center; }
+.share-input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+.share-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.chip-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-3); color: var(--text); font-size: 14px; font-weight: 600; }
+.chip-btn:hover { border-color: var(--accent); }
+.chip-btn.wa { background: #25d366; border-color: #25d366; color: #05240f; }
+.chip-btn.tg { background: #29a9eb; border-color: #29a9eb; color: #04283a; }
+
+/* Standalone shared-link page */
+.match-page { max-width: 640px; margin: 0 auto; padding: 24px 16px 64px; }
+.match-brand { font-size: 20px; font-weight: 800; text-align: center; margin-bottom: 20px; }
+.match-card { background: var(--bg-2); border: 1px solid var(--border); border-radius: 16px; padding: 24px; }
+.match-empty, .match-intro, .match-result { text-align: center; }
+.match-emoji { font-size: 44px; margin-bottom: 8px; }
+.match-sub { color: var(--text); margin: 6px 0; font-size: 15px; }
+.match-intro { margin-bottom: 18px; }
+.match-intro h2, .match-empty h2, .match-result h2 { margin: 4px 0; }
+
+/* score ring */
+.score-ring { position: relative; width: 132px; height: 132px; border-radius: 50%; margin: 12px auto; display: grid; place-items: center;
+  background: conic-gradient(var(--accent) calc(var(--pct) * 1%), var(--bg-3) 0); }
+.score-ring::before { content: ''; position: absolute; width: 104px; height: 104px; border-radius: 50%; background: var(--bg-2); }
+.score-num { position: relative; font-size: 34px; font-weight: 800; }
+.score-num span { font-size: 18px; color: var(--muted); }
+
+/* breakdown */
+.breakdown { margin-top: 20px; display: flex; flex-direction: column; gap: 8px; }
+.bd-row { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.bd-row.is-match { border-color: var(--ok); background: rgba(46,204,113,.08); }
+.bd-row.no-match { border-color: var(--border); }
+.bd-q { font-weight: 600; margin-bottom: 6px; }
+.bd-answers { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted); }
+.bd-mark { margin-left: auto; }
