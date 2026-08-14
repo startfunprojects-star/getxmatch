@@ -7,6 +7,7 @@ const { requireAuth } = require('../auth');
 const { friendState, ratingSummary } = require('../profileData');
 const { areBlocked } = require('../relations');
 const { GIFTS } = require('../gifts');
+const { listActivities } = require('../activities');
 
 const router = express.Router();
 
@@ -300,6 +301,26 @@ router.get('/blocked', requireAuth, (req, res) => {
 // GET /api/social/gifts — catalog of naughty gifts sendable in chat.
 router.get('/gifts', requireAuth, (_req, res) => {
   res.json({ gifts: GIFTS });
+});
+
+/* ---------------------------------------------------------------------------
+   Chat activity ("what are you doing" status)
+--------------------------------------------------------------------------- */
+
+// GET /api/social/activities — the activity verbs users can pick (column 2 of
+// the admin's fake-activity table).
+router.get('/activities', requireAuth, (_req, res) => {
+  res.json({ activities: listActivities() });
+});
+
+// GET /api/social/chat-activity/:peerId — my activity toward this peer and
+// theirs toward me, for the top-of-chat status bar.
+router.get('/chat-activity/:peerId', requireAuth, (req, res) => {
+  const peerId = parseInt(req.params.peerId, 10);
+  if (!peerId) return res.status(400).json({ error: 'Invalid peer.' });
+  const mine = db.prepare('SELECT activity FROM chat_activities WHERE user_id = ? AND peer_id = ?').get(req.user.id, peerId);
+  const theirs = db.prepare('SELECT activity FROM chat_activities WHERE user_id = ? AND peer_id = ?').get(peerId, req.user.id);
+  res.json({ mine: mine ? mine.activity : null, theirs: theirs ? theirs.activity : null });
 });
 
 module.exports = router;

@@ -384,6 +384,18 @@ db.exec(`
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  -- What a user says they're doing with a chat partner (an activity verb drawn
+  -- from the admin's fake-activity list, e.g. "flirting with"). Shown at the top
+  -- of that chat and, using the two real names, on the Recent Activity feed.
+  CREATE TABLE IF NOT EXISTS chat_activities (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    peer_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    activity   TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, peer_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_activities_recent ON chat_activities (updated_at);
 `);
 
 // On-page SEO metadata for content tables. Stored as a single JSON blob so the

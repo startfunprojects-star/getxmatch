@@ -166,6 +166,24 @@ router.get('/', requireAuth, (req, res) => {
     });
   });
 
+  // 3b) User-declared chat activity ("A flirting with B") — real users.
+  db.prepare(
+    'SELECT user_id, peer_id, activity, updated_at FROM chat_activities ORDER BY updated_at DESC LIMIT ?'
+  ).all(PER_SOURCE).forEach((row) => {
+    const a = userMini(row.user_id, me);
+    const b = userMini(row.peer_id, me);
+    if (!a || !b) return;
+    events.push({
+      id: `activity-${row.user_id}-${row.peer_id}`,
+      type: 'chat-activity',
+      at: row.updated_at,
+      icon: activityIcon(row.activity),
+      actor: a,
+      target: b,
+      text: `${a.displayName} ${row.activity} ${b.displayName}`,
+    });
+  });
+
   // 4) Admin-curated announcements.
   db.prepare('SELECT id, title, body, created_at FROM admin_events ORDER BY created_at DESC LIMIT ?')
     .all(PER_SOURCE)

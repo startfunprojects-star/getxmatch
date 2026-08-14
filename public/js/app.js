@@ -10,6 +10,8 @@
     peer: null,          // active chat peer
     openChats: [],       // ordered list of open chat tabs (peer objects)
     unread: {},          // peerId -> true when a background tab has new messages
+    activities: null,    // cached list of chat activity verbs (column 2)
+    chatActivity: null,  // { mine, theirs } for the open conversation
     peopleCache: [],
     chatPeers: {},       // id -> peer summary for people we've chatted with
     typingTimer: null,
@@ -608,6 +610,56 @@
     document.getElementById('main').innerHTML = emptyMainHtml();
   }
 
+  /* ---- chat activity ("what are you doing") status bar ---- */
+  async function loadActivities() {
+    if (state.activities) return state.activities;
+    try { state.activities = (await api.get('/api/social/activities')).activities || []; }
+    catch (_e) { state.activities = []; }
+    return state.activities;
+  }
+
+  function renderActivityStatus(peerName) {
+    const status = document.getElementById('activityStatus');
+    if (!status) return;
+    const ca = state.chatActivity || {};
+    const parts = [];
+    if (ca.mine) parts.push(`<span class="act-me">You're ${esc(ca.mine)} ${esc(peerName)}</span>`);
+    if (ca.theirs) parts.push(`<span class="act-them">${esc(peerName)}'s ${esc(ca.theirs)} you</span>`);
+    status.innerHTML = parts.length
+      ? parts.join('<span class="act-sep">·</span>')
+      : '<span class="hint">Set what you’re doing — it shows on Recent Activity.</span>';
+  }
+
+  async function setupActivityBar(view, peer) {
+    const bar = view.querySelector('#activityBar');
+    const select = view.querySelector('#activitySelect');
+    const activities = await loadActivities();
+    if (!activities.length) { bar.classList.add('hidden'); return; } // no verbs configured
+    if (!state.peer || state.peer.id !== peer.id || !document.body.contains(select)) return;
+
+    select.innerHTML = '<option value="">— nothing —</option>' +
+      activities.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
+    bar.classList.remove('hidden');
+
+    state.chatActivity = { mine: null, theirs: null };
+    try {
+      const st = await api.get('/api/social/chat-activity/' + peer.id);
+      if (state.peer && state.peer.id === peer.id) state.chatActivity = { mine: st.mine, theirs: st.theirs };
+    } catch (_e) { /* ignore */ }
+    select.value = state.chatActivity.mine || '';
+    renderActivityStatus(peer.displayName || peer.username);
+
+    select.addEventListener('change', () => {
+      if (!state.socket) return;
+      const activity = select.value;
+      state.socket.emit('chat:activity', { to: peer.id, activity }, (res) => {
+        if (res && res.error) return notify(res.error);
+        state.chatActivity = Object.assign({}, state.chatActivity, { mine: activity || null });
+        renderActivityStatus(peer.displayName || peer.username);
+      });
+    });
+  }
+
   async function openChat(peer) {
     state.peer = peer;
     state.replyTo = null; // clear any half-composed reply from a previous chat
@@ -634,6 +686,13 @@
             <div class="name" id="peerName" style="cursor:pointer">${esc(peer.displayName || peer.username)}</div>
             <div class="status">@${esc(peer.username)}</div>
           </div>
+        </div>
+        <div class="chat-activity-bar hidden" id="activityBar">
+          <div class="activity-status" id="activityStatus"></div>
+          <label class="activity-pick">
+            <span>You're…</span>
+            <select id="activitySelect"><option value="">— nothing —</option></select>
+          </label>
         </div>
         <div class="chat-body" id="chatBody"></div>
         <div class="typing hidden" id="typing">typing…</div>
@@ -662,6 +721,8 @@
     const openPeerProfile = () => showProfile(peer.username);
     view.querySelector('#peerAvatar').addEventListener('click', openPeerProfile);
     view.querySelector('#peerName').addEventListener('click', openPeerProfile);
+
+    setupActivityBar(view, peer);
 
     const input = view.querySelector('#msgInput');
     const send = () => sendMessage(input);
@@ -1234,6 +1295,22 @@
     s.on('chat:typing', (p) => {
       const peerId = state.peer && state.peer.id;
       if (peerId && p.from === peerId) showTyping();
+    });
+
+    // Live "what are you doing" status changes for the open conversation.
+    s.on('chat:activity', (e) => {
+      const peerId = state.peer && state.peer.id;
+      if (!peerId) return;
+      const peerName = state.peer.displayName || state.peer.username;
+      if (e.from === peerId && e.to === state.me.id) {
+        state.chatActivity = Object.assign({}, state.chatActivity, { theirs: e.activity || null });
+        renderActivityStatus(peerName);
+      } else if (e.from === state.me.id && e.to === peerId) {
+        state.chatActivity = Object.assign({}, state.chatActivity, { mine: e.activity || null });
+        const sel = document.getElementById('activitySelect');
+        if (sel) sel.value = e.activity || '';
+        renderActivityStatus(peerName);
+      }
     });
 
     s.on('chat:reaction', (e) => {

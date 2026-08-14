@@ -6,6 +6,7 @@ const config = require('./config');
 const { userFromToken } = require('./auth');
 const { areBlocked } = require('./relations');
 const { getGift } = require('./gifts');
+const { isValidActivity } = require('./activities');
 const roleplay = require('./roleplay');
 
 // Emoji reactions a user may place on a message/gift. Server-side allow-list so
@@ -312,6 +313,38 @@ function initSocket(io) {
     socket.on('chat:typing', (payload) => {
       const to = parseInt(payload && payload.to, 10);
       if (to) io.to(`user:${to}`).emit('chat:typing', { from: me.id });
+    });
+
+    // "What are you doing" status for this conversation. An empty/blank activity
+    // clears it. Persisted so it surfaces on the Recent Activity feed, and
+    // pushed live to both users so the chat header stays in sync.
+    socket.on('chat:activity', (payload, ack) => {
+      try {
+        const to = parseInt(payload && payload.to, 10);
+        if (!to) return ack && ack({ error: 'Invalid request.' });
+        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
+        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
+
+        const raw = String((payload && payload.activity) || '').trim();
+        const now = Date.now();
+        if (!raw) {
+          db.prepare('DELETE FROM chat_activities WHERE user_id = ? AND peer_id = ?').run(me.id, to);
+        } else {
+          if (!isValidActivity(raw)) return ack && ack({ error: 'Unknown activity.' });
+          db.prepare(
+            `INSERT INTO chat_activities (user_id, peer_id, activity, updated_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(user_id, peer_id) DO UPDATE SET activity = excluded.activity, updated_at = excluded.updated_at`
+          ).run(me.id, to, raw, now);
+        }
+
+        const evt = { from: me.id, to, activity: raw };
+        io.to(`user:${to}`).emit('chat:activity', evt);
+        io.to(`user:${me.id}`).emit('chat:activity', evt);
+        ack && ack({ ok: true, activity: raw });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
     });
 
     socket.on('disconnect', () => {
