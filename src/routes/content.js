@@ -65,13 +65,13 @@ router.get('/quizzes', requireAuth, (req, res) => {
 
 // GET /api/content/quizzes/:id — full quiz (prompts + options; no answers exist).
 router.get('/quizzes/:id', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT id, title, description, questions FROM quizzes WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, title, description, questions, seo FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Quiz not found.' });
   const questions = parseJson(row.questions, []).map((q) => ({
     prompt: q.prompt,
     options: Array.isArray(q.options) ? q.options : [],
   }));
-  res.json({ quiz: { id: row.id, title: row.title, description: row.description, questions } });
+  res.json({ quiz: { id: row.id, title: row.title, description: row.description, questions, seo: parseJson(row.seo, {}) } });
 });
 
 // POST /api/content/quizzes/:id/match  { answers: [index, ...] }
@@ -136,6 +136,7 @@ function pollPayload(row, viewerId) {
     counts,
     total,
     closed: !!row.closed,
+    seo: parseJson(row.seo, {}),
     myVote: mine ? mine.option_index : null,
     createdAt: row.created_at,
   };
@@ -143,13 +144,13 @@ function pollPayload(row, viewerId) {
 
 // GET /api/content/polls — all polls with tallies + this user's votes.
 router.get('/polls', requireAuth, (req, res) => {
-  const rows = db.prepare('SELECT id, question, options, closed, created_at FROM polls ORDER BY created_at DESC').all();
+  const rows = db.prepare('SELECT id, question, options, closed, seo, created_at FROM polls ORDER BY created_at DESC').all();
   res.json({ polls: rows.map((r) => pollPayload(r, req.user.id)) });
 });
 
 // POST /api/content/polls/:id/vote  { option } — cast or change a vote.
 router.post('/polls/:id/vote', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT id, question, options, closed, created_at FROM polls WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, question, options, closed, seo, created_at FROM polls WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Poll not found.' });
   if (row.closed) return res.status(403).json({ error: 'This poll is closed.' });
 
@@ -175,7 +176,7 @@ router.post('/polls/:id/vote', requireAuth, (req, res) => {
 // GET /api/content/blogs — list (excerpt only).
 router.get('/blogs', requireAuth, (req, res) => {
   const rows = db
-    .prepare('SELECT id, title, author, excerpt, cover, created_at FROM blogs ORDER BY created_at DESC')
+    .prepare('SELECT id, title, author, excerpt, cover, seo, created_at FROM blogs ORDER BY created_at DESC')
     .all();
   res.json({
     blogs: rows.map((r) => ({
@@ -184,6 +185,7 @@ router.get('/blogs', requireAuth, (req, res) => {
       author: r.author,
       excerpt: r.excerpt,
       cover: r.cover ? `/uploads/${r.cover}` : null,
+      seo: parseJson(r.seo, {}),
       createdAt: r.created_at,
     })),
   });
@@ -191,7 +193,7 @@ router.get('/blogs', requireAuth, (req, res) => {
 
 // GET /api/content/blogs/:id — full post.
 router.get('/blogs/:id', requireAuth, (req, res) => {
-  const r = db.prepare('SELECT id, title, author, excerpt, body, cover, created_at, updated_at FROM blogs WHERE id = ?').get(req.params.id);
+  const r = db.prepare('SELECT id, title, author, excerpt, body, cover, seo, created_at, updated_at FROM blogs WHERE id = ?').get(req.params.id);
   if (!r) return res.status(404).json({ error: 'Blog post not found.' });
   res.json({
     blog: {
@@ -201,6 +203,7 @@ router.get('/blogs/:id', requireAuth, (req, res) => {
       excerpt: r.excerpt,
       body: r.body,
       cover: r.cover ? `/uploads/${r.cover}` : null,
+      seo: parseJson(r.seo, {}),
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     },

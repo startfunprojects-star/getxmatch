@@ -636,3 +636,20 @@ a.share-link:hover { text-decoration: underline; }
 .chat-cta { display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 999px; color: #fff; font-weight: 700; text-decoration: none; }
 .match-cta .hint { margin-top: 10px; }
 .waiting-dots { color: var(--muted); margin-top: 14px; font-size: 14px; }
+
+/* Admin: On-page SEO fieldset */
+.seo-block { margin: 16px 0; border: 1px solid var(--border); border-radius: 10px; padding: 4px 14px 14px; background: var(--bg); }
+.seo-block > summary { cursor: pointer; font-weight: 700; padding: 10px 4px; list-style: none; }
+.seo-block > summary::-webkit-details-marker { display: none; }
+.seo-block > summary::before { content: '▸ '; color: var(--muted); }
+.seo-block[open] > summary::before { content: '▾ '; }
+.seo-block > summary .count { font-weight: 400; }
+.seo-block .seo-h { margin: 18px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.seo-count { font-weight: 400; font-size: 12px; color: var(--muted); }
+.seo-count.over { color: var(--danger); }
+.seo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.seo-row { display: flex; gap: 8px; align-items: center; }
+.seo-row.seo-robots { flex-wrap: wrap; gap: 16px; margin-top: 12px; }
+.seo-check { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--text); font-size: 13px; }
+.seo-check input { width: auto; }
+@media (max-width: 560px) { .seo-grid { grid-template-columns: 1fr; } }

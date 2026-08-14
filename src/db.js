@@ -366,6 +366,16 @@ db.exec(`
     ON roleplay_sessions (user_lo, user_hi, status);
 `);
 
+// On-page SEO metadata for content tables. Stored as a single JSON blob so the
+// field set can grow without further migrations. Added idempotently for
+// databases created before the SEO feature.
+for (const t of ['quizzes', 'polls', 'blogs']) {
+  const cols = db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+  if (!cols.includes('seo')) {
+    db.exec(`ALTER TABLE ${t} ADD COLUMN seo TEXT NOT NULL DEFAULT '{}'`);
+  }
+}
+
 // Seed the single admin row (email from config). Never overwrites an existing
 // password; updates the target email if it changed in config.
 (function seedAdmin() {

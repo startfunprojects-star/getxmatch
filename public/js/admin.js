@@ -41,6 +41,132 @@
     try { return new Date(ms).toLocaleString(); } catch (_e) { return ''; }
   }
 
+  /* ==================================================================
+     Reusable On-page SEO fieldset (shared by quizzes, polls, blogs)
+  ================================================================== */
+  const SEO_TEXT_KEYS = [
+    'metaTitle', 'metaDescription', 'slug', 'focusKeyword', 'metaKeywords',
+    'canonicalUrl', 'ogTitle', 'ogDescription', 'ogImage', 'ogType',
+    'twitterCard', 'twitterTitle', 'twitterDescription', 'twitterImage',
+  ];
+  const seoId = (k) => 'seo_' + k;
+
+  // Build the collapsible SEO panel. `seo` is the saved object (or empty).
+  function seoFieldsHtml(seo) {
+    seo = seo || {};
+    const v = (k) => esc(seo[k] || '');
+    const twCard = seo.twitterCard || 'summary_large_image';
+    return `
+      <details class="seo-block">
+        <summary>On-page SEO <span class="count">— search snippet, social cards & indexing</span></summary>
+
+        <label>Meta title <span class="seo-count" data-for="${seoId('metaTitle')}"></span></label>
+        <input id="${seoId('metaTitle')}" maxlength="70" value="${v('metaTitle')}" placeholder="≤ 60 chars — shown as the clickable title in Google" />
+
+        <label>Meta description <span class="seo-count" data-for="${seoId('metaDescription')}"></span></label>
+        <textarea id="${seoId('metaDescription')}" maxlength="320" placeholder="≤ 160 chars — the grey summary under the title in search results">${v('metaDescription')}</textarea>
+
+        <div class="seo-grid">
+          <div>
+            <label>URL slug</label>
+            <div class="seo-row">
+              <input id="${seoId('slug')}" value="${v('slug')}" placeholder="my-page-title" />
+              <button type="button" class="ghost small" data-seo-slug>From title</button>
+            </div>
+          </div>
+          <div>
+            <label>Focus keyword</label>
+            <input id="${seoId('focusKeyword')}" value="${v('focusKeyword')}" placeholder="primary keyword" />
+          </div>
+        </div>
+
+        <label>Meta keywords (comma-separated)</label>
+        <input id="${seoId('metaKeywords')}" value="${v('metaKeywords')}" placeholder="dating, compatibility, quiz" />
+
+        <label>Canonical URL</label>
+        <input id="${seoId('canonicalUrl')}" value="${v('canonicalUrl')}" placeholder="https://getxmatch.com/…" />
+
+        <div class="seo-row seo-robots">
+          <label class="seo-check"><input type="checkbox" id="${seoId('noindex')}"${seo.noindex ? ' checked' : ''}/> noindex (hide from search engines)</label>
+          <label class="seo-check"><input type="checkbox" id="${seoId('nofollow')}"${seo.nofollow ? ' checked' : ''}/> nofollow (don't pass link equity)</label>
+        </div>
+
+        <h4 class="seo-h">Open Graph — Facebook, WhatsApp, LinkedIn</h4>
+        <label>OG title</label>
+        <input id="${seoId('ogTitle')}" value="${v('ogTitle')}" placeholder="Defaults to meta title" />
+        <label>OG description</label>
+        <textarea id="${seoId('ogDescription')}" placeholder="Defaults to meta description">${v('ogDescription')}</textarea>
+        <div class="seo-grid">
+          <div>
+            <label>OG image URL</label>
+            <input id="${seoId('ogImage')}" value="${v('ogImage')}" placeholder="https://…/share.jpg (1200×630)" />
+          </div>
+          <div>
+            <label>OG type</label>
+            <input id="${seoId('ogType')}" value="${v('ogType') || 'article'}" placeholder="article / website" />
+          </div>
+        </div>
+
+        <h4 class="seo-h">Twitter / X Card</h4>
+        <div class="seo-grid">
+          <div>
+            <label>Card type</label>
+            <select id="${seoId('twitterCard')}">
+              <option value="summary_large_image"${twCard === 'summary_large_image' ? ' selected' : ''}>summary_large_image</option>
+              <option value="summary"${twCard === 'summary' ? ' selected' : ''}>summary</option>
+            </select>
+          </div>
+          <div>
+            <label>Twitter image URL</label>
+            <input id="${seoId('twitterImage')}" value="${v('twitterImage')}" placeholder="Defaults to OG image" />
+          </div>
+        </div>
+        <label>Twitter title</label>
+        <input id="${seoId('twitterTitle')}" value="${v('twitterTitle')}" placeholder="Defaults to meta title" />
+        <label>Twitter description</label>
+        <textarea id="${seoId('twitterDescription')}" placeholder="Defaults to meta description">${v('twitterDescription')}</textarea>
+      </details>
+    `;
+  }
+
+  // Read the SEO panel back into a plain object for the API payload.
+  function collectSeo(host) {
+    const o = {};
+    SEO_TEXT_KEYS.forEach((k) => {
+      const node = host.querySelector('#' + seoId(k));
+      o[k] = node ? node.value.trim() : '';
+    });
+    const ni = host.querySelector('#' + seoId('noindex'));
+    const nf = host.querySelector('#' + seoId('nofollow'));
+    o.noindex = !!(ni && ni.checked);
+    o.nofollow = !!(nf && nf.checked);
+    return o;
+  }
+
+  // Wire live character counters + the "slug from title" button. `getTitle`
+  // returns the current title/question text for slug generation.
+  function wireSeo(host, getTitle) {
+    const slugify = (s) => String(s || '').toLowerCase().trim()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+    const slugBtn = host.querySelector('[data-seo-slug]');
+    if (slugBtn) slugBtn.addEventListener('click', () => {
+      const slugEl = host.querySelector('#' + seoId('slug'));
+      if (slugEl) slugEl.value = slugify(getTitle ? getTitle() : '');
+    });
+    host.querySelectorAll('.seo-count').forEach((span) => {
+      const input = host.querySelector('#' + span.dataset.for);
+      if (!input) return;
+      const rec = input.id === seoId('metaTitle') ? 60 : 160;
+      const update = () => {
+        const n = input.value.length;
+        span.textContent = `${n} chars` + (n > rec ? ` (over ${rec})` : '');
+        span.classList.toggle('over', n > rec);
+      };
+      input.addEventListener('input', update);
+      update();
+    });
+  }
+
   /* ---- boot: decide which screen ---- */
   async function boot() {
     const path = location.pathname;
@@ -349,6 +475,7 @@
       <label>Questions</label>
       <p class="count">Compatibility quiz — there are no right or wrong answers. Two people answer the same questions and get a match score based on how many they pick in common.</p>
       <div id="quizQuestions"></div>
+      ${seoFieldsHtml(quiz && quiz.seo)}
       <div class="admin-item-actions">
         <button type="button" class="ghost small" id="addQuestion">+ Add question</button>
         <button type="button" class="primary" id="saveQuiz">${quiz ? 'Save changes' : 'Create quiz'}</button>
@@ -359,6 +486,7 @@
     const qBox = host.querySelector('#quizQuestions');
     const questions = quiz && quiz.questions && quiz.questions.length ? quiz.questions : [null];
     questions.forEach((q, i) => qBox.appendChild(questionBlock(i, q)));
+    wireSeo(host, () => host.querySelector('#quizTitle').value);
 
     host.querySelector('#addQuestion').addEventListener('click', () => {
       qBox.appendChild(questionBlock(qBox.children.length, null));
@@ -377,7 +505,7 @@
         questionsOut.push({ prompt, options });
       });
       try {
-        const payload = { title, description, questions: questionsOut };
+        const payload = { title, description, questions: questionsOut, seo: collectSeo(host) };
         if (quiz) await api.put('/api/admin/quizzes/' + quiz.id, payload);
         else await api.post('/api/admin/quizzes', payload);
         msg.className = 'msg ok'; msg.textContent = 'Saved.';
@@ -433,6 +561,7 @@
       <label>Question</label><input id="pollQ" value="${esc(poll ? poll.question : '')}" />
       <label>Options</label>
       <div id="pollOpts"></div>
+      ${seoFieldsHtml(poll && poll.seo)}
       <div class="admin-item-actions">
         <button type="button" class="ghost small" id="addOpt">+ Add option</button>
         ${poll ? `<label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="pollClosed" style="width:auto"${poll.closed ? ' checked' : ''}/> Closed</label>` : ''}
@@ -449,6 +578,7 @@
     };
     opts.forEach(addOptRow);
     host.querySelector('#addOpt').addEventListener('click', () => addOptRow(''));
+    wireSeo(host, () => host.querySelector('#pollQ').value);
     if (host.querySelector('#cancelPoll')) host.querySelector('#cancelPoll').addEventListener('click', () => renderPollEditor(null));
 
     host.querySelector('#savePoll').addEventListener('click', async () => {
@@ -458,7 +588,7 @@
       const options = Array.from(host.querySelectorAll('.poll-opt-in')).map((i) => i.value.trim()).filter(Boolean);
       const closedEl = host.querySelector('#pollClosed');
       try {
-        const payload = { question, options };
+        const payload = { question, options, seo: collectSeo(host) };
         if (poll) { payload.closed = !!(closedEl && closedEl.checked); await api.put('/api/admin/polls/' + poll.id, payload); }
         else await api.post('/api/admin/polls', payload);
         msg.className = 'msg ok'; msg.textContent = 'Saved.';
@@ -515,6 +645,7 @@
       <label>Excerpt (optional)</label><input id="blogExcerpt" value="${esc(blog ? blog.excerpt : '')}" />
       <label>Body</label><textarea id="blogBody" style="min-height:160px">${esc(blog ? blog.body : '')}</textarea>
       <label>Cover image (optional)</label><input type="file" id="blogCover" accept="image/*" />
+      ${seoFieldsHtml(blog && blog.seo)}
       <div class="admin-item-actions">
         <button type="button" class="primary" id="saveBlog">${blog ? 'Save changes' : 'Publish'}</button>
         ${blog ? '<button type="button" class="ghost" id="cancelBlog">Cancel</button>' : ''}
@@ -522,6 +653,7 @@
       <div class="msg" id="blogMsg"></div>
     `;
     if (host.querySelector('#cancelBlog')) host.querySelector('#cancelBlog').addEventListener('click', () => renderBlogEditor(null));
+    wireSeo(host, () => host.querySelector('#blogTitle').value);
     host.querySelector('#saveBlog').addEventListener('click', async () => {
       const msg = host.querySelector('#blogMsg');
       msg.className = 'msg';
@@ -530,6 +662,7 @@
       fd.append('author', host.querySelector('#blogAuthor').value.trim());
       fd.append('excerpt', host.querySelector('#blogExcerpt').value.trim());
       fd.append('body', host.querySelector('#blogBody').value.trim());
+      fd.append('seo', JSON.stringify(collectSeo(host)));
       const coverEl = host.querySelector('#blogCover');
       if (coverEl.files[0]) fd.append('cover', coverEl.files[0]);
       try {

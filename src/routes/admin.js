@@ -213,6 +213,51 @@ function removeUpload(filename) {
   fs.promises.unlink(path.join(config.uploadsDir, path.basename(filename))).catch(() => {});
 }
 
+// A URL-friendly slug from arbitrary text.
+function slugify(s) {
+  return String(s || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+// On-page SEO fields shared by quizzes, polls and blogs, with per-field length
+// caps. Text fields plus two boolean robots flags.
+const SEO_FIELDS = {
+  metaTitle: 70,
+  metaDescription: 320,
+  slug: 80,
+  focusKeyword: 80,
+  metaKeywords: 300,
+  canonicalUrl: 500,
+  ogTitle: 100,
+  ogDescription: 320,
+  ogImage: 500,
+  ogType: 40,
+  twitterCard: 40,
+  twitterTitle: 100,
+  twitterDescription: 320,
+  twitterImage: 500,
+};
+
+const truthy = (v) => v === true || v === 'true' || v === 1 || v === '1' || v === 'on';
+
+// Validate + normalise the posted SEO object (may be a JSON string from a
+// multipart form). Falls back to a slug derived from `fallbackTitle`.
+function normalizeSeo(raw, fallbackTitle) {
+  const o = parseJson(raw, {}) || {};
+  const out = {};
+  for (const [key, max] of Object.entries(SEO_FIELDS)) {
+    out[key] = (o[key] == null ? '' : String(o[key])).trim().slice(0, max);
+  }
+  out.slug = slugify(out.slug || fallbackTitle);
+  out.noindex = truthy(o.noindex);
+  out.nofollow = truthy(o.nofollow);
+  return JSON.stringify(out);
+}
+
 // Validate + normalise a quiz's questions array. Returns { value } or { error }.
 // Compatibility quizzes have no "correct" option — every question is just a
 // prompt plus the choices two people can match on.
@@ -236,13 +281,14 @@ function normalizeQuestions(raw) {
 
 // GET /api/admin/quizzes — full quizzes including correct answers.
 router.get('/quizzes', requireAdmin, (req, res) => {
-  const rows = db.prepare('SELECT id, title, description, questions, created_at, updated_at FROM quizzes ORDER BY created_at DESC').all();
+  const rows = db.prepare('SELECT id, title, description, questions, seo, created_at, updated_at FROM quizzes ORDER BY created_at DESC').all();
   res.json({
     quizzes: rows.map((r) => ({
       id: r.id,
       title: r.title,
       description: r.description,
       questions: parseJson(r.questions, []),
+      seo: parseJson(r.seo, {}),
       attempts: db.prepare('SELECT COUNT(*) AS n FROM quiz_attempts WHERE quiz_id = ?').get(r.id).n,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -258,10 +304,11 @@ router.post('/quizzes', requireAdmin, (req, res) => {
   const q = normalizeQuestions(req.body && req.body.questions);
   if (q.error) return res.status(400).json({ error: q.error });
 
+  const seo = normalizeSeo(req.body && req.body.seo, title);
   const now = Date.now();
   const info = db.prepare(
-    'INSERT INTO quizzes (title, description, questions, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(title.slice(0, 150), description, JSON.stringify(q.value), now, now);
+    'INSERT INTO quizzes (title, description, questions, seo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(title.slice(0, 150), description, JSON.stringify(q.value), seo, now, now);
   res.status(201).json({ id: info.lastInsertRowid });
 });
 
@@ -275,8 +322,9 @@ router.put('/quizzes/:id', requireAdmin, (req, res) => {
   const q = normalizeQuestions(req.body && req.body.questions);
   if (q.error) return res.status(400).json({ error: q.error });
 
-  db.prepare('UPDATE quizzes SET title = ?, description = ?, questions = ?, updated_at = ? WHERE id = ?')
-    .run(title.slice(0, 150), description, JSON.stringify(q.value), Date.now(), row.id);
+  const seo = normalizeSeo(req.body && req.body.seo, title);
+  db.prepare('UPDATE quizzes SET title = ?, description = ?, questions = ?, seo = ?, updated_at = ? WHERE id = ?')
+    .run(title.slice(0, 150), description, JSON.stringify(q.value), seo, Date.now(), row.id);
   res.json({ ok: true });
 });
 
@@ -299,13 +347,14 @@ function normalizeOptions(raw) {
 
 // GET /api/admin/polls
 router.get('/polls', requireAdmin, (req, res) => {
-  const rows = db.prepare('SELECT id, question, options, closed, created_at FROM polls ORDER BY created_at DESC').all();
+  const rows = db.prepare('SELECT id, question, options, closed, seo, created_at FROM polls ORDER BY created_at DESC').all();
   res.json({
     polls: rows.map((r) => ({
       id: r.id,
       question: r.question,
       options: parseJson(r.options, []),
       closed: !!r.closed,
+      seo: parseJson(r.seo, {}),
       votes: db.prepare('SELECT COUNT(*) AS n FROM poll_votes WHERE poll_id = ?').get(r.id).n,
       createdAt: r.created_at,
     })),
@@ -319,10 +368,11 @@ router.post('/polls', requireAdmin, (req, res) => {
   const o = normalizeOptions(req.body && req.body.options);
   if (o.error) return res.status(400).json({ error: o.error });
 
+  const seo = normalizeSeo(req.body && req.body.seo, question);
   const now = Date.now();
   const info = db.prepare(
-    'INSERT INTO polls (question, options, closed, created_at, updated_at) VALUES (?, ?, 0, ?, ?)'
-  ).run(question.slice(0, 300), JSON.stringify(o.value), now, now);
+    'INSERT INTO polls (question, options, closed, seo, created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?)'
+  ).run(question.slice(0, 300), JSON.stringify(o.value), seo, now, now);
   res.status(201).json({ id: info.lastInsertRowid });
 });
 
@@ -336,8 +386,9 @@ router.put('/polls/:id', requireAdmin, (req, res) => {
   if (o.error) return res.status(400).json({ error: o.error });
   const closed = req.body && (req.body.closed === true || req.body.closed === 'true' || req.body.closed === 1) ? 1 : 0;
 
-  db.prepare('UPDATE polls SET question = ?, options = ?, closed = ?, updated_at = ? WHERE id = ?')
-    .run(question.slice(0, 300), JSON.stringify(o.value), closed, Date.now(), row.id);
+  const seo = normalizeSeo(req.body && req.body.seo, question);
+  db.prepare('UPDATE polls SET question = ?, options = ?, closed = ?, seo = ?, updated_at = ? WHERE id = ?')
+    .run(question.slice(0, 300), JSON.stringify(o.value), closed, seo, Date.now(), row.id);
   res.json({ ok: true });
 });
 
@@ -352,7 +403,7 @@ router.delete('/polls/:id', requireAdmin, (req, res) => {
 
 // GET /api/admin/blogs
 router.get('/blogs', requireAdmin, (req, res) => {
-  const rows = db.prepare('SELECT id, title, author, excerpt, body, cover, created_at, updated_at FROM blogs ORDER BY created_at DESC').all();
+  const rows = db.prepare('SELECT id, title, author, excerpt, body, cover, seo, created_at, updated_at FROM blogs ORDER BY created_at DESC').all();
   res.json({
     blogs: rows.map((r) => ({
       id: r.id,
@@ -361,6 +412,7 @@ router.get('/blogs', requireAdmin, (req, res) => {
       excerpt: r.excerpt,
       body: r.body,
       cover: r.cover ? `/uploads/${r.cover}` : null,
+      seo: parseJson(r.seo, {}),
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     })),
@@ -376,10 +428,11 @@ router.post('/blogs', requireAdmin, imageUpload.single('cover'), (req, res) => {
   const author = ((req.body && req.body.author) || 'getxmatch').trim().slice(0, 80) || 'getxmatch';
   const excerpt = ((req.body && req.body.excerpt) || body.slice(0, 160)).trim().slice(0, 300);
 
+  const seo = normalizeSeo(req.body && req.body.seo, title);
   const now = Date.now();
   const info = db.prepare(
-    'INSERT INTO blogs (title, author, excerpt, body, cover, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(title.slice(0, 200), author, excerpt, body, req.file ? req.file.filename : null, now, now);
+    'INSERT INTO blogs (title, author, excerpt, body, cover, seo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(title.slice(0, 200), author, excerpt, body, req.file ? req.file.filename : null, seo, now, now);
   res.status(201).json({ id: info.lastInsertRowid });
 });
 
@@ -399,8 +452,9 @@ router.put('/blogs/:id', requireAdmin, imageUpload.single('cover'), (req, res) =
     if (cover) removeUpload(cover);
     cover = req.file.filename;
   }
-  db.prepare('UPDATE blogs SET title = ?, author = ?, excerpt = ?, body = ?, cover = ?, updated_at = ? WHERE id = ?')
-    .run(title.slice(0, 200), author, excerpt, body, cover, Date.now(), row.id);
+  const seo = normalizeSeo(req.body && req.body.seo, title);
+  db.prepare('UPDATE blogs SET title = ?, author = ?, excerpt = ?, body = ?, cover = ?, seo = ?, updated_at = ? WHERE id = ?')
+    .run(title.slice(0, 200), author, excerpt, body, cover, seo, Date.now(), row.id);
   res.json({ ok: true });
 });
 
