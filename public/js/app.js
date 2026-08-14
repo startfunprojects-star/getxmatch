@@ -2175,11 +2175,10 @@
       }
       if (!activityFeeds.length) { fakeTicker = null; return; } // stops; restarts on next render
       const pool = await loadFakePool();
-      if (pool.enabled && pool.females.length && pool.males.length) {
+      if (pool.enabled && pool.females.length && pool.males.length && pool.activities.length) {
         const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-        // Activity is optional; fall back to a neutral connector when none set.
-        const verbs = pool.activities.length ? pool.activities : ['and'];
-        const act = pick(verbs);
+        // Every combo borrows a random activity from the stored pool.
+        const act = pick(pool.activities);
         const f = pick(pool.females);
         const m = pick(pool.males);
         // Randomly order the pair: female→male or male→female.

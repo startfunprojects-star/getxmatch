@@ -68,11 +68,11 @@ function fakePools() {
 function fakeActivityEvents() {
   if (!isFakeActivityEnabled()) return [];
   const { females, males, activities } = fakePools();
-  if (!females.length || !males.length) return [];
+  // A row's activity is optional, but every combination borrows a random
+  // activity from the stored pool — so name-only rows reuse existing verbs.
+  // With no activities anywhere there is nothing to pair, so show nothing.
+  if (!females.length || !males.length || !activities.length) return [];
 
-  // Activity (column 2) is optional; when none are defined, pair names with a
-  // neutral connector so the feed still reads ("Priya and Sam").
-  const verbs = activities.length ? activities : ['and'];
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
   const count = Math.min(30, Math.max(females.length + males.length, 12));
   const now = Date.now();
@@ -80,7 +80,7 @@ function fakeActivityEvents() {
   for (let i = 0; i < count; i++) {
     const f = pick(females);
     const m = pick(males);
-    const act = pick(verbs);
+    const act = pick(activities);
     // Randomly order the pair: female→male or male→female.
     const text = Math.random() < 0.5 ? `${f} ${act} ${m}` : `${m} ${act} ${f}`;
     out.push({
