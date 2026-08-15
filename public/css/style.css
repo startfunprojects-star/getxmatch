@@ -704,6 +704,8 @@ a.share-link:hover { text-decoration: underline; }
 .fake-name { font-weight: 600; }
 .fake-act { color: var(--muted); }
 .fake-row .danger.small { justify-self: end; padding: 4px 9px; }
+.fake-actions { display: flex; gap: 6px; justify-self: end; }
+.fake-row input { width: 100%; }
 @media (max-width: 560px) {
   .fake-row-head { display: none; }
   .fake-add, .fake-row { grid-template-columns: 1fr 1fr; }

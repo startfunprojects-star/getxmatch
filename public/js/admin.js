@@ -1252,22 +1252,65 @@
     box.innerHTML = '';
     const { slice, pager } = pageFor('fake', activities, paintFakeList);
     const table = el('<div class="fake-table"></div>');
-    slice.forEach((a) => {
-      const row = el(`
-        <div class="fake-row">
-          <span class="fake-name">${esc(a.personA)}</span>
-          <span class="fake-act">${a.activity ? esc(a.activity) : '<span class="fake-empty">—</span>'}</span>
-          <span class="fake-name">${esc(a.personB)}</span>
-          <button class="danger small" data-del title="Delete">✕</button>
-        </div>
-      `);
-      row.querySelector('[data-del]').addEventListener('click', async () => {
-        try { await api.del('/api/admin/fake-activities/' + a.id); loadFakeList(); } catch (e) { alert(e.message); }
-      });
-      table.appendChild(row);
-    });
+    slice.forEach((a) => table.appendChild(fakeRowEl(a)));
     box.appendChild(table);
     if (pager) box.appendChild(pager);
+  }
+
+  // One activity-pool row that toggles between a read-only view and an inline
+  // editor for all three columns (Female · Activity · Male). Editing PUTs to
+  // the existing /api/admin/fake-activities/:id endpoint.
+  function fakeRowEl(a) {
+    const row = el('<div class="fake-row"></div>');
+
+    function renderView() {
+      row.innerHTML = `
+        <span class="fake-name">${esc(a.personA)}</span>
+        <span class="fake-act">${a.activity ? esc(a.activity) : '<span class="fake-empty">—</span>'}</span>
+        <span class="fake-name">${esc(a.personB)}</span>
+        <div class="fake-actions">
+          <button class="ghost small" data-edit title="Edit">✎</button>
+          <button class="danger small" data-del title="Delete">✕</button>
+        </div>`;
+      row.querySelector('[data-edit]').addEventListener('click', renderEdit);
+      row.querySelector('[data-del]').addEventListener('click', async () => {
+        const label = [a.personA, a.activity, a.personB].filter(Boolean).join(' ');
+        if (!confirm(`Delete "${label}"?`)) return;
+        try { await api.del('/api/admin/fake-activities/' + a.id); loadFakeList(); } catch (e) { alert(e.message); }
+      });
+    }
+
+    function renderEdit() {
+      row.innerHTML = `
+        <input class="fa-e-a" value="${esc(a.personA)}" placeholder="Female name" />
+        <input class="fa-e-act" value="${esc(a.activity || '')}" placeholder="Activity (optional)" />
+        <input class="fa-e-b" value="${esc(a.personB)}" placeholder="Male name" />
+        <div class="fake-actions">
+          <button class="primary small" data-save title="Save">✓</button>
+          <button class="ghost small" data-cancel title="Cancel">✕</button>
+        </div>`;
+      const save = async () => {
+        const personA = row.querySelector('.fa-e-a').value.trim();
+        const activity = row.querySelector('.fa-e-act').value.trim();
+        const personB = row.querySelector('.fa-e-b').value.trim();
+        if (!personA || !personB) { alert('Female and Male names are required.'); return; }
+        try {
+          await api.put('/api/admin/fake-activities/' + a.id, { personA, activity, personB });
+          a.personA = personA; a.activity = activity; a.personB = personB;
+          renderView();
+        } catch (e) { alert(e.message); }
+      };
+      row.querySelector('[data-save]').addEventListener('click', save);
+      row.querySelector('[data-cancel]').addEventListener('click', renderView);
+      row.querySelectorAll('input').forEach((i) => i.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') save();
+        else if (e.key === 'Escape') renderView();
+      }));
+      row.querySelector('.fa-e-a').focus();
+    }
+
+    renderView();
+    return row;
   }
 
   /* ==================================================================
