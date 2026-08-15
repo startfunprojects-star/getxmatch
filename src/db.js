@@ -396,6 +396,15 @@ db.exec(`
     PRIMARY KEY (user_id, peer_id)
   );
   CREATE INDEX IF NOT EXISTS idx_chat_activities_recent ON chat_activities (updated_at);
+
+  -- Image/GIF a user shares onto the Recent Activity feed (shown as a thumbnail).
+  CREATE TABLE IF NOT EXISTS activity_posts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    image      TEXT NOT NULL,          -- filename in uploads/
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_activity_posts_recent ON activity_posts (created_at);
 `);
 
 // On-page SEO metadata for content tables. Stored as a single JSON blob so the

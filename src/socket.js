@@ -100,7 +100,18 @@ function replyPreview(replyToId) {
   return { id: row.id, from: row.sender_id, kind: row.kind || 'text', text: String(text).slice(0, 140) };
 }
 
+// Reference to the live Server, set on init, so HTTP routes can broadcast onto
+// the Recent Activity feed (e.g. a shared image) without importing server.js.
+let ioRef = null;
+
+// Broadcast a ready-to-render feed item to every connected client. The client's
+// `activity:new` handler inserts it at the top of any open activity feed.
+function broadcastActivity(payload) {
+  if (ioRef) ioRef.emit('activity:new', payload);
+}
+
 function initSocket(io) {
+  ioRef = io;
   // Authenticate every socket from the httpOnly auth cookie.
   io.use((socket, next) => {
     try {
@@ -371,4 +382,4 @@ function initSocket(io) {
   });
 }
 
-module.exports = { initSocket, isOnline };
+module.exports = { initSocket, isOnline, broadcastActivity };

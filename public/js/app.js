@@ -645,10 +645,49 @@
     main.innerHTML = `
       <div class="chat-wrap">
         <div class="chat-tabs" id="chatTabs"></div>
-        <div class="home-activity" id="homeActivity"></div>
+        <div class="home-activity">
+          <div class="activity-share">
+            <button class="ghost small" id="activityShareBtn" type="button">🖼️ Share an image / GIF</button>
+            <input type="file" id="activityImgInput" accept="image/*" class="hidden" />
+            <span class="hint" id="activityShareMsg"></span>
+          </div>
+          <div id="homeFeed"></div>
+        </div>
       </div>`;
     renderChatTabs();
-    renderActivityInto(document.getElementById('homeActivity'), { compact: false });
+    wireActivityShare();
+    renderActivityInto(document.getElementById('homeFeed'), { compact: false });
+  }
+
+  // Wire the "Share an image / GIF" control on the activity home. On success the
+  // server broadcasts an activity:new event that inserts the thumbnail live, so
+  // we don't insert it here (avoids a duplicate row).
+  function wireActivityShare() {
+    const btn = document.getElementById('activityShareBtn');
+    const input = document.getElementById('activityImgInput');
+    const msg = document.getElementById('activityShareMsg');
+    if (!btn || !input) return;
+    btn.addEventListener('click', () => input.click());
+    input.addEventListener('change', async () => {
+      const file = input.files[0];
+      if (!file) return;
+      msg.className = 'hint';
+      msg.textContent = 'Uploading…';
+      btn.disabled = true;
+      const fd = new FormData();
+      fd.append('image', file);
+      try {
+        await api.postForm('/api/events/activity-image', fd);
+        msg.textContent = 'Shared!';
+        setTimeout(() => { if (msg) msg.textContent = ''; }, 2500);
+      } catch (e) {
+        msg.className = 'hint error';
+        msg.textContent = e.message;
+      } finally {
+        input.value = '';
+        btn.disabled = false;
+      }
+    });
   }
 
   /* ---- chat activity ("what are you doing") status bar ---- */
@@ -1406,10 +1445,17 @@
       }
     });
 
-    // A user (anywhere) set a chat activity — stream it onto open feeds live.
+    // A user (anywhere) set a chat activity or shared an image — stream it onto
+    // open feeds live (with a thumbnail when an image is included).
     s.on('activity:new', (e) => {
-      if (!e || !e.text) return;
-      pushLiveActivity({ type: 'chat-activity', icon: fakeIcon(e.activity || ''), at: e.at || Date.now(), text: e.text });
+      if (!e || (!e.text && !e.image)) return;
+      pushLiveActivity({
+        type: e.image ? 'activity-image' : 'chat-activity',
+        icon: e.icon || fakeIcon(e.activity || ''),
+        at: e.at || Date.now(),
+        text: e.text,
+        image: e.image || null,
+      });
     });
 
     s.on('chat:reaction', (e) => {
@@ -2209,12 +2255,19 @@
         <div class="feed-main">
           ${ev.type === 'admin' && ev.title ? '<div class="feed-title"></div>' : ''}
           <div class="feed-text"></div>
+          ${ev.image ? '<div class="feed-thumb-wrap"></div>' : ''}
           <div class="feed-time hint">${live ? 'just now' : `${fmtDate(ev.at)} · ${fmtTime(ev.at)}`}</div>
         </div>
       </div>
     `);
     if (ev.type === 'admin' && ev.title) item.querySelector('.feed-title').textContent = ev.title;
     item.querySelector('.feed-text').textContent = ev.text;
+    if (ev.image) {
+      const img = el('<img class="feed-thumb" alt="shared image" loading="lazy" />');
+      img.src = ev.image;
+      img.addEventListener('click', () => window.open(ev.image, '_blank', 'noopener'));
+      item.querySelector('.feed-thumb-wrap').appendChild(img);
+    }
     return item;
   }
 

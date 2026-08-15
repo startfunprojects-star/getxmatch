@@ -15,6 +15,8 @@ const db = require('../db');
 const { requireAuth } = require('../auth');
 const { friendState } = require('../profileData');
 const { isFakeActivityEnabled } = require('../settings');
+const { imageUpload } = require('../upload');
+const { broadcastActivity } = require('../socket');
 
 const router = express.Router();
 
@@ -104,6 +106,32 @@ router.get('/fake-pool', requireAuth, (req, res) => {
   res.json({ enabled, ...pools });
 });
 
+// POST /api/events/activity-image — share an image/GIF onto the Recent Activity
+// feed. Saved to disk and shown to everyone as a thumbnail (live + on reload).
+router.post('/activity-image', requireAuth, imageUpload.single('image'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded.' });
+  const now = Date.now();
+  const info = db
+    .prepare('INSERT INTO activity_posts (user_id, image, created_at) VALUES (?, ?, ?)')
+    .run(req.user.id, req.file.filename, now);
+
+  const actor = userMini(req.user.id, req.user.id);
+  const url = `/uploads/${req.file.filename}`;
+  const event = {
+    id: 'post-' + info.lastInsertRowid,
+    type: 'activity-image',
+    at: now,
+    icon: '🖼️',
+    actor,
+    target: null,
+    text: `${actor ? actor.displayName : 'Someone'} shared an image`,
+    image: url,
+  };
+  // Stream it live onto everyone's open feeds as a thumbnail.
+  broadcastActivity({ at: now, icon: '🖼️', text: event.text, image: url });
+  res.status(201).json({ event });
+});
+
 // GET /api/events — merged recent activity.
 router.get('/', requireAuth, (req, res) => {
   const me = req.user.id;
@@ -184,6 +212,24 @@ router.get('/', requireAuth, (req, res) => {
       actor: a,
       target: b,
       text: `${a.displayName} ${row.activity} ${b.displayName}`,
+    });
+  });
+
+  // 3c) User-shared images/GIFs — displayed as a thumbnail in the feed.
+  db.prepare(
+    'SELECT id, user_id, image, created_at FROM activity_posts ORDER BY created_at DESC LIMIT ?'
+  ).all(PER_SOURCE).forEach((row) => {
+    const a = userMini(row.user_id, me);
+    if (!a) return;
+    events.push({
+      id: 'post-' + row.id,
+      type: 'activity-image',
+      at: row.created_at,
+      icon: '🖼️',
+      actor: a,
+      target: null,
+      text: `${a.displayName} shared an image`,
+      image: `/uploads/${row.image}`,
     });
   });
 
