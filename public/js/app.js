@@ -434,15 +434,7 @@
           <div class="search"><input id="searchInput" placeholder="Search people…" /></div>
           <div class="list" id="list"></div>
         </aside>
-        <section class="main" id="main">
-          <div class="empty-main">
-            <div>
-              <div style="font-size:40px">💬</div>
-              <p>Search for someone to start chatting.</p>
-              <p class="hint">Open chats appear as tabs — you can talk to several people at once. Shared files are delivered live and never stored.</p>
-            </div>
-          </div>
-        </section>
+        <section class="main" id="main"></section>
       </div>
     `);
     root.appendChild(shell);
@@ -487,6 +479,7 @@
 
     connectSocket();
     renderList();
+    renderMainHome(); // chat box shows the recent-activity feed by default
     refreshRequestBadge();
     loadGifts(); // preload so live gifts render with the right emoji/name
 
@@ -516,10 +509,10 @@
     if (!listEl) return;
     const q = (document.getElementById('searchInput').value || '').trim();
 
-    // People tab with no search term → show the recent-activity feed instead of
-    // a raw user list. Searching still surfaces real, clickable users to chat.
+    // People tab with no search term → show my friends / relationships list.
+    // Searching still surfaces real, clickable users to chat.
     if (state.tab === 'people' && !q) {
-      return renderActivityInto(listEl, { compact: true });
+      return renderFriendsList(listEl);
     }
 
     let items = [];
@@ -556,25 +549,55 @@
     });
   }
 
+  // Sidebar default (People tab, no search): my accepted friends / relationships.
+  // Each opens a chat when clicked. Search still finds anyone to message.
+  async function renderFriendsList(listEl) {
+    let friends = [];
+    try { friends = (await api.get('/api/social/friends')).friends || []; }
+    catch (_e) { /* fall through to empty state */ }
+    if (!document.body.contains(listEl)) return; // navigated away while loading
+
+    listEl.innerHTML = '';
+    if (!friends.length) {
+      listEl.appendChild(el(
+        `<div style="padding:20px;color:var(--muted)">No friends yet.<br><span class="hint">Search above to find people, open a chat, and send a friend request.</span></div>`
+      ));
+      return;
+    }
+    friends.forEach((u) => {
+      const row = el(`
+        <div class="list-item" data-id="${u.id}">
+          <img class="avatar" src="${avatarUrl(u.avatar)}" />
+          <div style="min-width:0">
+            <div class="name">${esc(u.displayName || u.username)}</div>
+            <div class="handle">@${esc(u.username)}</div>
+          </div>
+        </div>
+      `);
+      if (state.peer && state.peer.id === u.id) row.classList.add('active');
+      row.addEventListener('click', () => openChat(u));
+      listEl.appendChild(row);
+    });
+  }
+
   /* ======================================================================
      CHAT
   ====================================================================== */
-  function emptyMainHtml() {
-    return `
-      <div class="empty-main">
-        <div>
-          <div style="font-size:40px">💬</div>
-          <p>Search for someone to start chatting.</p>
-          <p class="hint">Open chats appear as tabs above — you can talk to several people at once.</p>
-        </div>
-      </div>`;
-  }
-
-  // Render the row of open-chat tabs at the top of the chat pane.
+  // Render the row of open-chat tabs at the top of the chat pane. The first tab
+  // is always "✨ Activity" (the recent-activity home), then one tab per open
+  // conversation — so chats open as new tabs beside the activity feed.
   function renderChatTabs() {
     const bar = document.getElementById('chatTabs');
     if (!bar) return;
     bar.innerHTML = '';
+
+    const homeTab = el(`
+      <div class="chat-tab home-tab${state.peer ? '' : ' active'}">
+        <span class="chat-tab-name">✨ Activity</span>
+      </div>`);
+    homeTab.addEventListener('click', () => { if (state.peer) renderMainHome(true); });
+    bar.appendChild(homeTab);
+
     state.openChats.forEach((p) => {
       const active = state.peer && state.peer.id === p.id;
       const tab = el(`
@@ -605,9 +628,27 @@
     if (!wasActive) { renderChatTabs(); return; }
     const next = state.openChats[idx] || state.openChats[idx - 1];
     if (next) return openChat(next);
+    renderMainHome(); // no chats left → back to the recent-activity home
+  }
+
+  // Render the "home" of the chat box: the tab bar (Activity + any open chats)
+  // above a full recent-activity feed. This is what every user sees by default
+  // and whenever no conversation is selected. `focusMain` shows the main pane on
+  // mobile (used when returning here from a chat or the sidebar).
+  function renderMainHome(focusMain) {
+    const main = document.getElementById('main');
+    if (!main) return;
     state.peer = null;
-    document.getElementById('shell').classList.remove('viewing-main');
-    document.getElementById('main').innerHTML = emptyMainHtml();
+    closeReactionPalette();
+    if (focusMain) document.getElementById('shell').classList.add('viewing-main');
+    document.querySelectorAll('.list-item').forEach((r) => r.classList.remove('active'));
+    main.innerHTML = `
+      <div class="chat-wrap">
+        <div class="chat-tabs" id="chatTabs"></div>
+        <div class="home-activity" id="homeActivity"></div>
+      </div>`;
+    renderChatTabs();
+    renderActivityInto(document.getElementById('homeActivity'), { compact: false });
   }
 
   /* ---- chat activity ("what are you doing") status bar ---- */
@@ -1814,7 +1855,7 @@
     if (view === 'polls') return renderPolls();
     if (view === 'blogs') return renderBlogs();
     if (view === 'leaderboard') return renderLeaderboard();
-    if (view === 'events') return renderEvents();
+    if (view === 'events') return renderMainHome(true); // activity lives in the chat box now
   }
 
   /* ---------- Friend requests ---------- */
@@ -2259,12 +2300,6 @@
       schedule();
     };
     schedule();
-  }
-
-  async function renderEvents() {
-    const main = openMainView();
-    main.appendChild(sectionShell('Recent Activity', 'What members are up to right now.'));
-    await renderActivityInto(main.querySelector('#sectionBody'), { compact: false });
   }
 
   boot();
