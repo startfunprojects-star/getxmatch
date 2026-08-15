@@ -20,6 +20,7 @@ const { friendState } = require('../profileData');
 const { imageUpload } = require('../upload');
 const { broadcastActivity } = require('../socket');
 const { recentStream } = require('../activityStream');
+const { acceptedText, relEmoji } = require('../relationships');
 
 const router = express.Router();
 
@@ -121,22 +122,23 @@ router.get('/', requireAuth, (req, res) => {
   const me = req.user.id;
   const events = [];
 
-  // 1) Accepted friendships (relationships).
+  // 1) Accepted relationships (friend, crush, couple, …).
   db.prepare(
-    `SELECT id, requester_id, addressee_id, created_at
+    `SELECT id, requester_id, addressee_id, rel_type, created_at
      FROM friendships WHERE status = 'accepted' ORDER BY created_at DESC LIMIT ?`
   ).all(PER_SOURCE).forEach((f) => {
     const a = userMini(f.requester_id, me);
     const b = userMini(f.addressee_id, me);
     if (!a || !b) return;
+    const type = f.rel_type || 'friend';
     events.push({
       id: 'friend-' + f.id,
       type: 'friendship',
       at: f.created_at,
-      icon: '🤝',
+      icon: relEmoji(type),
       actor: a,
       target: b,
-      text: `${a.displayName} and ${b.displayName} are now friends`,
+      text: acceptedText(type, a.displayName, b.displayName),
     });
   });
 

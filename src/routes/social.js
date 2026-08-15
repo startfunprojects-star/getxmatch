@@ -8,9 +8,26 @@ const { friendState, ratingSummary } = require('../profileData');
 const { areBlocked } = require('../relations');
 const { GIFTS } = require('../gifts');
 const { listActivities } = require('../activities');
-const { isValidRelType } = require('../relationships');
+const { isValidRelType, sentText, acceptedText, relEmoji } = require('../relationships');
+const { broadcastActivity } = require('../socket');
 
 const router = express.Router();
+
+// Display name for a user (falls back to their username), for feed lines.
+function displayName(userId, fallback) {
+  const r = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(userId);
+  return (r && r.display_name) || fallback;
+}
+
+// Announce a relationship request being sent / accepted onto Recent Activity.
+// Broadcast only (no socket on the public sign-in page, so real names stay in
+// the logged-in feed); accepts also persist via the accepted-friendships source.
+function announceRelation(kind, type, aId, aFallback, bId, bFallback) {
+  const a = displayName(aId, aFallback);
+  const b = displayName(bId, bFallback);
+  const text = kind === 'accepted' ? acceptedText(type, a, b) : sentText(type, a, b);
+  broadcastActivity({ at: Date.now(), icon: relEmoji(type), text });
+}
 
 // Resolve a :username param to a user row that has a profile. Sends the 404
 // response itself and returns null when not found.
@@ -146,6 +163,7 @@ router.post('/friend/:username', requireAuth, (req, res) => {
     // Pending. If the target requested us, accept it (keep their chosen type).
     if (row.addressee_id === req.user.id) {
       db.prepare('UPDATE friendships SET status = ? WHERE id = ?').run('accepted', row.id);
+      announceRelation('accepted', row.rel_type || 'friend', req.user.id, req.user.username, target.id, target.username);
       return res.json({ state: 'friends' });
     }
     return res.status(409).json({ error: 'You already sent a request.' });
@@ -154,6 +172,7 @@ router.post('/friend/:username', requireAuth, (req, res) => {
   db.prepare(
     'INSERT INTO friendships (requester_id, addressee_id, status, rel_type, created_at) VALUES (?, ?, ?, ?, ?)'
   ).run(req.user.id, target.id, 'pending', type, Date.now());
+  announceRelation('sent', type, req.user.id, req.user.username, target.id, target.username);
   res.status(201).json({ state: 'outgoing', type });
 });
 
@@ -170,6 +189,7 @@ router.post('/friend/:username/accept', requireAuth, (req, res) => {
   if (!row) return res.status(404).json({ error: 'No pending request from this user.' });
 
   db.prepare('UPDATE friendships SET status = ? WHERE id = ?').run('accepted', row.id);
+  announceRelation('accepted', row.rel_type || 'friend', req.user.id, req.user.username, target.id, target.username);
   res.json({ state: 'friends' });
 });
 

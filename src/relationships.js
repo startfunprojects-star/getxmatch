@@ -21,4 +21,34 @@ function isValidRelType(t) {
   return typeof t === 'string' && Object.prototype.hasOwnProperty.call(REL_TYPES, t);
 }
 
-module.exports = { REL_TYPES, REL_ORDER, isValidRelType };
+// Feed line when `a` sends `b` a request of the given kind.
+function sentText(type, a, b) {
+  switch (type) {
+    case 'girlfriend': return `${a} asked ${b} to be their girlfriend`;
+    case 'boyfriend':  return `${a} asked ${b} to be their boyfriend`;
+    case 'wife':       return `${a} asked ${b} to be their wife`;
+    case 'husband':    return `${a} asked ${b} to be their husband`;
+    case 'crush':      return `${a} has a crush on ${b}`;
+    case 'colleague':  return `${a} sent ${b} a colleague request`;
+    default:           return `${a} sent ${b} a friend request`;
+  }
+}
+
+// Feed line when a request of the given kind between `a` and `b` is accepted.
+function acceptedText(type, a, b) {
+  switch (type) {
+    case 'girlfriend':
+    case 'boyfriend':  return `${a} and ${b} are now a couple`;
+    case 'wife':
+    case 'husband':    return `${a} and ${b} are now married`;
+    case 'crush':      return `${a} and ${b} are crushing on each other`;
+    case 'colleague':  return `${a} and ${b} are now colleagues`;
+    default:           return `${a} and ${b} are now friends`;
+  }
+}
+
+function relEmoji(type) {
+  return (REL_TYPES[type] || REL_TYPES.friend).emoji;
+}
+
+module.exports = { REL_TYPES, REL_ORDER, isValidRelType, sentText, acceptedText, relEmoji };
