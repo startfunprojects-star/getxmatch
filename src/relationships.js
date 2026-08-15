@@ -21,13 +21,23 @@ function isValidRelType(t) {
   return typeof t === 'string' && Object.prototype.hasOwnProperty.call(REL_TYPES, t);
 }
 
-// Feed line when `a` sends `b` a request of the given kind.
-function sentText(type, a, b) {
+// Possessive pronoun from a user's self-declared gender. Male → his, Female →
+// her, everything else (non-binary / other / prefer-not-to-say / unset) → their.
+function possessivePronoun(gender) {
+  if (gender === 'Male') return 'his';
+  if (gender === 'Female') return 'her';
+  return 'their';
+}
+
+// Feed line when `a` sends `b` a request of the given kind. `aGender` is the
+// sender's declared gender, used for the his/her/their possessive.
+function sentText(type, a, b, aGender) {
+  const p = possessivePronoun(aGender);
   switch (type) {
-    case 'girlfriend': return `${a} asked ${b} to be their girlfriend`;
-    case 'boyfriend':  return `${a} asked ${b} to be their boyfriend`;
-    case 'wife':       return `${a} asked ${b} to be their wife`;
-    case 'husband':    return `${a} asked ${b} to be their husband`;
+    case 'girlfriend': return `${a} asked ${b} to be ${p} girlfriend`;
+    case 'boyfriend':  return `${a} asked ${b} to be ${p} boyfriend`;
+    case 'wife':       return `${a} asked ${b} to be ${p} wife`;
+    case 'husband':    return `${a} asked ${b} to be ${p} husband`;
     case 'crush':      return `${a} has a crush on ${b}`;
     case 'colleague':  return `${a} sent ${b} a colleague request`;
     default:           return `${a} sent ${b} a friend request`;
@@ -51,4 +61,4 @@ function relEmoji(type) {
   return (REL_TYPES[type] || REL_TYPES.friend).emoji;
 }
 
-module.exports = { REL_TYPES, REL_ORDER, isValidRelType, sentText, acceptedText, relEmoji };
+module.exports = { REL_TYPES, REL_ORDER, isValidRelType, sentText, acceptedText, relEmoji, possessivePronoun };

@@ -13,19 +13,22 @@ const { broadcastActivity } = require('../socket');
 
 const router = express.Router();
 
-// Display name for a user (falls back to their username), for feed lines.
-function displayName(userId, fallback) {
-  const r = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(userId);
-  return (r && r.display_name) || fallback;
+// Display name + declared gender for a user (name falls back to username).
+function profileBits(userId, fallback) {
+  const r = db.prepare('SELECT display_name, gender FROM profiles WHERE user_id = ?').get(userId);
+  return { name: (r && r.display_name) || fallback, gender: r ? r.gender : null };
 }
 
 // Announce a relationship request being sent / accepted onto Recent Activity.
 // Broadcast only (no socket on the public sign-in page, so real names stay in
 // the logged-in feed); accepts also persist via the accepted-friendships source.
+// For a "sent" line the his/her/their possessive follows the sender's gender.
 function announceRelation(kind, type, aId, aFallback, bId, bFallback) {
-  const a = displayName(aId, aFallback);
-  const b = displayName(bId, bFallback);
-  const text = kind === 'accepted' ? acceptedText(type, a, b) : sentText(type, a, b);
+  const a = profileBits(aId, aFallback);
+  const b = profileBits(bId, bFallback);
+  const text = kind === 'accepted'
+    ? acceptedText(type, a.name, b.name)
+    : sentText(type, a.name, b.name, a.gender);
   broadcastActivity({ at: Date.now(), icon: relEmoji(type), text });
 }
 

@@ -126,10 +126,14 @@ function buildFeed(viewerId, opts) {
   });
 
   // 1b) Pending relationship requests that were sent (so a sent request shows on
-  //     Recent Activity until it's accepted, declined or cancelled).
+  //     Recent Activity until it's accepted, declined or cancelled). The his/her/
+  //     their possessive follows the sender's declared gender.
   db.prepare(
-    `SELECT id, requester_id, addressee_id, rel_type, created_at
-     FROM friendships WHERE status = 'pending' ORDER BY created_at DESC LIMIT ?`
+    `SELECT f.id, f.requester_id, f.addressee_id, f.rel_type, f.created_at,
+            rp.gender AS requester_gender
+     FROM friendships f
+     LEFT JOIN profiles rp ON rp.user_id = f.requester_id
+     WHERE f.status = 'pending' ORDER BY f.created_at DESC LIMIT ?`
   ).all(PER_SOURCE).forEach((f) => {
     const a = userMini(f.requester_id, me);
     const b = userMini(f.addressee_id, me);
@@ -142,7 +146,7 @@ function buildFeed(viewerId, opts) {
       icon: relEmoji(type),
       actor: a,
       target: b,
-      text: sentText(type, a.displayName, b.displayName),
+      text: sentText(type, a.displayName, b.displayName, f.requester_gender),
     });
   });
 
