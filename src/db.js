@@ -417,6 +417,15 @@ for (const t of ['quizzes', 'polls', 'blogs']) {
   }
 }
 
+// Relationship kind on a friendship request (friend / girlfriend / crush / …).
+// Added idempotently for databases created before the relationship-request feature.
+{
+  const cols = db.prepare('PRAGMA table_info(friendships)').all().map((c) => c.name);
+  if (!cols.includes('rel_type')) {
+    db.exec("ALTER TABLE friendships ADD COLUMN rel_type TEXT NOT NULL DEFAULT 'friend'");
+  }
+}
+
 // Seed the single admin row (email from config). Never overwrites an existing
 // password; updates the target email if it changed in config.
 (function seedAdmin() {

@@ -8,6 +8,7 @@ const { friendState, ratingSummary } = require('../profileData');
 const { areBlocked } = require('../relations');
 const { GIFTS } = require('../gifts');
 const { listActivities } = require('../activities');
+const { isValidRelType } = require('../relationships');
 
 const router = express.Router();
 
@@ -121,24 +122,28 @@ function existingFriendship(a, b) {
     .get(a, b, b, a);
 }
 
-// POST /api/social/friend/:username — send a friend request, or accept a
-// pending request that this user already received from the target.
+// POST /api/social/friend/:username — send a relationship request (friend,
+// crush, girlfriend, …), or accept a pending request already received from the
+// target. Body: { type } (defaults to 'friend'; invalid values fall back too).
 router.post('/friend/:username', requireAuth, (req, res) => {
   const target = resolveTarget(req, res);
   if (!target) return;
   if (target.id === req.user.id) {
-    return res.status(400).json({ error: 'You cannot friend yourself.' });
+    return res.status(400).json({ error: 'You cannot send a request to yourself.' });
   }
   if (areBlocked(req.user.id, target.id)) {
     return res.status(403).json({ error: 'You cannot send a request while a block is in place.' });
   }
 
+  let type = (req.body && req.body.type) || 'friend';
+  if (!isValidRelType(type)) type = 'friend';
+
   const row = existingFriendship(req.user.id, target.id);
   if (row) {
     if (row.status === 'accepted') {
-      return res.status(409).json({ error: 'You are already friends.' });
+      return res.status(409).json({ error: 'You are already connected.' });
     }
-    // Pending. If the target requested us, accept it. Otherwise it's ours.
+    // Pending. If the target requested us, accept it (keep their chosen type).
     if (row.addressee_id === req.user.id) {
       db.prepare('UPDATE friendships SET status = ? WHERE id = ?').run('accepted', row.id);
       return res.json({ state: 'friends' });
@@ -147,9 +152,9 @@ router.post('/friend/:username', requireAuth, (req, res) => {
   }
 
   db.prepare(
-    'INSERT INTO friendships (requester_id, addressee_id, status, created_at) VALUES (?, ?, ?, ?)'
-  ).run(req.user.id, target.id, 'pending', Date.now());
-  res.status(201).json({ state: 'outgoing' });
+    'INSERT INTO friendships (requester_id, addressee_id, status, rel_type, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(req.user.id, target.id, 'pending', type, Date.now());
+  res.status(201).json({ state: 'outgoing', type });
 });
 
 // POST /api/social/friend/:username/accept — accept an incoming request
@@ -190,11 +195,12 @@ router.get('/friends', requireAuth, (req, res) => {
     username: r.username,
     displayName: r.display_name || r.username,
     avatar: r.avatar ? `/uploads/${r.avatar}` : null,
+    relType: r.rel_type || 'friend',
   });
 
   const accepted = db
     .prepare(
-      `SELECT u.id, u.username, p.display_name, p.avatar
+      `SELECT u.id, u.username, p.display_name, p.avatar, f.rel_type
        FROM friendships f
        JOIN users u ON u.id = CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END
        JOIN profiles p ON p.user_id = u.id
@@ -205,7 +211,7 @@ router.get('/friends', requireAuth, (req, res) => {
 
   const incoming = db
     .prepare(
-      `SELECT u.id, u.username, p.display_name, p.avatar
+      `SELECT u.id, u.username, p.display_name, p.avatar, f.rel_type
        FROM friendships f
        JOIN users u ON u.id = f.requester_id
        JOIN profiles p ON p.user_id = u.id
@@ -216,7 +222,7 @@ router.get('/friends', requireAuth, (req, res) => {
 
   const outgoing = db
     .prepare(
-      `SELECT u.id, u.username, p.display_name, p.avatar
+      `SELECT u.id, u.username, p.display_name, p.avatar, f.rel_type
        FROM friendships f
        JOIN users u ON u.id = f.addressee_id
        JOIN profiles p ON p.user_id = u.id

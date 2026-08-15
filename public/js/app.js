@@ -72,6 +72,20 @@
       'Gaming', 'Cooking', 'Fitness', 'Art', 'Technology', 'Fashion', 'Nature', 'Dancing'],
   };
   const MAX_GALLERY = 25;
+
+  // Relationship-request kinds (mirror src/relationships.js). Order matches spec.
+  const REL_TYPES = {
+    friend:     { label: 'Friends',    emoji: '🤝', requestLabel: 'Send Friend Request' },
+    girlfriend: { label: 'Girlfriend', emoji: '💖', requestLabel: 'Be My Girlfriend' },
+    boyfriend:  { label: 'Boyfriend',  emoji: '💙', requestLabel: 'Be My Boyfriend' },
+    wife:       { label: 'Wife',       emoji: '💍', requestLabel: 'Be My Wife' },
+    husband:    { label: 'Husband',    emoji: '💍', requestLabel: 'Be My Husband' },
+    crush:      { label: 'Crush',      emoji: '💘', requestLabel: 'Crush' },
+    colleague:  { label: 'Colleagues', emoji: '💼', requestLabel: 'Colleagues' },
+  };
+  const REL_ORDER = ['friend', 'girlfriend', 'boyfriend', 'wife', 'husband', 'crush', 'colleague'];
+  function relLabel(type) { const t = REL_TYPES[type] || REL_TYPES.friend; return `${t.emoji} ${t.label}`; }
+
   const COUNTRIES = ['Afghanistan', 'Albania', 'Algeria', 'Argentina', 'Australia', 'Austria',
     'Bangladesh', 'Belgium', 'Brazil', 'Bulgaria', 'Canada', 'Chile', 'China', 'Colombia',
     'Croatia', 'Czechia', 'Denmark', 'Egypt', 'Finland', 'France', 'Germany', 'Ghana', 'Greece',
@@ -1889,10 +1903,36 @@
     }
   }
 
-  // Render the contextual friend action button into `slot` based on state.
+  // A "Relationship request" dropdown. Picking one of the 7 options sends that
+  // typed request for `username`, then calls `refresh`.
+  function relationshipRequestEl(username, refresh) {
+    const u = encodeURIComponent(username);
+    const sel = el(`
+      <select class="rel-request small" title="Send a relationship request">
+        <option value="">＋ Relationship request…</option>
+        ${REL_ORDER.map((k) => `<option value="${k}">${esc(REL_TYPES[k].requestLabel)}</option>`).join('')}
+      </select>
+    `);
+    sel.addEventListener('click', (e) => e.stopPropagation());
+    sel.addEventListener('change', async (e) => {
+      e.stopPropagation();
+      const type = sel.value;
+      if (!type) return;
+      sel.disabled = true;
+      try {
+        await api.post('/api/social/friend/' + u, { type });
+        refreshRequestBadge();
+        refresh();
+      } catch (err) { alert(err.message); sel.value = ''; sel.disabled = false; }
+    });
+    return sel;
+  }
+
+  // Render the contextual relationship action(s) into `slot` based on state.
   function renderFriendButton(slot, profile, refresh) {
     slot.innerHTML = '';
     const u = encodeURIComponent(profile.username);
+    const rel = profile.friends.relType || 'friend';
     const act = async (fn) => { try { await fn(); refreshRequestBadge(); refresh(); } catch (e) { alert(e.message); } };
     const btn = (label, cls, handler) => {
       const b = el(`<button class="${cls} small">${esc(label)}</button>`);
@@ -1901,19 +1941,20 @@
     };
     switch (profile.friends.state) {
       case 'friends':
-        slot.appendChild(el('<span class="pill">✓ Friends</span>'));
-        slot.appendChild(btn('Unfriend', 'ghost', () => api.del('/api/social/friend/' + u)));
+        slot.appendChild(el(`<span class="pill">${esc(relLabel(rel))}</span>`));
+        slot.appendChild(btn('Remove', 'ghost', () => api.del('/api/social/friend/' + u)));
         break;
       case 'outgoing':
-        slot.appendChild(el('<span class="pill">Request sent</span>'));
+        slot.appendChild(el(`<span class="pill">Sent · ${esc(relLabel(rel))}</span>`));
         slot.appendChild(btn('Cancel', 'ghost', () => api.del('/api/social/friend/' + u)));
         break;
       case 'incoming':
-        slot.appendChild(btn('Accept request', 'primary', () => api.post('/api/social/friend/' + u + '/accept')));
+        slot.appendChild(el(`<span class="pill">Wants · ${esc(relLabel(rel))}</span>`));
+        slot.appendChild(btn('Accept', 'primary', () => api.post('/api/social/friend/' + u + '/accept')));
         slot.appendChild(btn('Decline', 'ghost', () => api.del('/api/social/friend/' + u)));
         break;
       default:
-        slot.appendChild(btn('Add friend', 'ghost', () => api.post('/api/social/friend/' + u)));
+        slot.appendChild(relationshipRequestEl(profile.username, refresh));
     }
   }
 
@@ -1954,10 +1995,10 @@
     };
     switch (fstate) {
       case 'self': return null;
-      case 'friends': return el('<span class="pill friend-pill">✓ Friends</span>');
+      case 'friends': return el('<span class="pill friend-pill">✓ Connected</span>');
       case 'outgoing': return btn('Cancel request', 'ghost', () => api.del('/api/social/friend/' + u));
       case 'incoming': return btn('Accept request', 'primary', () => api.post('/api/social/friend/' + u + '/accept'));
-      default: return btn('＋ Add friend', 'primary', () => api.post('/api/social/friend/' + u));
+      default: return relationshipRequestEl(username, refresh);
     }
   }
 
@@ -1973,7 +2014,7 @@
   /* ---------- Friend requests ---------- */
   async function renderRequests() {
     const main = openMainView();
-    main.appendChild(sectionShell('Friend Requests', 'People who want to connect with you. View their profile, then accept or decline.'));
+    main.appendChild(sectionShell('Relationship Requests', 'People who want to connect with you — friend, crush, and more. View their profile, then accept or decline.'));
     const body = main.querySelector('#sectionBody');
     let data;
     try { data = await api.get('/api/social/friends'); }
@@ -1997,7 +2038,7 @@
             <img class="avatar sm" src="${avatarUrl(u.avatar)}" />
             <div class="req-id">
               <div class="name">${esc(u.displayName || u.username)}</div>
-              <div class="handle">@${esc(u.username)}</div>
+              <div class="handle">@${esc(u.username)} · wants ${esc(relLabel(u.relType))}</div>
             </div>
             <div class="req-actions">
               <button class="ghost small req-view">View profile</button>
@@ -2039,7 +2080,7 @@
             </div>
             <div class="req-actions">
               <button class="ghost small req-view">View profile</button>
-              <span class="pill">Pending…</span>
+              <span class="pill">${esc(relLabel(u.relType))} · pending</span>
               <button class="ghost small req-cancel">Cancel</button>
             </div>
           </div>

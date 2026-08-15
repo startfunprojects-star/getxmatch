@@ -460,6 +460,13 @@ table.users tbody tr:hover { background: var(--bg-3); }
 
 .friend-pill { background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; color: var(--ok); font-weight: 600; }
 
+/* "Relationship request" dropdown (replaces the old Add-friend button). */
+.rel-request { width: auto; max-width: 220px; padding: 6px 10px; font-size: 13px; font-weight: 600;
+  color: #fff; border: none; border-radius: 10px; cursor: pointer;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+.rel-request:hover { filter: brightness(1.08); }
+.rel-request option { color: var(--text); background: var(--bg-2); font-weight: 500; }
+
 /* ---------- Friend requests ---------- */
 .req-badge {
   display: inline-grid; place-items: center; min-width: 18px; height: 18px;
