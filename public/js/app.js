@@ -218,12 +218,16 @@
 
   // Left column of the sign-in page: a public, text-only activity feed (curated
   // activity + announcements). Never shows uploaded images/GIFs or real members.
+  // It streams new rows live via the shared fake-activity ticker (text only, so
+  // no thumbnails) — the login page has no socket, so real/image events never
+  // reach it.
   async function renderAuthActivity(container) {
     if (!container) return;
     container.innerHTML = '<div class="hint" style="padding:16px">Loading activity…</div>';
-    let events = [];
-    try { events = (await api.get('/api/events/public')).events || []; } catch (_e) { /* ignore */ }
-    events = events.filter((e) => !e.image); // defensive: no image posts here
+    let data = { events: [], pool: null };
+    try { data = await api.get('/api/events/public'); } catch (_e) { /* ignore */ }
+    if (data.pool) state.fakePool = data.pool; // seed the shared ticker's pool
+    const events = (data.events || []).filter((e) => !e.image); // no image posts here
     if (!container.isConnected) return;
     if (!events.length) {
       container.innerHTML = '<div class="hint" style="padding:16px">Join to see what members are up to.</div>';
@@ -233,6 +237,7 @@
     events.forEach((ev) => feed.appendChild(feedItemEl(ev, false)));
     container.innerHTML = '';
     container.appendChild(feed);
+    registerActivityFeed(feed); // live: the ticker inserts new text rows over time
   }
 
   /* Step 2 of signup: enter the 6-digit code emailed to the user. */

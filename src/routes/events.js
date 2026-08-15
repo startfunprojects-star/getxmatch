@@ -133,7 +133,12 @@ router.get('/public', (req, res) => {
   fakeActivityEvents().forEach((f) => events.push(f)); // recombined, no images
 
   events.sort((a, b) => b.at - a.at);
-  res.json({ events: events.slice(0, 60) });
+
+  // Include the fake-activity pool so the sign-in page can stream new rows
+  // live (the same ticker the main app uses), without a second authed request.
+  const enabled = isFakeActivityEnabled();
+  const pool = enabled ? fakePools() : { females: [], males: [], activities: [] };
+  res.json({ events: events.slice(0, 60), pool: { enabled, ...pool } });
 });
 
 // POST /api/events/activity-image — share an image/GIF onto the Recent Activity
