@@ -572,6 +572,17 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .admin-item h3 { margin: 0 0 4px; font-size: 16px; }
 .admin-item-actions { display: flex; gap: 8px; margin-top: 8px; }
 
+/* Editor + "existing items" sidebar layout (quizzes, polls, blogs, roleplays). */
+.admin-split { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+.admin-split .admin-main { min-width: 0; }
+.admin-split .admin-side { position: sticky; top: 16px; }
+.admin-split .admin-side .admin-card { max-height: calc(100vh - 48px); overflow-y: auto; }
+@media (max-width: 860px) {
+  .admin-split { grid-template-columns: 1fr; }
+  .admin-split .admin-side { position: static; }
+  .admin-split .admin-side .admin-card { max-height: none; }
+}
+
 /* Pagination controls (10-per-page lists across the admin dashboard). */
 .pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 14px; }
 .pager-info { color: var(--muted); font-size: 13px; }

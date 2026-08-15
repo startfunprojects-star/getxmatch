@@ -622,7 +622,11 @@
   ================================================================== */
   async function renderQuizzesTab() {
     const host = tabHost();
-    host.innerHTML = '<div class="admin-card" id="quizEditor"></div><div class="admin-card"><h2>Existing quizzes</h2><div id="quizList" class="count">Loading…</div></div>';
+    host.innerHTML = `
+      <div class="admin-split">
+        <div class="admin-main"><div class="admin-card" id="quizEditor"></div></div>
+        <aside class="admin-side"><div class="admin-card"><h2>Existing quizzes</h2><div id="quizList" class="count">Loading…</div></div></aside>
+      </div>`;
     renderQuizEditor(null);
     await loadQuizList();
   }
@@ -755,7 +759,11 @@
   ================================================================== */
   async function renderPollsTab() {
     const host = tabHost();
-    host.innerHTML = '<div class="admin-card" id="pollEditor"></div><div class="admin-card"><h2>Existing polls</h2><div id="pollList" class="count">Loading…</div></div>';
+    host.innerHTML = `
+      <div class="admin-split">
+        <div class="admin-main"><div class="admin-card" id="pollEditor"></div></div>
+        <aside class="admin-side"><div class="admin-card"><h2>Existing polls</h2><div id="pollList" class="count">Loading…</div></div></aside>
+      </div>`;
     renderPollEditor(null);
     await loadPollList();
   }
@@ -847,7 +855,11 @@
   ================================================================== */
   async function renderBlogsTab() {
     const host = tabHost();
-    host.innerHTML = '<div class="admin-card" id="blogEditor"></div><div class="admin-card"><h2>Existing posts</h2><div id="blogList" class="count">Loading…</div></div>';
+    host.innerHTML = `
+      <div class="admin-split">
+        <div class="admin-main"><div class="admin-card" id="blogEditor"></div></div>
+        <aside class="admin-side"><div class="admin-card"><h2>Existing posts</h2><div id="blogList" class="count">Loading…</div></div></aside>
+      </div>`;
     renderBlogEditor(null);
     await loadBlogList();
   }
@@ -933,7 +945,11 @@
   ================================================================== */
   async function renderRoleplaysTab() {
     const host = tabHost();
-    host.innerHTML = '<div class="admin-card" id="rpEditor"></div><div class="admin-card"><h2>Existing roleplays</h2><div id="rpList" class="count">Loading…</div></div>';
+    host.innerHTML = `
+      <div class="admin-split">
+        <div class="admin-main"><div class="admin-card" id="rpEditor"></div></div>
+        <aside class="admin-side"><div class="admin-card"><h2>Existing roleplays</h2><div id="rpList" class="count">Loading…</div></div></aside>
+      </div>`;
     renderRoleplayEditor(null);
     await loadRoleplayList();
   }
