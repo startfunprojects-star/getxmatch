@@ -9,9 +9,12 @@
 // Each activity row carries the viewer's friendship state with the actor so the
 // UI can offer an "Add friend" action inline.
 
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 
 const db = require('../db');
+const config = require('../config');
 const { requireAuth } = require('../auth');
 const { friendState } = require('../profileData');
 const { isFakeActivityEnabled } = require('../settings');
@@ -21,6 +24,7 @@ const { broadcastActivity } = require('../socket');
 const router = express.Router();
 
 const PER_SOURCE = 40;
+const ACTIVITY_IMG_MAX_BYTES = 5 * 1024 * 1024; // 5 MB cap for shared activity images
 
 function userMini(id, viewerId) {
   const r = db
@@ -110,6 +114,11 @@ router.get('/fake-pool', requireAuth, (req, res) => {
 // feed. Saved to disk and shown to everyone as a thumbnail (live + on reload).
 router.post('/activity-image', requireAuth, imageUpload.single('image'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded.' });
+  // Hard 5 MB cap for activity images, regardless of the global upload limit.
+  if (req.file.size > ACTIVITY_IMG_MAX_BYTES) {
+    fs.promises.unlink(path.join(config.uploadsDir, req.file.filename)).catch(() => {});
+    return res.status(413).json({ error: 'Image must be 5 MB or smaller.' });
+  }
   const now = Date.now();
   const info = db
     .prepare('INSERT INTO activity_posts (user_id, image, created_at) VALUES (?, ?, ?)')

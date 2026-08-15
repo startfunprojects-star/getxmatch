@@ -659,9 +659,32 @@
     renderActivityInto(document.getElementById('homeFeed'), { compact: false });
   }
 
-  // Wire the "Share an image / GIF" control on the activity home. On success the
-  // server broadcasts an activity:new event that inserts the thumbnail live, so
-  // we don't insert it here (avoids a duplicate row).
+  // Max size for an image/GIF shared onto Recent Activity (matches the server).
+  const ACTIVITY_IMG_MAX_BYTES = 5 * 1024 * 1024;
+
+  // Validate + upload an image/GIF to the Recent Activity feed. `onStatus(text,
+  // isError)` reports progress. On success the server broadcasts an activity:new
+  // event that inserts the thumbnail live, so callers don't insert it themselves.
+  // Returns true on success. Shared by the activity home and the chat status bar.
+  async function shareActivityImage(file, onStatus) {
+    onStatus = onStatus || function () {};
+    if (!file) return false;
+    if (!/^image\//.test(file.type)) { onStatus('Please choose an image or GIF.', true); return false; }
+    if (file.size > ACTIVITY_IMG_MAX_BYTES) { onStatus('Image must be 5 MB or smaller.', true); return false; }
+    onStatus('Uploading…', false);
+    const fd = new FormData();
+    fd.append('image', file);
+    try {
+      await api.postForm('/api/events/activity-image', fd);
+      onStatus('Shared!', false);
+      return true;
+    } catch (e) {
+      onStatus(e.message, true);
+      return false;
+    }
+  }
+
+  // Wire the "Share an image / GIF" control on the activity home.
   function wireActivityShare() {
     const btn = document.getElementById('activityShareBtn');
     const input = document.getElementById('activityImgInput');
@@ -671,22 +694,14 @@
     input.addEventListener('change', async () => {
       const file = input.files[0];
       if (!file) return;
-      msg.className = 'hint';
-      msg.textContent = 'Uploading…';
       btn.disabled = true;
-      const fd = new FormData();
-      fd.append('image', file);
-      try {
-        await api.postForm('/api/events/activity-image', fd);
-        msg.textContent = 'Shared!';
-        setTimeout(() => { if (msg) msg.textContent = ''; }, 2500);
-      } catch (e) {
-        msg.className = 'hint error';
-        msg.textContent = e.message;
-      } finally {
-        input.value = '';
-        btn.disabled = false;
-      }
+      await shareActivityImage(file, (text, isError) => {
+        msg.className = isError ? 'hint error' : 'hint';
+        msg.textContent = text;
+        if (!isError && text === 'Shared!') setTimeout(() => { if (msg) msg.textContent = ''; }, 2500);
+      });
+      input.value = '';
+      btn.disabled = false;
     });
   }
 
@@ -743,6 +758,24 @@
       activities.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join('') +
       `<option value="${CUSTOM_ACT}">✍️ Custom…</option>`;
     bar.classList.remove('hidden');
+
+    // Share an image / GIF (to Recent Activity) straight from the chat status bar.
+    const imgBtn = view.querySelector('#activityImgBtn');
+    const imgFile = view.querySelector('#activityImgFile');
+    if (imgBtn && imgFile) {
+      imgBtn.addEventListener('click', () => imgFile.click());
+      imgFile.addEventListener('change', async () => {
+        const file = imgFile.files[0];
+        if (!file) return;
+        imgBtn.disabled = true;
+        const ok = await shareActivityImage(file, (text, isError) => {
+          if (isError || text === 'Shared!') notify(isError ? text : 'Shared to Recent Activity.');
+        });
+        imgFile.value = '';
+        imgBtn.disabled = false;
+        void ok;
+      });
+    }
 
     state.chatActivity = { mine: null, theirs: null };
     try {
@@ -821,6 +854,8 @@
         </div>
         <div class="chat-activity-bar hidden" id="activityBar">
           <div class="activity-status" id="activityStatus"></div>
+          <button class="icon-btn small" id="activityImgBtn" type="button" title="Share an image / GIF to Recent Activity (max 5 MB)">🖼️</button>
+          <input type="file" id="activityImgFile" accept="image/*" class="hidden" />
           <label class="activity-pick">
             <span>You're…</span>
             <select id="activitySelect"><option value="">— nothing —</option></select>
