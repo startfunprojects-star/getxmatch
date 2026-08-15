@@ -19,6 +19,7 @@ const adminRoutes = require('./src/routes/admin');
 const contentRoutes = require('./src/routes/content');
 const leaderboardRoutes = require('./src/routes/leaderboard');
 const eventsRoutes = require('./src/routes/events');
+const groupRoutes = require('./src/routes/groups');
 const roleplayRoutes = require('./src/routes/roleplay');
 const matchRoutes = require('./src/routes/match');
 
@@ -62,6 +63,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/content', contentRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/events', eventsRoutes);
+app.use('/api/groups', groupRoutes);
 app.use('/api/roleplay', roleplayRoutes);
 app.use('/api/match', matchRoutes); // public: shared compatibility-quiz links
 

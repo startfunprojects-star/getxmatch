@@ -416,6 +416,34 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_activity_stream_recent ON activity_stream (created_at);
+
+  -- Group chats: up to 4 members, joined by invitation/acceptance.
+  CREATE TABLE IF NOT EXISTS chat_groups (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT,
+    created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL
+  );
+  -- One row per (group, user). status: 'invited' (pending) | 'joined'.
+  CREATE TABLE IF NOT EXISTS chat_group_members (
+    group_id   INTEGER NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status     TEXT NOT NULL DEFAULT 'invited',
+    invited_by INTEGER,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (group_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_group_members_user ON chat_group_members (user_id, status);
+
+  -- Group chat messages (text only). Delivered live and kept as history.
+  CREATE TABLE IF NOT EXISTS group_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id   INTEGER NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
+    sender_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_group_messages ON group_messages (group_id, created_at);
 `);
 
 // On-page SEO metadata for content tables. Stored as a single JSON blob so the

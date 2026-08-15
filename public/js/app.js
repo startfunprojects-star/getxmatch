@@ -7,8 +7,9 @@
     me: null,
     socket: null,
     tab: 'people',       // 'people' | 'chats'
-    peer: null,          // active chat peer
-    openChats: [],       // ordered list of open chat tabs (peer objects)
+    peer: null,          // active 1-on-1 chat peer
+    group: null,         // active group chat ({ gid, name, members, … }) or null
+    openChats: [],       // ordered list of open chat tabs (peers + group entries)
     unread: {},          // peerId -> true when a background tab has new messages
     activities: null,    // cached list of chat activity verbs (column 2)
     chatActivity: null,  // { mine, theirs } for the open conversation
@@ -541,8 +542,11 @@
     const badge = document.getElementById('reqBadge');
     if (!badge) return;
     try {
-      const { incoming } = await api.get('/api/social/friends');
-      const n = (incoming || []).length;
+      const [{ incoming }, groups] = await Promise.all([
+        api.get('/api/social/friends'),
+        api.get('/api/groups').catch(() => ({ invites: [] })),
+      ]);
+      const n = (incoming || []).length + ((groups && groups.invites) || []).length;
       badge.textContent = n;
       badge.classList.toggle('hidden', n === 0);
     } catch (_e) { /* ignore */ }
@@ -561,6 +565,7 @@
     }
 
     let items = [];
+    let groups = [];
     if (state.tab === 'people') {
       try {
         const { users } = await api.get('/api/users?q=' + encodeURIComponent(q));
@@ -571,13 +576,31 @@
       items = Object.values(state.chatPeers).filter((p) =>
         !q || (p.displayName || '').toLowerCase().includes(q.toLowerCase()) ||
         p.username.toLowerCase().includes(q.toLowerCase()));
+      try { groups = (await api.get('/api/groups')).groups || []; } catch (_e) { groups = []; }
+      if (q) groups = groups.filter((g) => g.name.toLowerCase().includes(q.toLowerCase()));
     }
 
     listEl.innerHTML = '';
-    if (!items.length) {
+    if (!items.length && !groups.length) {
       listEl.appendChild(el(`<div style="padding:20px;color:var(--muted)">${state.tab === 'people' ? 'No people found yet.' : 'No conversations yet.'}</div>`));
       return;
     }
+    // Group chats first (Chats tab only).
+    groups.forEach((g) => {
+      const joined = (g.members || []).filter((m) => m.status === 'joined');
+      const row = el(`
+        <div class="list-item" data-id="g${g.id}">
+          <div class="list-gicon">👥</div>
+          <div style="min-width:0">
+            <div class="name">${esc(g.name)}</div>
+            <div class="handle">${joined.length}/${g.max} members</div>
+          </div>
+        </div>
+      `);
+      if (state.group && state.group.gid === g.id) row.classList.add('active');
+      row.addEventListener('click', () => openGroup(g.id));
+      listEl.appendChild(row);
+    });
     items.forEach((u) => {
       const row = el(`
         <div class="list-item" data-id="${u.id}">
@@ -644,17 +667,21 @@
     bar.appendChild(homeTab);
 
     state.openChats.forEach((p) => {
-      const active = state.peer && state.peer.id === p.id;
+      const active = tabIsActive(p);
+      const label = p.isGroup ? p.name : (p.displayName || p.username);
+      const icon = p.isGroup
+        ? '<span class="chat-tab-gicon">👥</span>'
+        : `<img class="avatar xs" src="${avatarUrl(p.avatar)}" />`;
       const tab = el(`
-        <div class="chat-tab${active ? ' active' : ''}${state.unread[p.id] ? ' unread' : ''}" data-id="${p.id}">
-          <img class="avatar xs" src="${avatarUrl(p.avatar)}" />
-          <span class="chat-tab-name">${esc(p.displayName || p.username)}</span>
+        <div class="chat-tab${active ? ' active' : ''}${state.unread[p.id] ? ' unread' : ''}" data-id="${esc(String(p.id))}">
+          ${icon}
+          <span class="chat-tab-name">${esc(label)}</span>
           <button class="chat-tab-close" title="Close">✕</button>
         </div>
       `);
       tab.addEventListener('click', (e) => {
         if (e.target.classList.contains('chat-tab-close')) return;
-        if (!active) openChat(p);
+        if (!active) openTab(p);
       });
       tab.querySelector('.chat-tab-close').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -664,15 +691,196 @@
     });
   }
 
+  // Is this open-chat entry the one currently shown?
+  function tabIsActive(p) {
+    if (p.isGroup) return !!(state.group && ('g' + state.group.gid) === p.id);
+    return !!(state.peer && state.peer.id === p.id);
+  }
+
+  // Open an entry from the tab bar (a peer or a group).
+  function openTab(p) {
+    if (p.isGroup) return openGroup(p.gid);
+    return openChat(p);
+  }
+
+  /* ======================================================================
+     GROUP CHATS (2–4 members, invite + accept)
+  ====================================================================== */
+
+  // Minimal centered modal. `bodyHtml` fills the card; returns { card, close }.
+  function openModal(title, bodyHtml) {
+    const overlay = el(`
+      <div class="modal-overlay">
+        <div class="modal-card">
+          <div class="modal-head"><h3>${esc(title)}</h3><button class="icon-btn small modal-x" title="Close">✕</button></div>
+          <div class="modal-body">${bodyHtml}</div>
+        </div>
+      </div>`);
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    overlay.querySelector('.modal-x').addEventListener('click', close);
+    document.body.appendChild(overlay);
+    return { card: overlay.querySelector('.modal-card'), close };
+  }
+
+  // Register a group as an open tab and remember its current shape.
+  function registerGroupTab(group) {
+    const id = 'g' + group.gid;
+    const entry = { isGroup: true, id, gid: group.gid, name: group.name };
+    const i = state.openChats.findIndex((p) => p.id === id);
+    if (i === -1) state.openChats.push(entry); else state.openChats[i] = entry;
+  }
+
+  // "👥 Group" from a 1-on-1 chat: pick connections to start a group with. The
+  // current peer is included by default. Up to 3 others (4 total incl. me).
+  async function openGroupCreator(peer) {
+    let friends = [];
+    try { friends = (await api.get('/api/social/friends')).friends || []; } catch (_e) {}
+    const rows = friends.map((f) => {
+      const pre = peer && f.id === peer.id;
+      return `<label class="pick-row"><input type="checkbox" value="${esc(f.username)}"${pre ? ' checked' : ''}/> <img class="avatar sm" src="${avatarUrl(f.avatar)}"/> <span>${esc(f.displayName || f.username)}</span></label>`;
+    }).join('');
+    const { card, close } = openModal('New group chat', `
+      <p class="hint">Pick up to 3 people to add (4 in the group, including you). They'll get an invite and join once they accept.</p>
+      <div class="pick-list">${rows || '<div class="hint">You have no connections yet. Add friends first.</div>'}</div>
+      <div class="msg" id="gcMsg"></div>
+      <div class="row-actions"><button class="primary" id="gcCreate">Create group</button></div>
+    `);
+    const msg = card.querySelector('#gcMsg');
+    card.querySelector('#gcCreate').addEventListener('click', async () => {
+      const invite = Array.from(card.querySelectorAll('.pick-list input:checked')).map((c) => c.value);
+      msg.className = 'msg';
+      if (!invite.length) { msg.className = 'msg error'; msg.textContent = 'Pick at least one person.'; return; }
+      if (invite.length > 3) { msg.className = 'msg error'; msg.textContent = 'A group can have at most 4 people (pick up to 3).'; return; }
+      try {
+        const { group } = await api.post('/api/groups', { invite });
+        close();
+        openGroup(group.id);
+      } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
+    });
+  }
+
+  // Add more people to an existing group (up to the cap).
+  async function openGroupAdder(group) {
+    let friends = [];
+    try { friends = (await api.get('/api/social/friends')).friends || []; } catch (_e) {}
+    const inGroup = new Set((group.members || []).map((m) => m.id));
+    const candidates = friends.filter((f) => !inGroup.has(f.id));
+    const rows = candidates.map((f) =>
+      `<label class="pick-row"><input type="radio" name="addpick" value="${esc(f.username)}"/> <img class="avatar sm" src="${avatarUrl(f.avatar)}"/> <span>${esc(f.displayName || f.username)}</span></label>`
+    ).join('');
+    const full = (group.members || []).length >= (group.max || 4);
+    const { card, close } = openModal('Add to group', `
+      ${full ? '<p class="msg error" style="display:block">This group is full (max 4).</p>' : ''}
+      <div class="pick-list">${rows || '<div class="hint">No more connections to add.</div>'}</div>
+      <div class="msg" id="gaMsg"></div>
+      <div class="row-actions"><button class="primary" id="gaAdd"${full ? ' disabled' : ''}>Send invite</button></div>
+    `);
+    const msg = card.querySelector('#gaMsg');
+    card.querySelector('#gaAdd').addEventListener('click', async () => {
+      const picked = card.querySelector('.pick-list input:checked');
+      msg.className = 'msg';
+      if (!picked) { msg.className = 'msg error'; msg.textContent = 'Pick someone to add.'; return; }
+      try {
+        await api.post('/api/groups/' + group.gid + '/invite', { username: picked.value });
+        close();
+        openGroup(group.gid); // refresh the header/members
+      } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
+    });
+  }
+
+  // Open (and render) a group chat.
+  async function openGroup(gid) {
+    let group, messages = [];
+    try { group = (await api.get('/api/groups/' + gid)).group; }
+    catch (e) { return notify(e.message); }
+    try { messages = (await api.get('/api/groups/' + gid + '/messages')).messages || []; } catch (_e) {}
+
+    state.peer = null;
+    state.group = { gid, name: group.name, members: group.members, max: group.max };
+    closeReactionPalette();
+    registerGroupTab({ gid, name: group.name });
+    document.querySelectorAll('.list-item').forEach((r) => r.classList.remove('active'));
+    document.getElementById('shell').classList.add('viewing-main');
+
+    const joined = group.members.filter((m) => m.status === 'joined');
+    const pending = group.members.filter((m) => m.status === 'invited');
+    const main = document.getElementById('main');
+    main.innerHTML = '';
+    const view = el(`
+      <div class="chat-wrap">
+        <div class="chat-tabs" id="chatTabs"></div>
+        <div class="chat-head">
+          <button class="icon-btn small" id="backToList" title="Back">←</button>
+          <div class="group-avatars">${joined.map((m) => `<img class="avatar sm" src="${avatarUrl(m.avatar)}" title="${esc(m.displayName)}"/>`).join('')}</div>
+          <div style="min-width:0;flex:1">
+            <div class="name">${esc(group.name)}</div>
+            <div class="status">${joined.length}/${group.max} member${joined.length === 1 ? '' : 's'}${pending.length ? ` · ${pending.length} invited` : ''}</div>
+          </div>
+          <button class="ghost small" id="groupAddBtn" title="Add someone">＋ Add</button>
+          <button class="ghost small" id="groupLeaveBtn" title="Leave this group">Leave</button>
+        </div>
+        <div class="chat-body" id="chatBody"></div>
+        <div class="composer">
+          <input type="text" id="msgInput" placeholder="Message the group…" autocomplete="off" />
+          <button class="primary" id="sendBtn">Send</button>
+        </div>
+      </div>
+    `);
+    main.appendChild(view);
+    renderChatTabs();
+
+    view.querySelector('#backToList').addEventListener('click', () => {
+      document.getElementById('shell').classList.remove('viewing-main');
+      state.group = null;
+    });
+    view.querySelector('#groupAddBtn').addEventListener('click', () => openGroupAdder(state.group));
+    view.querySelector('#groupLeaveBtn').addEventListener('click', async () => {
+      if (!confirm('Leave this group chat?')) return;
+      try { await api.post('/api/groups/' + gid + '/leave', {}); } catch (e) { return notify(e.message); }
+      closeChatTab('g' + gid);
+    });
+
+    const input = view.querySelector('#msgInput');
+    const send = () => sendGroupMessage(input);
+    view.querySelector('#sendBtn').addEventListener('click', send);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+
+    messages.forEach(appendGroupMessage);
+    scrollBody();
+  }
+
+  function sendGroupMessage(input) {
+    const body = input.value.trim();
+    if (!body || !state.socket || !state.group) return;
+    const gid = state.group.gid;
+    input.value = '';
+    state.socket.emit('group:message', { groupId: gid, body }, (res) => {
+      if (res && res.error) { notify(res.error); input.value = body; }
+    });
+  }
+
+  // Render a group message bubble. Others' messages show the sender's name.
+  function appendGroupMessage(m) {
+    const b = chatBody();
+    if (!b) return;
+    const bubble = el(`<div class="bubble ${m.mine ? 'me' : 'them'}"></div>`);
+    if (!m.mine) bubble.appendChild(el(`<div class="bubble-author">${esc(m.fromName)}</div>`));
+    appendRichText(bubble, m.body);
+    bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
+    b.appendChild(bubble);
+    scrollBody();
+  }
+
   function closeChatTab(id) {
     const idx = state.openChats.findIndex((p) => p.id === id);
     if (idx === -1) return;
-    const wasActive = state.peer && state.peer.id === id;
+    const wasActive = tabIsActive(state.openChats[idx]);
     state.openChats.splice(idx, 1);
     delete state.unread[id];
     if (!wasActive) { renderChatTabs(); return; }
     const next = state.openChats[idx] || state.openChats[idx - 1];
-    if (next) return openChat(next);
+    if (next) return openTab(next);
     renderMainHome(); // no chats left → back to the recent-activity home
   }
 
@@ -872,6 +1080,7 @@
 
   async function openChat(peer) {
     state.peer = peer;
+    state.group = null; // leaving any group view
     state.replyTo = null; // clear any half-composed reply from a previous chat
     closeReactionPalette();
     state.chatPeers[peer.id] = peer;
@@ -892,10 +1101,11 @@
         <div class="chat-head">
           <button class="icon-btn small" id="backToList" title="Back">←</button>
           <img class="avatar sm" id="peerAvatar" src="${avatarUrl(peer.avatar)}" style="cursor:pointer" />
-          <div style="min-width:0">
+          <div style="min-width:0;flex:1">
             <div class="name" id="peerName" style="cursor:pointer">${esc(peer.displayName || peer.username)}</div>
             <div class="status">@${esc(peer.username)}</div>
           </div>
+          <button class="ghost small" id="makeGroupBtn" title="Start a group chat with this person and others">👥 Group</button>
         </div>
         <div class="chat-activity-bar hidden" id="activityBar">
           <div class="activity-status" id="activityStatus"></div>
@@ -934,6 +1144,7 @@
     const openPeerProfile = () => showProfile(peer.username);
     view.querySelector('#peerAvatar').addEventListener('click', openPeerProfile);
     view.querySelector('#peerName').addEventListener('click', openPeerProfile);
+    view.querySelector('#makeGroupBtn').addEventListener('click', () => openGroupCreator(peer));
 
     setupActivityBar(view, peer);
 
@@ -1503,6 +1714,23 @@
         rememberPeer(meta.from);
         notifyIncomingFile(meta);
       }
+    });
+
+    // Group chat message for one of my groups.
+    s.on('group:message', (m) => {
+      if (state.group && state.group.gid === m.groupId) appendGroupMessage(m);
+      else if (!m.mine) {
+        const tabId = 'g' + m.groupId;
+        if (state.openChats.some((p) => p.id === tabId)) { state.unread[tabId] = true; renderChatTabs(); }
+        else notify(`${m.fromName} messaged a group`);
+      }
+    });
+
+    // A group I'm in changed (created / invited / joined / left).
+    s.on('group:changed', ({ groupId }) => {
+      if (state.group && state.group.gid === groupId) openGroup(groupId); // refresh header/members
+      if (state.tab === 'chats') renderList();
+      refreshRequestBadge();
     });
 
     s.on('chat:typing', (p) => {
@@ -2097,6 +2325,42 @@
       });
     }
     body.appendChild(outWrap);
+
+    // ---- Group chat invites ----
+    let invites = [];
+    try { invites = (await api.get('/api/groups')).invites || []; } catch (_e) {}
+    const gWrap = el(`<div class="card"><h3 class="card-title">👥 Group chat invites <span class="hint">(${invites.length})</span></h3><div class="req-list" id="reqGroups"></div></div>`);
+    const gBox = gWrap.querySelector('#reqGroups');
+    if (!invites.length) {
+      gBox.appendChild(el('<div class="hint">No group chat invites right now.</div>'));
+    } else {
+      invites.forEach((g) => {
+        const joined = (g.members || []).filter((m) => m.status === 'joined');
+        const row = el(`
+          <div class="req-row">
+            <div class="group-avatars">${joined.slice(0, 4).map((m) => `<img class="avatar sm" src="${avatarUrl(m.avatar)}"/>`).join('')}</div>
+            <div class="req-id">
+              <div class="name">${esc(g.name)}</div>
+              <div class="handle">${joined.length}/${g.max} members · invited by ${esc((joined.find((m) => m.id === g.createdBy) || {}).displayName || 'a member')}</div>
+            </div>
+            <div class="req-actions">
+              <button class="primary small g-accept">Accept &amp; join</button>
+              <button class="ghost small g-decline">Decline</button>
+            </div>
+          </div>
+        `);
+        row.querySelector('.g-accept').addEventListener('click', async () => {
+          try { await api.post('/api/groups/' + g.id + '/accept', {}); refreshRequestBadge(); openGroup(g.id); }
+          catch (e) { alert(e.message); }
+        });
+        row.querySelector('.g-decline').addEventListener('click', async () => {
+          try { await api.post('/api/groups/' + g.id + '/leave', {}); renderRequests(); }
+          catch (e) { alert(e.message); }
+        });
+        gBox.appendChild(row);
+      });
+    }
+    body.appendChild(gWrap);
   }
 
   /* ---------- Quizzes (compatibility matching) ---------- */

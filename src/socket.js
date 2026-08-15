@@ -110,6 +110,13 @@ function broadcastActivity(payload) {
   if (ioRef) ioRef.emit('activity:new', payload);
 }
 
+// Tell the given users that a group they're in changed (created, invited,
+// joined, left) so their UI can refetch. Used by the groups HTTP routes.
+function notifyGroup(userIds, groupId) {
+  if (!ioRef || !Array.isArray(userIds)) return;
+  userIds.forEach((uid) => ioRef.to(`user:${uid}`).emit('group:changed', { groupId }));
+}
+
 function initSocket(io) {
   ioRef = io;
   // Authenticate every socket from the httpOnly auth cookie.
@@ -325,6 +332,48 @@ function initSocket(io) {
       if (to) io.to(`user:${to}`).emit('chat:typing', { from: me.id });
     });
 
+    // Group chat message → stored, then delivered live to every joined member.
+    socket.on('group:message', (payload, ack) => {
+      try {
+        const groupId = parseInt(payload && payload.groupId, 10);
+        const body = (payload && typeof payload.body === 'string' ? payload.body : '').trim();
+        if (!groupId || !body) return ack && ack({ error: 'Invalid message.' });
+        if (body.length > 4000) return ack && ack({ error: 'Message too long.' });
+
+        const mine = db
+          .prepare("SELECT 1 FROM chat_group_members WHERE group_id = ? AND user_id = ? AND status = 'joined'")
+          .get(groupId, me.id);
+        if (!mine) return ack && ack({ error: 'You are not a member of this group.' });
+
+        const now = Date.now();
+        const info = db
+          .prepare('INSERT INTO group_messages (group_id, sender_id, body, created_at) VALUES (?, ?, ?, ?)')
+          .run(groupId, me.id, body, now);
+
+        const prof = db.prepare('SELECT display_name, avatar FROM profiles WHERE user_id = ?').get(me.id);
+        const base = {
+          id: info.lastInsertRowid,
+          groupId,
+          from: me.id,
+          fromName: (prof && prof.display_name) || me.username,
+          fromAvatar: prof && prof.avatar ? `/uploads/${prof.avatar}` : null,
+          body,
+          at: now,
+        };
+
+        const members = db
+          .prepare("SELECT user_id FROM chat_group_members WHERE group_id = ? AND status = 'joined'")
+          .all(groupId);
+        members.forEach((m) => {
+          io.to(`user:${m.user_id}`).emit('group:message', { ...base, mine: m.user_id === me.id });
+        });
+
+        ack && ack({ ok: true });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
     // "What are you doing" status for this conversation. An empty/blank activity
     // clears it. Persisted so it surfaces on the Recent Activity feed, and
     // pushed live to both users so the chat header stays in sync.
@@ -382,4 +431,4 @@ function initSocket(io) {
   });
 }
 
-module.exports = { initSocket, isOnline, broadcastActivity };
+module.exports = { initSocket, isOnline, broadcastActivity, notifyGroup };

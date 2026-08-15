@@ -717,6 +717,24 @@ a.share-link:hover { text-decoration: underline; }
 .chat-tab-close { border: none; background: none; color: inherit; cursor: pointer; font-size: 12px; padding: 0 2px; line-height: 1; border-radius: 4px; }
 .chat-tab-close:hover { background: rgba(255,255,255,.12); color: #fff; }
 
+/* ---------- Group chats ---------- */
+.chat-tab-gicon, .list-gicon { display: inline-grid; place-items: center; flex: none; }
+.chat-tab-gicon { width: 20px; height: 20px; font-size: 15px; }
+.list-gicon { width: 42px; height: 42px; border-radius: 12px; background: var(--bg-3); border: 1px solid var(--border); font-size: 20px; }
+.group-avatars { display: flex; align-items: center; flex: none; }
+.group-avatars img { margin-right: -10px; border: 2px solid var(--bg-2); }
+.group-avatars img:last-child { margin-right: 0; }
+.bubble-author { font-size: 12px; font-weight: 700; color: var(--accent-2); margin-bottom: 2px; }
+
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: grid; place-items: center; padding: 20px; z-index: 50; }
+.modal-card { width: 100%; max-width: 440px; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; max-height: 86vh; overflow-y: auto; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.modal-head h3 { margin: 0; font-size: 18px; }
+.pick-list { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; max-height: 46vh; overflow-y: auto; }
+.pick-row { display: flex; align-items: center; gap: 10px; padding: 8px 6px; border-radius: 10px; cursor: pointer; }
+.pick-row:hover { background: var(--bg-3); }
+.pick-row input { width: auto; margin: 0; }
+
 /* ===========================================================================
    Admin: Fake Activity editor
 =========================================================================== */
