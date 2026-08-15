@@ -341,6 +341,23 @@ function initSocket(io) {
         const evt = { from: me.id, to, activity: raw };
         io.to(`user:${to}`).emit('chat:activity', evt);
         io.to(`user:${me.id}`).emit('chat:activity', evt);
+
+        // Stream it live onto everyone's Recent Activity feed (same non-clickable
+        // "<A> <activity> <B>" line the /api/events feed builds on reload).
+        if (raw) {
+          const nameOf = (uid) => {
+            const r = db.prepare(
+              'SELECT p.display_name, u.username FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?'
+            ).get(uid);
+            return r ? (r.display_name || r.username) : 'Someone';
+          };
+          io.emit('activity:new', {
+            activity: raw,
+            at: now,
+            text: `${nameOf(me.id)} ${raw} ${nameOf(to)}`,
+          });
+        }
+
         ack && ack({ ok: true, activity: raw });
       } catch (e) {
         ack && ack({ error: 'Server error.' });

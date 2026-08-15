@@ -1313,6 +1313,12 @@
       }
     });
 
+    // A user (anywhere) set a chat activity — stream it onto open feeds live.
+    s.on('activity:new', (e) => {
+      if (!e || !e.text) return;
+      pushLiveActivity({ type: 'chat-activity', icon: fakeIcon(e.activity || ''), at: e.at || Date.now(), text: e.text });
+    });
+
     s.on('chat:reaction', (e) => {
       if (e && e.messageId != null) updateReaction(e.messageId, e.userId, e.emoji);
     });
@@ -2165,6 +2171,19 @@
     ensureFakeTicker();
   }
 
+  // Insert a freshly-happened event at the top of every mounted feed, marked
+  // "just now". Used by both the fake-activity ticker and live real events
+  // (e.g. a user picking a chat activity), which is broadcast over the socket.
+  function pushLiveActivity(ev) {
+    for (let i = activityFeeds.length - 1; i >= 0; i--) {
+      if (!document.body.contains(activityFeeds[i])) activityFeeds.splice(i, 1);
+    }
+    activityFeeds.forEach((feed) => {
+      feed.insertBefore(feedItemEl(ev, true), feed.firstChild);
+      while (feed.children.length > 60) feed.removeChild(feed.lastChild);
+    });
+  }
+
   function ensureFakeTicker() {
     if (fakeTicker) return;
     const schedule = () => { fakeTicker = setTimeout(tick, 2000 + Math.random() * 13000); }; // 2–15s
@@ -2183,11 +2202,7 @@
         const m = pick(pool.males);
         // Randomly order the pair: female→male or male→female.
         const text = Math.random() < 0.5 ? `${f} ${act} ${m}` : `${m} ${act} ${f}`;
-        const ev = { type: 'fake', icon: fakeIcon(act), at: Date.now(), text };
-        activityFeeds.forEach((feed) => {
-          feed.insertBefore(feedItemEl(ev, true), feed.firstChild);
-          while (feed.children.length > 60) feed.removeChild(feed.lastChild);
-        });
+        pushLiveActivity({ type: 'fake', icon: fakeIcon(act), at: Date.now(), text });
       }
       schedule();
     };
