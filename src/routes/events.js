@@ -20,7 +20,7 @@ const { friendState } = require('../profileData');
 const { imageUpload } = require('../upload');
 const { broadcastActivity } = require('../socket');
 const { recentStream } = require('../activityStream');
-const { acceptedText, relEmoji } = require('../relationships');
+const { acceptedText, sentText, relEmoji } = require('../relationships');
 
 const router = express.Router();
 
@@ -139,6 +139,27 @@ router.get('/', requireAuth, (req, res) => {
       actor: a,
       target: b,
       text: acceptedText(type, a.displayName, b.displayName),
+    });
+  });
+
+  // 1b) Pending relationship requests that were sent (so a sent request shows on
+  //     Recent Activity until it's accepted, declined or cancelled).
+  db.prepare(
+    `SELECT id, requester_id, addressee_id, rel_type, created_at
+     FROM friendships WHERE status = 'pending' ORDER BY created_at DESC LIMIT ?`
+  ).all(PER_SOURCE).forEach((f) => {
+    const a = userMini(f.requester_id, me);
+    const b = userMini(f.addressee_id, me);
+    if (!a || !b) return;
+    const type = f.rel_type || 'friend';
+    events.push({
+      id: 'req-' + f.id,
+      type: 'request',
+      at: f.created_at,
+      icon: relEmoji(type),
+      actor: a,
+      target: b,
+      text: sentText(type, a.displayName, b.displayName),
     });
   });
 
