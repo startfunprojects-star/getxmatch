@@ -405,6 +405,17 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_activity_posts_recent ON activity_posts (created_at);
+
+  -- Continuous server-generated activity stream (the "recent activity" ticker).
+  -- Generated on the server on a timer so it runs even with nobody online and
+  -- every user sees the SAME rows. Kept as a rolling window (old rows pruned).
+  CREATE TABLE IF NOT EXISTS activity_stream (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    text       TEXT NOT NULL,
+    icon       TEXT NOT NULL DEFAULT '✨',
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_activity_stream_recent ON activity_stream (created_at);
 `);
 
 // On-page SEO metadata for content tables. Stored as a single JSON blob so the

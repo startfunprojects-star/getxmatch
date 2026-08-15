@@ -9,6 +9,7 @@ const { Server } = require('socket.io');
 
 const config = require('./src/config');
 const { initSocket } = require('./src/socket');
+const { startActivityStream } = require('./src/activityStream');
 
 const authRoutes = require('./src/routes/auth');
 const profileRoutes = require('./src/routes/profile');
@@ -102,6 +103,7 @@ const io = new Server(server, {
   maxHttpBufferSize: config.maxChatFileBytes + 1024 * 1024, // room for file relay + metadata
 });
 initSocket(io);
+startActivityStream(); // continuous, shared "recent activity" generator
 
 server.listen(config.port, () => {
   console.log(`getxmatch listening on http://localhost:${config.port} (${config.env})`);

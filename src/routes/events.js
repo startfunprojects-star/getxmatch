@@ -17,9 +17,9 @@ const db = require('../db');
 const config = require('../config');
 const { requireAuth } = require('../auth');
 const { friendState } = require('../profileData');
-const { isFakeActivityEnabled } = require('../settings');
 const { imageUpload } = require('../upload');
 const { broadcastActivity } = require('../socket');
+const { recentStream } = require('../activityStream');
 
 const router = express.Router();
 
@@ -57,63 +57,12 @@ function activityIcon(activity) {
   return '✨';
 }
 
-const uniq = (arr) => [...new Set(arr.map((s) => String(s).trim()).filter(Boolean))];
-
-// The admin's fake-activity pools: female names (col 1), male names (col 3),
-// and activities (col 2). Combined at random as "<female> <activity> <male>".
-function fakePools() {
-  const rows = db.prepare('SELECT person_a, activity, person_b FROM fake_activities').all();
-  return {
-    females: uniq(rows.map((r) => r.person_a)),
-    males: uniq(rows.map((r) => r.person_b)),
-    activities: uniq(rows.map((r) => r.activity)),
-  };
-}
-
-// Build randomly recombined fake-activity events from the admin's pool.
-function fakeActivityEvents() {
-  if (!isFakeActivityEnabled()) return [];
-  const { females, males, activities } = fakePools();
-  // A row's activity is optional, but every combination borrows a random
-  // activity from the stored pool — so name-only rows reuse existing verbs.
-  // With no activities anywhere there is nothing to pair, so show nothing.
-  if (!females.length || !males.length || !activities.length) return [];
-
-  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-  const count = Math.min(30, Math.max(females.length + males.length, 12));
-  const now = Date.now();
-  const out = [];
-  for (let i = 0; i < count; i++) {
-    const f = pick(females);
-    const m = pick(males);
-    const act = pick(activities);
-    // Randomly order the pair: female→male or male→female.
-    const text = Math.random() < 0.5 ? `${f} ${act} ${m}` : `${m} ${act} ${f}`;
-    out.push({
-      id: 'fake-' + i,
-      type: 'fake',
-      at: now - Math.floor(Math.random() * 3 * 24 * 60 * 60 * 1000), // within ~3 days
-      icon: activityIcon(act),
-      actor: null,
-      target: null,
-      text,
-    });
-  }
-  return out;
-}
-
-// GET /api/events/fake-pool — the raw pools + on/off flag, so the client can
-// stream new fake activity continuously (see the ticker in the SPA).
-router.get('/fake-pool', requireAuth, (req, res) => {
-  const enabled = isFakeActivityEnabled();
-  const pools = enabled ? fakePools() : { females: [], males: [], activities: [] };
-  res.json({ enabled, ...pools });
-});
-
 // GET /api/events/public — a PUBLIC, no-auth activity feed for the sign-in page.
-// Deliberately limited to curated/fake activity and admin announcements only:
-// no real members' names, no chat/quiz/friendship rows, and never any shared
-// images — so nothing private is exposed to logged-out visitors.
+// Deliberately limited to the shared server-generated stream and admin
+// announcements: no real members' names, no chat/quiz/friendship rows, and
+// never any shared images — so nothing private is exposed to logged-out
+// visitors. The stream is the same one every user sees, generated on the
+// server, so the sign-in feed stays consistent and continuously updating.
 router.get('/public', (req, res) => {
   const events = [];
 
@@ -130,15 +79,10 @@ router.get('/public', (req, res) => {
       });
     });
 
-  fakeActivityEvents().forEach((f) => events.push(f)); // recombined, no images
+  recentStream(PER_SOURCE).forEach((f) => events.push(f)); // shared stream, no images
 
   events.sort((a, b) => b.at - a.at);
-
-  // Include the fake-activity pool so the sign-in page can stream new rows
-  // live (the same ticker the main app uses), without a second authed request.
-  const enabled = isFakeActivityEnabled();
-  const pool = enabled ? fakePools() : { females: [], males: [], activities: [] };
-  res.json({ events: events.slice(0, 60), pool: { enabled, ...pool } });
+  res.json({ events: events.slice(0, 60) });
 });
 
 // POST /api/events/activity-image — share an image/GIF onto the Recent Activity
@@ -289,10 +233,10 @@ router.get('/', requireAuth, (req, res) => {
       });
     });
 
-  // 5) Admin "fake" activity, recombined at random. Names and activities are
-  //    drawn from the admin's pool and paired randomly so the feed looks busy.
-  //    These carry no actor/target, so their names are never clickable.
-  fakeActivityEvents().forEach((f) => events.push(f));
+  // 5) The shared, server-generated activity stream (same rows for every user,
+  //    generated continuously in the background). No actor/target, so their
+  //    names are never clickable.
+  recentStream(PER_SOURCE).forEach((f) => events.push(f));
 
   events.sort((a, b) => b.at - a.at);
   res.json({ events: events.slice(0, 100) });

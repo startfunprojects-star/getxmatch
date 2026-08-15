@@ -230,18 +230,17 @@
     });
   }
 
-  // Left column of the sign-in page: a public, text-only activity feed (curated
-  // activity + announcements). Never shows uploaded images/GIFs or real members.
-  // It streams new rows live via the shared fake-activity ticker (text only, so
-  // no thumbnails) — the login page has no socket, so real/image events never
-  // reach it.
+  // Left column of the sign-in page: a public, text-only activity feed (the
+  // shared server stream + announcements). Never shows uploaded images/GIFs or
+  // real members. The sign-in page has no socket, so it polls the public feed
+  // to stay live — the stream itself is generated on the server, so every
+  // visitor sees the same rows updating continuously.
   async function renderAuthActivity(container) {
     if (!container) return;
     container.innerHTML = '<div class="hint" style="padding:16px">Loading activity…</div>';
-    let data = { events: [], pool: null };
-    try { data = await api.get('/api/events/public'); } catch (_e) { /* ignore */ }
-    if (data.pool) state.fakePool = data.pool; // seed the shared ticker's pool
-    const events = (data.events || []).filter((e) => !e.image); // no image posts here
+    let events = [];
+    try { events = (await api.get('/api/events/public')).events || []; } catch (_e) { /* ignore */ }
+    events = events.filter((e) => !e.image); // no image posts here
     if (!container.isConnected) return;
     if (!events.length) {
       container.innerHTML = '<div class="hint" style="padding:16px">Join to see what members are up to.</div>';
@@ -251,7 +250,8 @@
     events.forEach((ev) => feed.appendChild(feedItemEl(ev, false)));
     container.innerHTML = '';
     container.appendChild(feed);
-    registerActivityFeed(feed); // live: the ticker inserts new text rows over time
+    const sinceAt = Math.max(0, ...events.map((e) => e.at || 0));
+    startAuthActivityPoll(feed, sinceAt); // live via polling (no socket here)
   }
 
   /* Step 2 of signup: enter the 6-digit code emailed to the user. */
@@ -2396,9 +2396,13 @@
     registerActivityFeed(feed);
   }
 
-  /* ---- live fake-activity ticker: streams new combinations every 2–15s ---- */
-  const activityFeeds = []; // { feed } for each mounted feed element
-  let fakeTicker = null;
+  /* ---- live activity feed (driven by the server) ----
+     The "recent activity" stream is generated continuously on the SERVER, so
+     every user sees the same feed even with nobody online. Logged-in clients
+     receive each new row over the socket ('activity:new' → pushLiveActivity);
+     the sign-in page has no socket, so it polls instead (startAuthActivityPoll).
+  */
+  const activityFeeds = []; // mounted feed elements that live socket updates flow into
 
   function fakeIcon(activity) {
     const a = String(activity).toLowerCase();
@@ -2412,21 +2416,17 @@
     return '✨';
   }
 
-  async function loadFakePool() {
-    if (state.fakePool) return state.fakePool;
-    try { state.fakePool = await api.get('/api/events/fake-pool'); }
-    catch (_e) { state.fakePool = { enabled: false, females: [], males: [], activities: [] }; }
-    return state.fakePool;
-  }
-
+  // Track a mounted feed so live socket broadcasts insert into it. Prunes any
+  // feeds that have since left the page.
   function registerActivityFeed(feed) {
+    for (let i = activityFeeds.length - 1; i >= 0; i--) {
+      if (!document.body.contains(activityFeeds[i])) activityFeeds.splice(i, 1);
+    }
     activityFeeds.push(feed);
-    ensureFakeTicker();
   }
 
   // Insert a freshly-happened event at the top of every mounted feed, marked
-  // "just now". Used by both the fake-activity ticker and live real events
-  // (e.g. a user picking a chat activity), which is broadcast over the socket.
+  // "just now". Driven by socket broadcasts (server stream, chat activity, …).
   function pushLiveActivity(ev) {
     for (let i = activityFeeds.length - 1; i >= 0; i--) {
       if (!document.body.contains(activityFeeds[i])) activityFeeds.splice(i, 1);
@@ -2437,29 +2437,25 @@
     });
   }
 
-  function ensureFakeTicker() {
-    if (fakeTicker) return;
-    const schedule = () => { fakeTicker = setTimeout(tick, 2000 + Math.random() * 13000); }; // 2–15s
-    const tick = async () => {
-      // Drop feeds that are no longer on the page.
-      for (let i = activityFeeds.length - 1; i >= 0; i--) {
-        if (!document.body.contains(activityFeeds[i])) activityFeeds.splice(i, 1);
-      }
-      if (!activityFeeds.length) { fakeTicker = null; return; } // stops; restarts on next render
-      const pool = await loadFakePool();
-      if (pool.enabled && pool.females.length && pool.males.length && pool.activities.length) {
-        const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-        // Every combo borrows a random activity from the stored pool.
-        const act = pick(pool.activities);
-        const f = pick(pool.females);
-        const m = pick(pool.males);
-        // Randomly order the pair: female→male or male→female.
-        const text = Math.random() < 0.5 ? `${f} ${act} ${m}` : `${m} ${act} ${f}`;
-        pushLiveActivity({ type: 'fake', icon: fakeIcon(act), at: Date.now(), text });
-      }
-      schedule();
+  // Sign-in page only: poll the public feed and prepend new server-stream rows
+  // (there is no socket before login). Stops once the feed leaves the page.
+  function startAuthActivityPoll(feed, sinceAt) {
+    let lastAt = sinceAt || 0;
+    const poll = async () => {
+      if (!document.body.contains(feed)) return; // navigated away → stop
+      try {
+        const fresh = ((await api.get('/api/events/public')).events || [])
+          .filter((e) => !e.image && (e.at || 0) > lastAt)
+          .sort((a, b) => a.at - b.at); // oldest first so the newest ends on top
+        fresh.forEach((ev) => {
+          feed.insertBefore(feedItemEl(ev, true), feed.firstChild);
+          lastAt = Math.max(lastAt, ev.at || 0);
+          while (feed.children.length > 60) feed.removeChild(feed.lastChild);
+        });
+      } catch (_e) { /* ignore transient errors */ }
+      setTimeout(poll, 6000);
     };
-    schedule();
+    setTimeout(poll, 6000);
   }
 
   boot();
