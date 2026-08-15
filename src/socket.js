@@ -6,7 +6,6 @@ const config = require('./config');
 const { userFromToken } = require('./auth');
 const { areBlocked } = require('./relations');
 const { getGift } = require('./gifts');
-const { isValidActivity } = require('./activities');
 const roleplay = require('./roleplay');
 
 // Emoji reactions a user may place on a message/gift. Server-side allow-list so
@@ -325,12 +324,14 @@ function initSocket(io) {
         const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
 
-        const raw = String((payload && payload.activity) || '').trim();
+        // Accept either a predefined verb or a user's own custom activity.
+        // Free text is trimmed, whitespace-collapsed and length-capped; the
+        // feed renders it as plain text (textContent), so no markup can leak.
+        const raw = String((payload && payload.activity) || '').trim().replace(/\s+/g, ' ').slice(0, 40);
         const now = Date.now();
         if (!raw) {
           db.prepare('DELETE FROM chat_activities WHERE user_id = ? AND peer_id = ?').run(me.id, to);
         } else {
-          if (!isValidActivity(raw)) return ack && ack({ error: 'Unknown activity.' });
           db.prepare(
             `INSERT INTO chat_activities (user_id, peer_id, activity, updated_at)
              VALUES (?, ?, ?, ?)

@@ -735,5 +735,6 @@ a.share-link:hover { text-decoration: underline; }
 .activity-status .act-sep { margin: 0 8px; color: var(--muted); }
 .activity-pick { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--muted); }
 .activity-pick select { width: auto; min-width: 120px; padding: 6px 8px; }
+.activity-pick input { width: auto; max-width: 160px; padding: 6px 8px; }
 
 .fake-empty { color: var(--muted); }
