@@ -13,6 +13,8 @@ const config = require('../config');
 const { sendAdminResetLink } = require('../mail');
 const { isOnline } = require('../socket');
 const { imageUpload } = require('../upload');
+const { buildProfile } = require('../profileData');
+const { saveProfile } = require('../profileWrite');
 const { isFakeActivityEnabled, setFakeActivityEnabled } = require('../settings');
 const {
   ADMIN_COOKIE,
@@ -188,6 +190,28 @@ router.post('/users', requireAdmin, (req, res) => {
   res.status(201).json({
     user: { id: info.lastInsertRowid, username, email: null, displayName: dn || null },
   });
+});
+
+// GET /api/admin/users/:id/profile — a user's profile for the admin editor
+// (or profile: null if they haven't got one yet).
+router.get('/users/:id/profile', requireAdmin, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  // Build it as if the owner is viewing, so every field is populated.
+  const profile = buildProfile(id, id);
+  res.json({ username: user.username, profile: profile || null });
+});
+
+// PUT /api/admin/users/:id/profile — create or update a user's profile on
+// their behalf (same rules as the member-facing editor, minus the email).
+router.put('/users/:id/profile', requireAdmin, imageUpload.single('avatar'), (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+  if (!user) { removeUpload(req.file && req.file.filename); return res.status(404).json({ error: 'User not found.' }); }
+  const out = saveProfile(id, req.body, req.file);
+  if (out.error) return res.status(400).json({ error: out.error });
+  res.json({ profile: out.profile });
 });
 
 // DELETE /api/admin/users/:id — remove a user (cascades to their data).

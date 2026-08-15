@@ -41,6 +41,64 @@
     try { return new Date(ms).toLocaleString(); } catch (_e) { return ''; }
   }
 
+  /* ---- pagination (10 per page, client-side) ---- */
+  const PAGE_SIZE = 10;
+  const pageState = Object.create(null); // key -> current page index
+
+  // Slice `items` to the current page for `key` and, when there's more than one
+  // page, build a Prev / "Page x of y" / Next control. `rerender` is called
+  // (no args) after the page changes so the caller repaints from cached data.
+  function pageFor(key, items, rerender) {
+    const pages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+    let cur = pageState[key] || 0;
+    if (cur > pages - 1) cur = pages - 1;
+    if (cur < 0) cur = 0;
+    pageState[key] = cur;
+    const start = cur * PAGE_SIZE;
+    const slice = items.slice(start, start + PAGE_SIZE);
+    let pager = null;
+    if (pages > 1) {
+      pager = el(`
+        <div class="pager">
+          <button class="ghost small" data-prev${cur === 0 ? ' disabled' : ''}>‹ Prev</button>
+          <span class="pager-info">Page ${cur + 1} of ${pages} · ${items.length} total</span>
+          <button class="ghost small" data-next${cur >= pages - 1 ? ' disabled' : ''}>Next ›</button>
+        </div>
+      `);
+      pager.querySelector('[data-prev]').addEventListener('click', () => { pageState[key] = cur - 1; rerender(); });
+      pager.querySelector('[data-next]').addEventListener('click', () => { pageState[key] = cur + 1; rerender(); });
+    }
+    return { slice, pager };
+  }
+
+  /* ---- profile field option lists (mirror src/profileFields.js) ---- */
+  const OPT = {
+    gender: ['Male', 'Female', 'Non-binary', 'Other', 'Prefer not to say'],
+    sexuality: ['Straight', 'Gay', 'Lesbian', 'Bisexual'],
+    yesNo: ['Yes', 'No', 'Occasionally', 'Prefer not to say'],
+    diet: ['Vegetarian', 'Non-vegetarian', 'Vegan', 'Eggetarian'],
+    bedRole: ['Dominating', 'Submissive', 'Mix', 'Go with the flow'],
+    relationshipStatus: ['Single', 'In a relationship', 'Married', "It's complicated", 'Prefer not to say'],
+    interests: ['Movies', 'Photography', 'Reading', 'Politics', 'Music', 'Travel', 'Sports',
+      'Gaming', 'Cooking', 'Fitness', 'Art', 'Technology', 'Fashion', 'Nature', 'Dancing'],
+  };
+  const COUNTRIES = ['Afghanistan', 'Albania', 'Algeria', 'Argentina', 'Australia', 'Austria',
+    'Bangladesh', 'Belgium', 'Brazil', 'Bulgaria', 'Canada', 'Chile', 'China', 'Colombia',
+    'Croatia', 'Czechia', 'Denmark', 'Egypt', 'Finland', 'France', 'Germany', 'Ghana', 'Greece',
+    'Hungary', 'Iceland', 'India', 'Indonesia', 'Iran', 'Iraq', 'Ireland', 'Israel', 'Italy',
+    'Japan', 'Jordan', 'Kenya', 'Malaysia', 'Mexico', 'Nepal', 'Netherlands', 'New Zealand',
+    'Nigeria', 'Norway', 'Pakistan', 'Peru', 'Philippines', 'Poland', 'Portugal', 'Qatar',
+    'Romania', 'Russia', 'Saudi Arabia', 'Singapore', 'South Africa', 'South Korea', 'Spain',
+    'Sri Lanka', 'Sweden', 'Switzerland', 'Thailand', 'Turkey', 'Ukraine', 'United Arab Emirates',
+    'United Kingdom', 'United States', 'Vietnam', 'Other'];
+
+  // Build a <select> with a placeholder first option. `current` is preselected.
+  function selectHtml(id, options, current, placeholder) {
+    const opts = ['<option value="">' + esc(placeholder || 'Select…') + '</option>']
+      .concat(options.map((o) => `<option value="${esc(o)}"${o === current ? ' selected' : ''}>${esc(o)}</option>`));
+    return `<select id="${id}">${opts.join('')}</select>`;
+  }
+
   /* ==================================================================
      Reusable On-page SEO fieldset (shared by quizzes, polls, blogs)
   ================================================================== */
@@ -357,10 +415,11 @@
         <h2>Users <span class="count" id="userCount"></span></h2>
         <div class="table-scroll">
           <table class="users">
-            <thead><tr><th>Status</th><th>User</th><th>Email</th><th>Profile</th><th>Joined</th><th></th></tr></thead>
-            <tbody id="userRows"><tr><td colspan="6" class="count">Loading…</td></tr></tbody>
+            <thead><tr><th>Status</th><th>User</th><th>Email</th><th>Profile</th><th>Joined</th><th></th><th></th></tr></thead>
+            <tbody id="userRows"><tr><td colspan="7" class="count">Loading…</td></tr></tbody>
           </table>
         </div>
+        <div id="userPager"></div>
       </div>
     `;
     const createForm = host.querySelector('#createForm');
@@ -384,6 +443,8 @@
     pollTimer = setInterval(loadUsers, 5000);
   }
 
+  let usersCache = [];
+
   async function loadUsers() {
     const rowsEl = document.getElementById('userRows');
     if (!rowsEl) return; // navigated away
@@ -391,17 +452,26 @@
     try { data = await api.get('/api/admin/users'); }
     catch (err) {
       if (err.status === 401) { stopPolling(); return renderLogin(true); }
-      rowsEl.innerHTML = `<tr><td colspan="6" class="count">${esc(err.message)}</td></tr>`;
+      rowsEl.innerHTML = `<tr><td colspan="7" class="count">${esc(err.message)}</td></tr>`;
       return;
     }
-    const users = data.users || [];
+    usersCache = data.users || [];
+    paintUsers();
+  }
+
+  function paintUsers() {
+    const rowsEl = document.getElementById('userRows');
+    if (!rowsEl) return;
+    const users = usersCache;
     const online = users.filter((u) => u.online).length;
     const countEl = document.getElementById('userCount');
     if (countEl) countEl.textContent = `· ${users.length} total, ${online} online`;
 
-    if (!users.length) { rowsEl.innerHTML = `<tr><td colspan="6" class="count">No users yet.</td></tr>`; return; }
+    if (!users.length) { rowsEl.innerHTML = `<tr><td colspan="7" class="count">No users yet.</td></tr>`; return; }
+
+    const { slice, pager } = pageFor('users', users, paintUsers);
     rowsEl.innerHTML = '';
-    users.forEach((u) => {
+    slice.forEach((u) => {
       const tr = el(`
         <tr>
           <td><span class="dot ${u.online ? 'online' : ''}"></span>${u.online ? 'Online' : 'Offline'}</td>
@@ -409,9 +479,11 @@
           <td>${u.email ? esc(u.email) : '<span class="pill">— no email —</span>'}</td>
           <td>${u.hasProfile ? 'Yes' : '<span class="pill">No</span>'}</td>
           <td class="pill">${esc(fmtDate(u.createdAt))}</td>
+          <td><button class="ghost small" data-profile>${u.hasProfile ? 'Edit profile' : 'Create profile'}</button></td>
           <td><button class="danger small" data-del="${u.id}">Delete</button></td>
         </tr>
       `);
+      tr.querySelector('[data-profile]').addEventListener('click', () => renderUserProfileForm(u));
       tr.querySelector('[data-del]').addEventListener('click', async () => {
         if (!confirm(`Delete user @${u.username}? This removes their profile, photos and messages.`)) return;
         try { await api.del('/api/admin/users/' + u.id); loadUsers(); }
@@ -419,6 +491,130 @@
       });
       rowsEl.appendChild(tr);
     });
+    const pagerHost = document.getElementById('userPager');
+    if (pagerHost) { pagerHost.innerHTML = ''; if (pager) pagerHost.appendChild(pager); }
+  }
+
+  /* ---- Admin-side profile editor (create/edit a user's profile) ---- */
+  async function renderUserProfileForm(user) {
+    stopPolling();
+    const host = tabHost();
+    host.innerHTML = '<div class="admin-card"><div class="count">Loading profile…</div></div>';
+    let existing = null;
+    try { existing = (await api.get('/api/admin/users/' + user.id + '/profile')).profile; }
+    catch (err) { if (err.status === 401) return renderLogin(true); }
+    const e = existing || {};
+    const selected = new Set(e.interests || []);
+
+    host.innerHTML = `
+      <div class="admin-card editor">
+        <div class="admin-item-actions" style="margin:0 0 10px">
+          <button class="ghost small" id="pfBack">‹ Back to users</button>
+        </div>
+        <h2>${e.displayName ? 'Edit' : 'Create'} profile for <span class="pill">@${esc(user.username)}</span></h2>
+        <p class="count">This account has no email — you're filling in the same profile a member would. Fields marked <span class="req">*</span> are required.</p>
+
+        <div class="avatar-picker">
+          <img class="avatar lg" id="pfAvPreview" src="${e.avatar ? esc(e.avatar) : avatarPlaceholder()}" alt="avatar" />
+          <div>
+            <button class="ghost small" id="pfPickAvatar" type="button">Choose display picture</button>
+            <div class="hint">JPG, PNG, WEBP or GIF</div>
+          </div>
+        </div>
+        <input type="file" id="pfAvatar" accept="image/*" style="display:none" />
+
+        <label>Display name <span class="req">*</span></label>
+        <input id="pfDisplayName" maxlength="50" value="${esc(e.displayName || '')}" placeholder="Shown to others" />
+
+        <div class="field-grid">
+          <div><label>Gender <span class="req">*</span></label>${selectHtml('pfGender', OPT.gender, e.gender, 'Select gender')}</div>
+          <div><label>Date of birth <span class="req">*</span></label><input type="date" id="pfDob" value="${esc(e.dateOfBirth || '')}" max="9999-12-31" /></div>
+          <div><label>Country <span class="req">*</span></label>${selectHtml('pfCountry', COUNTRIES, e.country, 'Select country')}</div>
+          <div><label>Sexuality</label>${selectHtml('pfSexuality', OPT.sexuality, e.sexuality, 'Select…')}</div>
+          <div><label>Smokes?</label>${selectHtml('pfSmokes', OPT.yesNo, e.smokes, 'Select…')}</div>
+          <div><label>Alcohol?</label>${selectHtml('pfDrinks', OPT.yesNo, e.drinks, 'Select…')}</div>
+          <div><label>Veg or non-veg?</label>${selectHtml('pfDiet', OPT.diet, e.diet, 'Select…')}</div>
+          <div><label>Relationship status</label>${selectHtml('pfRelStatus', OPT.relationshipStatus, e.relationshipStatus, 'Select…')}</div>
+        </div>
+
+        <label>With (partner's @username) — optional</label>
+        <input id="pfPartner" maxlength="20" value="${esc(e.partner ? e.partner.username : '')}" placeholder="e.g. their username" />
+
+        <label>About</label>
+        <textarea id="pfAbout" maxlength="500" placeholder="A bit about this person">${esc(e.about || '')}</textarea>
+
+        <label>What kind of person they are</label>
+        <textarea id="pfPersona" maxlength="500" placeholder="Personality, vibe, what they're looking for…">${esc(e.persona || '')}</textarea>
+
+        <label>Interests</label>
+        <div class="chip-picker" id="pfInterests">
+          ${OPT.interests.map((i) =>
+            `<label class="chip${selected.has(i) ? ' on' : ''}"><input type="checkbox" value="${esc(i)}"${selected.has(i) ? ' checked' : ''}/>${esc(i)}</label>`
+          ).join('')}
+        </div>
+
+        <details class="adult-section">
+          <summary>Intimacy (optional, 18+)</summary>
+          <label>What they like in bed</label>
+          <textarea id="pfLikesInBed" maxlength="500" placeholder="Optional">${esc(e.likesInBed || '')}</textarea>
+          <label>Are they…</label>
+          ${selectHtml('pfBedRole', OPT.bedRole, e.bedRole, 'Select…')}
+        </details>
+
+        <div class="msg" id="pfMsg"></div>
+        <div class="admin-item-actions">
+          <button class="primary" id="pfSave" type="button">${e.displayName ? 'Save profile' : 'Create profile'}</button>
+          <button class="ghost" id="pfCancel" type="button">Cancel</button>
+        </div>
+      </div>
+    `;
+
+    host.querySelector('#pfBack').addEventListener('click', () => renderUsersTab());
+    host.querySelector('#pfCancel').addEventListener('click', () => renderUsersTab());
+
+    let avatarFile = null;
+    const avInput = host.querySelector('#pfAvatar');
+    host.querySelector('#pfPickAvatar').addEventListener('click', () => avInput.click());
+    avInput.addEventListener('change', () => {
+      avatarFile = avInput.files[0] || null;
+      if (avatarFile) host.querySelector('#pfAvPreview').src = URL.createObjectURL(avatarFile);
+    });
+    host.querySelectorAll('#pfInterests .chip').forEach((chip) => {
+      const cb = chip.querySelector('input');
+      cb.addEventListener('change', () => chip.classList.toggle('on', cb.checked));
+    });
+
+    host.querySelector('#pfSave').addEventListener('click', async () => {
+      const msg = host.querySelector('#pfMsg');
+      msg.className = 'msg';
+      const val = (id) => host.querySelector('#' + id).value;
+      const interests = Array.from(host.querySelectorAll('#pfInterests input:checked')).map((c) => c.value);
+      const fd = new FormData();
+      fd.append('displayName', val('pfDisplayName'));
+      fd.append('gender', val('pfGender'));
+      fd.append('dateOfBirth', val('pfDob'));
+      fd.append('country', val('pfCountry'));
+      fd.append('sexuality', val('pfSexuality'));
+      fd.append('smokes', val('pfSmokes'));
+      fd.append('drinks', val('pfDrinks'));
+      fd.append('diet', val('pfDiet'));
+      fd.append('relationshipStatus', val('pfRelStatus'));
+      fd.append('partner', val('pfPartner'));
+      fd.append('about', val('pfAbout'));
+      fd.append('persona', val('pfPersona'));
+      fd.append('likesInBed', val('pfLikesInBed'));
+      fd.append('bedRole', val('pfBedRole'));
+      fd.append('interests', JSON.stringify(interests));
+      if (avatarFile) fd.append('avatar', avatarFile);
+      try {
+        await api.putForm('/api/admin/users/' + user.id + '/profile', fd);
+        renderUsersTab();
+      } catch (err) { msg.textContent = err.message; msg.className = 'msg error'; }
+    });
+  }
+
+  function avatarPlaceholder() {
+    return "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect width='80' height='80' fill='%231f2430'/%3E%3Ctext x='50%25' y='54%25' font-size='34' text-anchor='middle' fill='%239aa2b1'%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E";
   }
 
   /* ==================================================================
@@ -517,15 +713,23 @@
     });
   }
 
+  let quizzesCache = [];
   async function loadQuizList() {
     const box = document.getElementById('quizList');
     if (!box) return;
-    let quizzes;
-    try { quizzes = (await api.get('/api/admin/quizzes')).quizzes; }
+    try { quizzesCache = (await api.get('/api/admin/quizzes')).quizzes; }
     catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
+    paintQuizList();
+  }
+
+  function paintQuizList() {
+    const box = document.getElementById('quizList');
+    if (!box) return;
+    const quizzes = quizzesCache;
     if (!quizzes.length) { box.innerHTML = '<div class="count">No quizzes yet.</div>'; return; }
     box.innerHTML = '';
-    quizzes.forEach((q) => {
+    const { slice, pager } = pageFor('quizzes', quizzes, paintQuizList);
+    slice.forEach((q) => {
       const item = el(`
         <div class="admin-item">
           <h3>${esc(q.title)}</h3>
@@ -543,6 +747,7 @@
       });
       box.appendChild(item);
     });
+    if (pager) box.appendChild(pager);
   }
 
   /* ==================================================================
@@ -600,15 +805,23 @@
     });
   }
 
+  let pollsCache = [];
   async function loadPollList() {
     const box = document.getElementById('pollList');
     if (!box) return;
-    let polls;
-    try { polls = (await api.get('/api/admin/polls')).polls; }
+    try { pollsCache = (await api.get('/api/admin/polls')).polls; }
     catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
+    paintPollList();
+  }
+
+  function paintPollList() {
+    const box = document.getElementById('pollList');
+    if (!box) return;
+    const polls = pollsCache;
     if (!polls.length) { box.innerHTML = '<div class="count">No polls yet.</div>'; return; }
     box.innerHTML = '';
-    polls.forEach((p) => {
+    const { slice, pager } = pageFor('polls', polls, paintPollList);
+    slice.forEach((p) => {
       const item = el(`
         <div class="admin-item">
           <h3>${esc(p.question)}</h3>
@@ -626,6 +839,7 @@
       });
       box.appendChild(item);
     });
+    if (pager) box.appendChild(pager);
   }
 
   /* ==================================================================
@@ -677,15 +891,23 @@
     });
   }
 
+  let blogsCache = [];
   async function loadBlogList() {
     const box = document.getElementById('blogList');
     if (!box) return;
-    let blogs;
-    try { blogs = (await api.get('/api/admin/blogs')).blogs; }
+    try { blogsCache = (await api.get('/api/admin/blogs')).blogs; }
     catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
+    paintBlogList();
+  }
+
+  function paintBlogList() {
+    const box = document.getElementById('blogList');
+    if (!box) return;
+    const blogs = blogsCache;
     if (!blogs.length) { box.innerHTML = '<div class="count">No blog posts yet.</div>'; return; }
     box.innerHTML = '';
-    blogs.forEach((b) => {
+    const { slice, pager } = pageFor('blogs', blogs, paintBlogList);
+    slice.forEach((b) => {
       const item = el(`
         <div class="admin-item">
           <h3>${esc(b.title)}</h3>
@@ -703,6 +925,7 @@
       });
       box.appendChild(item);
     });
+    if (pager) box.appendChild(pager);
   }
 
   /* ==================================================================
@@ -815,15 +1038,23 @@
     });
   }
 
+  let roleplaysCache = [];
   async function loadRoleplayList() {
     const box = document.getElementById('rpList');
     if (!box) return;
-    let roleplays;
-    try { roleplays = (await api.get('/api/admin/roleplays')).roleplays; }
+    try { roleplaysCache = (await api.get('/api/admin/roleplays')).roleplays; }
     catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
+    paintRoleplayList();
+  }
+
+  function paintRoleplayList() {
+    const box = document.getElementById('rpList');
+    if (!box) return;
+    const roleplays = roleplaysCache;
     if (!roleplays.length) { box.innerHTML = '<div class="count">No roleplays yet.</div>'; return; }
     box.innerHTML = '';
-    roleplays.forEach((rp) => {
+    const { slice, pager } = pageFor('roleplays', roleplays, paintRoleplayList);
+    slice.forEach((rp) => {
       const item = el(`
         <div class="admin-item">
           <h3>${esc(rp.title)}</h3>
@@ -841,6 +1072,7 @@
       });
       box.appendChild(item);
     });
+    if (pager) box.appendChild(pager);
   }
 
   /* ==================================================================
@@ -880,15 +1112,23 @@
     });
   }
 
+  let eventsCache = [];
   async function loadEventList() {
     const box = document.getElementById('eventList');
     if (!box) return;
-    let events;
-    try { events = (await api.get('/api/admin/events')).events; }
+    try { eventsCache = (await api.get('/api/admin/events')).events; }
     catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
+    paintEventList();
+  }
+
+  function paintEventList() {
+    const box = document.getElementById('eventList');
+    if (!box) return;
+    const events = eventsCache;
     if (!events.length) { box.innerHTML = '<div class="count">No curated events yet.</div>'; return; }
     box.innerHTML = '';
-    events.forEach((ev) => {
+    const { slice, pager } = pageFor('events', events, paintEventList);
+    slice.forEach((ev) => {
       const item = el(`
         <div class="admin-item">
           <h3>${esc(ev.title)}</h3>
@@ -906,6 +1146,7 @@
       });
       box.appendChild(item);
     });
+    if (pager) box.appendChild(pager);
   }
 
   /* ==================================================================
@@ -973,20 +1214,29 @@
     await loadFakeList();
   }
 
+  let fakeCache = [];
   async function loadFakeList() {
     const box = document.getElementById('faList');
     if (!box) return;
     let data;
     try { data = await api.get('/api/admin/fake-activities'); }
     catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
-    const activities = data.activities;
+    fakeCache = data.activities;
     const toggle = document.getElementById('faEnabled');
     const toggleLabel = document.getElementById('faEnabledLabel');
     if (toggle) { toggle.checked = !!data.enabled; toggleLabel.textContent = data.enabled ? 'On' : 'Off'; }
+    paintFakeList();
+  }
+
+  function paintFakeList() {
+    const box = document.getElementById('faList');
+    if (!box) return;
+    const activities = fakeCache;
     if (!activities.length) { box.innerHTML = '<div class="count">No fake activity yet. Add a few rows above.</div>'; return; }
     box.innerHTML = '';
+    const { slice, pager } = pageFor('fake', activities, paintFakeList);
     const table = el('<div class="fake-table"></div>');
-    activities.forEach((a) => {
+    slice.forEach((a) => {
       const row = el(`
         <div class="fake-row">
           <span class="fake-name">${esc(a.personA)}</span>
@@ -1001,21 +1251,30 @@
       table.appendChild(row);
     });
     box.appendChild(table);
+    if (pager) box.appendChild(pager);
   }
 
   /* ==================================================================
      Leaderboard tab (read-only oversight)
   ================================================================== */
+  let leaderboardCache = [];
   async function renderLeaderboardTab() {
     const host = tabHost();
-    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Auto-ranked by ratings, friends and quiz activity.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Score</th></tr></thead><tbody id="lbRows"><tr><td colspan="6" class="count">Loading…</td></tr></tbody></table></div></div>';
+    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Auto-ranked by ratings, friends and quiz activity.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Score</th></tr></thead><tbody id="lbRows"><tr><td colspan="6" class="count">Loading…</td></tr></tbody></table></div><div id="lbPager"></div></div>';
     const rowsEl = host.querySelector('#lbRows');
-    let rows;
-    try { rows = (await api.get('/api/admin/leaderboard')).leaderboard; }
+    try { leaderboardCache = (await api.get('/api/admin/leaderboard')).leaderboard; }
     catch (e) { if (e.status === 401) return renderLogin(true); rowsEl.innerHTML = `<tr><td colspan="6" class="count">${esc(e.message)}</td></tr>`; return; }
+    paintLeaderboard();
+  }
+
+  function paintLeaderboard() {
+    const rowsEl = document.getElementById('lbRows');
+    if (!rowsEl) return;
+    const rows = leaderboardCache;
     if (!rows.length) { rowsEl.innerHTML = '<tr><td colspan="6" class="count">No ranked users yet.</td></tr>'; return; }
+    const { slice, pager } = pageFor('leaderboard', rows, paintLeaderboard);
     rowsEl.innerHTML = '';
-    rows.forEach((r) => {
+    slice.forEach((r) => {
       rowsEl.appendChild(el(`
         <tr>
           <td><strong>#${r.rank}</strong></td>
@@ -1027,6 +1286,8 @@
         </tr>
       `));
     });
+    const pagerHost = document.getElementById('lbPager');
+    if (pagerHost) { pagerHost.innerHTML = ''; if (pager) pagerHost.appendChild(pager); }
   }
 
   boot();
