@@ -59,31 +59,10 @@ function activityIcon(activity) {
 }
 
 // GET /api/events/public — a PUBLIC, no-auth activity feed for the sign-in page.
-// Deliberately limited to the shared server-generated stream and admin
-// announcements: no real members' names, no chat/quiz/friendship rows, and
-// never any shared images — so nothing private is exposed to logged-out
-// visitors. The stream is the same one every user sees, generated on the
-// server, so the sign-in feed stays consistent and continuously updating.
+// Same feed the signed-in Recent Activity shows, but with the user-shared image
+// posts omitted (no thumbnails on the sign-in page). Built with a null viewer.
 router.get('/public', (req, res) => {
-  const events = [];
-
-  db.prepare('SELECT id, title, body, created_at FROM admin_events ORDER BY created_at DESC LIMIT ?')
-    .all(PER_SOURCE)
-    .forEach((e) => {
-      events.push({
-        id: 'admin-' + e.id,
-        type: 'admin',
-        at: e.created_at,
-        icon: '📣',
-        title: e.title,
-        text: e.body || e.title,
-      });
-    });
-
-  recentStream(PER_SOURCE).forEach((f) => events.push(f)); // shared stream, no images
-
-  events.sort((a, b) => b.at - a.at);
-  res.json({ events: events.slice(0, 60) });
+  res.json({ events: buildFeed(null, { includeImages: false }) });
 });
 
 // POST /api/events/activity-image — share an image/GIF onto the Recent Activity
@@ -117,9 +96,13 @@ router.post('/activity-image', requireAuth, imageUpload.single('image'), (req, r
   res.status(201).json({ event });
 });
 
-// GET /api/events — merged recent activity.
-router.get('/', requireAuth, (req, res) => {
-  const me = req.user.id;
+// Build the merged Recent Activity feed for `viewerId` (null = public / logged
+// out). `includeImages` gates the user-shared image posts — excluded from the
+// public sign-in feed so it never shows thumbnails. Actor/target metadata is
+// attached but the feed renders plain text, so a null viewer is fine.
+function buildFeed(viewerId, opts) {
+  const me = viewerId;
+  const includeImages = !opts || opts.includeImages !== false;
   const events = [];
 
   // 1) Accepted relationships (friend, crush, couple, …).
@@ -222,23 +205,26 @@ router.get('/', requireAuth, (req, res) => {
     });
   });
 
-  // 3c) User-shared images/GIFs — displayed as a thumbnail in the feed.
-  db.prepare(
-    'SELECT id, user_id, image, created_at FROM activity_posts ORDER BY created_at DESC LIMIT ?'
-  ).all(PER_SOURCE).forEach((row) => {
-    const a = userMini(row.user_id, me);
-    if (!a) return;
-    events.push({
-      id: 'post-' + row.id,
-      type: 'activity-image',
-      at: row.created_at,
-      icon: '🖼️',
-      actor: a,
-      target: null,
-      text: `${a.displayName} shared an image`,
-      image: `/uploads/${row.image}`,
+  // 3c) User-shared images/GIFs — displayed as a thumbnail in the feed. Omitted
+  //     from the public sign-in feed (no thumbnails there).
+  if (includeImages) {
+    db.prepare(
+      'SELECT id, user_id, image, created_at FROM activity_posts ORDER BY created_at DESC LIMIT ?'
+    ).all(PER_SOURCE).forEach((row) => {
+      const a = userMini(row.user_id, me);
+      if (!a) return;
+      events.push({
+        id: 'post-' + row.id,
+        type: 'activity-image',
+        at: row.created_at,
+        icon: '🖼️',
+        actor: a,
+        target: null,
+        text: `${a.displayName} shared an image`,
+        image: `/uploads/${row.image}`,
+      });
     });
-  });
+  }
 
   // 4) Admin-curated announcements.
   db.prepare('SELECT id, title, body, created_at FROM admin_events ORDER BY created_at DESC LIMIT ?')
@@ -262,7 +248,12 @@ router.get('/', requireAuth, (req, res) => {
   recentStream(PER_SOURCE).forEach((f) => events.push(f));
 
   events.sort((a, b) => b.at - a.at);
-  res.json({ events: events.slice(0, 100) });
+  return events.slice(0, 100);
+}
+
+// GET /api/events — merged recent activity for the signed-in user.
+router.get('/', requireAuth, (req, res) => {
+  res.json({ events: buildFeed(req.user.id) });
 });
 
 module.exports = router;
