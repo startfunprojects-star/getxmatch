@@ -110,6 +110,32 @@ router.get('/fake-pool', requireAuth, (req, res) => {
   res.json({ enabled, ...pools });
 });
 
+// GET /api/events/public — a PUBLIC, no-auth activity feed for the sign-in page.
+// Deliberately limited to curated/fake activity and admin announcements only:
+// no real members' names, no chat/quiz/friendship rows, and never any shared
+// images — so nothing private is exposed to logged-out visitors.
+router.get('/public', (req, res) => {
+  const events = [];
+
+  db.prepare('SELECT id, title, body, created_at FROM admin_events ORDER BY created_at DESC LIMIT ?')
+    .all(PER_SOURCE)
+    .forEach((e) => {
+      events.push({
+        id: 'admin-' + e.id,
+        type: 'admin',
+        at: e.created_at,
+        icon: '📣',
+        title: e.title,
+        text: e.body || e.title,
+      });
+    });
+
+  fakeActivityEvents().forEach((f) => events.push(f)); // recombined, no images
+
+  events.sort((a, b) => b.at - a.at);
+  res.json({ events: events.slice(0, 60) });
+});
+
 // POST /api/events/activity-image — share an image/GIF onto the Recent Activity
 // feed. Saved to disk and shown to everyone as a thumbnail (live + on reload).
 router.post('/activity-image', requireAuth, imageUpload.single('image'), (req, res) => {

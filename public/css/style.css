@@ -63,6 +63,17 @@ a { color: var(--accent); text-decoration: none; }
 .brand .x { color: var(--accent); }
 
 /* ---------- Auth ---------- */
+/* Sign-in / sign-up: activity feed on the left, auth form on the right. */
+.auth-split { min-height: 100%; display: grid; grid-template-columns: 1fr minmax(380px, 460px); }
+.auth-activity { background: var(--bg-2); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100%; max-height: 100vh; min-height: 0; }
+.auth-activity-head { padding: 20px 22px; font-weight: 700; font-size: 16px; border-bottom: 1px solid var(--border); }
+.auth-activity-head .x { color: var(--accent); }
+.auth-activity-feed { flex: 1; overflow-y: auto; padding: 6px 16px 20px; }
+@media (max-width: 860px) {
+  .auth-split { grid-template-columns: 1fr; }
+  .auth-activity { display: none; }
+}
+
 .auth-wrap { min-height: 100%; display: grid; place-items: center; padding: 24px; }
 .auth-card {
   width: 100%; max-width: 380px;

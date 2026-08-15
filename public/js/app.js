@@ -138,7 +138,12 @@
     mode = mode || 'login';
     root.innerHTML = '';
     const card = el(`
-      <div class="auth-wrap"><div class="auth-card">
+      <div class="auth-split">
+        <aside class="auth-activity">
+          <div class="auth-activity-head">✨ Live activity on get<span class="x">x</span>match</div>
+          <div class="auth-activity-feed" id="authFeed"></div>
+        </aside>
+        <div class="auth-wrap"><div class="auth-card">
         <h1 class="brand">get<span class="x">x</span>match</h1>
         <p class="auth-sub">${mode === 'login' ? 'Welcome back.' : 'Create your account. 18+ only.'}</p>
         <form id="authForm">
@@ -170,8 +175,10 @@
             : `Already have an account? <a href="#" id="toggleAuth">Log in</a>`}
         </div>
       </div></div>
+      </div>
     `);
     root.appendChild(card);
+    renderAuthActivity(card.querySelector('#authFeed'));
 
     const form = card.querySelector('#authForm');
     const msg = card.querySelector('#authMsg');
@@ -207,6 +214,25 @@
         msg.className = 'msg error';
       }
     });
+  }
+
+  // Left column of the sign-in page: a public, text-only activity feed (curated
+  // activity + announcements). Never shows uploaded images/GIFs or real members.
+  async function renderAuthActivity(container) {
+    if (!container) return;
+    container.innerHTML = '<div class="hint" style="padding:16px">Loading activity…</div>';
+    let events = [];
+    try { events = (await api.get('/api/events/public')).events || []; } catch (_e) { /* ignore */ }
+    events = events.filter((e) => !e.image); // defensive: no image posts here
+    if (!container.isConnected) return;
+    if (!events.length) {
+      container.innerHTML = '<div class="hint" style="padding:16px">Join to see what members are up to.</div>';
+      return;
+    }
+    const feed = el('<div class="feed"></div>');
+    events.forEach((ev) => feed.appendChild(feedItemEl(ev, false)));
+    container.innerHTML = '';
+    container.appendChild(feed);
   }
 
   /* Step 2 of signup: enter the 6-digit code emailed to the user. */
