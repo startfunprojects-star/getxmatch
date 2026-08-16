@@ -13,7 +13,7 @@ const db = require('./db');
 const { isFakeActivityEnabled } = require('./settings');
 const { broadcastActivity } = require('./socket');
 
-const MAX_ROWS = 300;          // rolling window kept in the DB
+const MAX_ROWS = 500;          // rolling window kept in the DB (oldest trimmed on each insert)
 const MIN_INTERVAL_MS = 5000;  // 5s
 const MAX_INTERVAL_MS = 12000; // 12s
 
