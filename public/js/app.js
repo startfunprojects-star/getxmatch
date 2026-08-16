@@ -467,14 +467,14 @@
           </div>
           <div class="nav">
             <button data-tab="people" class="active">People</button>
-            <button data-tab="chats">Chats</button>
+            <button data-tab="chats">Chats<span class="ndot"></span></button>
           </div>
           <div class="explore-nav" id="exploreNav">
             <button data-view="requests">🔔 Requests <span class="req-badge hidden" id="reqBadge">0</span></button>
             <button data-view="quizzes">🧠 Quizzes</button>
             <button data-view="polls">📊 Polls</button>
             <button data-view="blogs">📝 Blogs</button>
-            <button data-view="leaderboard">🏆 Leaderboard</button>
+            <button data-view="leaderboard">🏆 Leaderboard<span class="ndot"></span></button>
             <button data-view="events">✨ Recent Activity</button>
           </div>
           <div class="search"><input id="searchInput" placeholder="Search people…" /></div>
@@ -506,6 +506,7 @@
         shell.querySelectorAll('#exploreNav button').forEach((x) => x.classList.remove('active'));
         document.getElementById('shell').classList.remove('viewing-main');
         state.peer = null;
+        if (b.dataset.tab === 'chats') markNav('chats', false); // seen — stop blinking
         renderList();
       });
     });
@@ -513,6 +514,7 @@
     shell.querySelectorAll('#exploreNav button').forEach((b) => {
       b.addEventListener('click', () => {
         shell.querySelectorAll('#exploreNav button').forEach((x) => x.classList.toggle('active', x === b));
+        markNav(b.dataset.view, false); // opening a section clears its indicator
         openExplore(b.dataset.view);
       });
     });
@@ -537,7 +539,10 @@
     }
   }
 
-  // Update the sidebar "Requests" badge with the number of incoming requests.
+  // Update the sidebar "Requests" badge with the number of incoming requests
+  // (pending friend requests + group invites). When that count grows — and the
+  // Requests view isn't already open — blink the button to draw attention.
+  let lastReqCount = null;
   async function refreshRequestBadge() {
     const badge = document.getElementById('reqBadge');
     if (!badge) return;
@@ -549,7 +554,27 @@
       const n = (incoming || []).length + ((groups && groups.invites) || []).length;
       badge.textContent = n;
       badge.classList.toggle('hidden', n === 0);
+      if (lastReqCount !== null && n > lastReqCount && !isExploreActive('requests')) {
+        markNav('requests', true);
+      }
+      lastReqCount = n;
     } catch (_e) { /* ignore */ }
+  }
+
+  // Toggle the live "new activity" indicator (pulsing glow + dot) on a sidebar
+  // nav button. kind: 'chats' | 'requests' | 'leaderboard'. Cleared when the
+  // user opens that section.
+  function markNav(kind, on) {
+    const sel = kind === 'chats'
+      ? '.nav button[data-tab="chats"]'
+      : `#exploreNav button[data-view="${kind}"]`;
+    const btn = document.querySelector(sel);
+    if (btn) btn.classList.toggle('has-notif', !!on);
+  }
+  // Whether the given explore view is the one currently on screen.
+  function isExploreActive(view) {
+    const btn = document.querySelector(`#exploreNav button[data-view="${view}"]`);
+    return !!(btn && btn.classList.contains('active'));
   }
 
   /* ---------- sidebar list ---------- */
@@ -1702,6 +1727,9 @@
           renderChatTabs();
         }
       }
+      // Blink the "Chats" nav button for an incoming message the user isn't
+      // actively reading (someone else's, and not the open conversation/tab).
+      if (!relevant && m.from !== state.me.id && state.tab !== 'chats') markNav('chats', true);
       if (state.tab === 'chats') renderList();
     });
 
@@ -1723,6 +1751,8 @@
         const tabId = 'g' + m.groupId;
         if (state.openChats.some((p) => p.id === tabId)) { state.unread[tabId] = true; renderChatTabs(); }
         else notify(`${m.fromName} messaged a group`);
+        // Blink the "Chats" nav button for an unread group message elsewhere.
+        if (state.tab !== 'chats') markNav('chats', true);
       }
     });
 
@@ -1730,7 +1760,19 @@
     s.on('group:changed', ({ groupId }) => {
       if (state.group && state.group.gid === groupId) openGroup(groupId); // refresh header/members
       if (state.tab === 'chats') renderList();
-      refreshRequestBadge();
+      refreshRequestBadge(); // blinks "Requests" if a new invite raised the count
+    });
+
+    // Someone sent me a relationship request — light up "Requests" live.
+    s.on('notify:request', () => {
+      refreshRequestBadge(); // recomputes count and blinks the button if it grew
+      if (isExploreActive('requests')) renderRequests(); // already open: refresh list
+    });
+
+    // The leaderboard ranking shifted (new rating / accepted friendship).
+    s.on('leaderboard:changed', () => {
+      if (isExploreActive('leaderboard')) renderLeaderboard(); // open: refresh in place
+      else markNav('leaderboard', true);
     });
 
     s.on('chat:typing', (p) => {

@@ -117,6 +117,19 @@ function notifyGroup(userIds, groupId) {
   userIds.forEach((uid) => ioRef.to(`user:${uid}`).emit('group:changed', { groupId }));
 }
 
+// Emit an event to every socket of a single user (all their open tabs). Used by
+// HTTP routes to push a live notification — e.g. a new friend request landing.
+function notifyUser(userId, event, payload) {
+  if (!ioRef || !userId) return;
+  ioRef.to(`user:${userId}`).emit(event, payload || {});
+}
+
+// Tell every connected client that the leaderboard ranking may have shifted
+// (a new rating, a new accepted friendship, …) so the UI can flag it as fresh.
+function broadcastLeaderboardChange() {
+  if (ioRef) ioRef.emit('leaderboard:changed', { at: Date.now() });
+}
+
 function initSocket(io) {
   ioRef = io;
   // Authenticate every socket from the httpOnly auth cookie.
@@ -431,4 +444,4 @@ function initSocket(io) {
   });
 }
 
-module.exports = { initSocket, isOnline, broadcastActivity, notifyGroup };
+module.exports = { initSocket, isOnline, broadcastActivity, notifyGroup, notifyUser, broadcastLeaderboardChange };

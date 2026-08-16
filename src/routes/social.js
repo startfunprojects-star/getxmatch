@@ -9,7 +9,7 @@ const { areBlocked } = require('../relations');
 const { GIFTS } = require('../gifts');
 const { listActivities } = require('../activities');
 const { isValidRelType, sentText, acceptedText, relEmoji } = require('../relationships');
-const { broadcastActivity } = require('../socket');
+const { broadcastActivity, notifyUser, broadcastLeaderboardChange } = require('../socket');
 
 const router = express.Router();
 
@@ -70,6 +70,7 @@ router.post('/rate/:username', requireAuth, (req, res) => {
      ON CONFLICT(rater_id, ratee_id) DO UPDATE SET stars = excluded.stars, created_at = excluded.created_at`
   ).run(req.user.id, target.id, stars, Date.now());
 
+  broadcastLeaderboardChange(); // a new/changed rating can reshuffle ranks
   res.json({ rating: ratingSummary(target.id, req.user.id) });
 });
 
@@ -167,6 +168,7 @@ router.post('/friend/:username', requireAuth, (req, res) => {
     if (row.addressee_id === req.user.id) {
       db.prepare('UPDATE friendships SET status = ? WHERE id = ?').run('accepted', row.id);
       announceRelation('accepted', row.rel_type || 'friend', req.user.id, req.user.username, target.id, target.username);
+      broadcastLeaderboardChange(); // a new accepted friendship can reshuffle ranks
       return res.json({ state: 'friends' });
     }
     return res.status(409).json({ error: 'You already sent a request.' });
@@ -176,6 +178,8 @@ router.post('/friend/:username', requireAuth, (req, res) => {
     'INSERT INTO friendships (requester_id, addressee_id, status, rel_type, created_at) VALUES (?, ?, ?, ?, ?)'
   ).run(req.user.id, target.id, 'pending', type, Date.now());
   announceRelation('sent', type, req.user.id, req.user.username, target.id, target.username);
+  // Live-notify the addressee so their "Requests" button lights up immediately.
+  notifyUser(target.id, 'notify:request', { from: req.user.username, type });
   res.status(201).json({ state: 'outgoing', type });
 });
 
@@ -193,6 +197,7 @@ router.post('/friend/:username/accept', requireAuth, (req, res) => {
 
   db.prepare('UPDATE friendships SET status = ? WHERE id = ?').run('accepted', row.id);
   announceRelation('accepted', row.rel_type || 'friend', req.user.id, req.user.username, target.id, target.username);
+  broadcastLeaderboardChange(); // a new accepted friendship can reshuffle ranks
   res.json({ state: 'friends' });
 });
 
