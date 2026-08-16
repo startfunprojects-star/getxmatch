@@ -179,16 +179,19 @@ router.post('/users', requireAdmin, (req, res) => {
     .prepare('INSERT INTO users (username, email, password_hash, created_at) VALUES (?, NULL, ?, ?)')
     .run(username, bcrypt.hashSync(password, 12), now);
 
-  // Optionally seed a minimal profile so the account is browsable right away.
+  // Always seed a minimal profile so the account is browsable and its name
+  // resolves everywhere. Without a profile row the user is excluded from the
+  // people list and leaderboard (both inner-join profiles) and shows up as a
+  // "user<id>" fallback in chats. Default the display name to the username when
+  // the admin didn't provide one.
   const dn = (displayName || '').trim();
-  if (dn) {
-    db.prepare(
-      'INSERT INTO profiles (user_id, display_name, bio, avatar, updated_at) VALUES (?, ?, \'\', NULL, ?)'
-    ).run(info.lastInsertRowid, dn.slice(0, 50), now);
-  }
+  const profileName = (dn || username).slice(0, 50);
+  db.prepare(
+    'INSERT INTO profiles (user_id, display_name, bio, avatar, updated_at) VALUES (?, ?, \'\', NULL, ?)'
+  ).run(info.lastInsertRowid, profileName, now);
 
   res.status(201).json({
-    user: { id: info.lastInsertRowid, username, email: null, displayName: dn || null },
+    user: { id: info.lastInsertRowid, username, email: null, displayName: profileName },
   });
 });
 

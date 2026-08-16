@@ -465,6 +465,22 @@ for (const t of ['quizzes', 'polls', 'blogs']) {
   }
 }
 
+// Heal any user that has no profile row — e.g. accounts admin-created before a
+// profile was made mandatory. Without a profile they vanish from the people
+// list and leaderboard (both inner-join profiles) and render as a "user<id>"
+// fallback in chats. Give them a minimal profile named after their username.
+(function backfillMissingProfiles() {
+  const orphans = db
+    .prepare('SELECT u.id, u.username FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE p.user_id IS NULL')
+    .all();
+  if (!orphans.length) return;
+  const now = Date.now();
+  const insert = db.prepare(
+    "INSERT INTO profiles (user_id, display_name, bio, avatar, updated_at) VALUES (?, ?, '', NULL, ?)"
+  );
+  for (const r of orphans) insert.run(r.id, String(r.username).slice(0, 50), now);
+})();
+
 // Seed the single admin row (email from config). Never overwrites an existing
 // password; updates the target email if it changed in config.
 (function seedAdmin() {
