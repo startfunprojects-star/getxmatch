@@ -3,8 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>getxmatch</title>
-  <meta name="description" content="A lightweight social space for adults — profiles, galleries, and real-time chat." />
+  <title>getxmatch — profiles, quizzes, polls & real-time chat</title>
+  <meta name="description" content="A lightweight social space for adults — profiles, galleries, compatibility quizzes, community polls and real-time chat." />
+  <meta name="keywords" content="getxmatch, dating, compatibility quiz, social chat, community polls, meet people" />
+  <meta name="theme-color" content="#0f1117" />
+  <meta property="og:site_name" content="getxmatch" />
+  <meta property="og:title" content="getxmatch — profiles, quizzes, polls & real-time chat" />
+  <meta property="og:description" content="A lightweight social space for adults — profiles, galleries, compatibility quizzes, community polls and real-time chat." />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="getxmatch" />
+  <meta name="twitter:description" content="A lightweight social space for adults — profiles, galleries, quizzes, polls and real-time chat." />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>💬</text></svg>" />
   <link rel="stylesheet" href="/css/style.css" />
 </head>
@@ -12,6 +21,19 @@
   <div id="app">
     <div class="loading">Loading…</div>
   </div>
+  <!-- Crawlable navigation for search engines and no-JS clients. The interactive
+       app is rendered by /js/app.js above; these links expose the public content. -->
+  <noscript>
+    <nav aria-label="Site">
+      <h1>getxmatch</h1>
+      <p>A lightweight social space for adults — profiles, galleries, compatibility quizzes, community polls and real-time chat.</p>
+      <ul>
+        <li><a href="/quizzes">Compatibility quizzes</a></li>
+        <li><a href="/polls">Community polls</a></li>
+        <li><a href="/blog">Blog</a></li>
+      </ul>
+    </nav>
+  </noscript>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/app.js"></script>

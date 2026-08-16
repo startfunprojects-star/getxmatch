@@ -22,6 +22,7 @@ const eventsRoutes = require('./src/routes/events');
 const groupRoutes = require('./src/routes/groups');
 const roleplayRoutes = require('./src/routes/roleplay');
 const matchRoutes = require('./src/routes/match');
+const pageRoutes = require('./src/routes/pages');
 
 const app = express();
 app.set('trust proxy', 1); // behind nginx on the VPS
@@ -83,6 +84,12 @@ app.get(/^\/admin(\/.*)?$/, (req, res) => {
 app.get(/^\/m(\/.*)?$/, (req, res) => {
   res.sendFile(path.join(publicDir, 'match.html'));
 });
+
+// Public, server-rendered, crawlable pages + sitemap.xml + robots.txt. Mounted
+// before static/SPA so `/` gets injected canonical+OG meta and /quizzes, /polls,
+// /blog and content detail URLs return real HTML for search engines. Requests
+// with no matching page route fall through to the static assets and SPA below.
+app.use(pageRoutes);
 
 app.use(express.static(publicDir, { index: 'index.html' }));
 

@@ -1,0 +1,252 @@
+'use strict';
+
+// Server-side rendering helpers for the public, crawlable pages (quizzes,
+// polls, blogs). These pages exist purely so search engines and social-media
+// unfurlers can read real content and metadata — the logged-in experience is
+// still the SPA. Every field the admin fills under "On-page SEO" is honoured
+// here, with sensible fallbacks derived from the content itself.
+
+const config = require('./config');
+
+const SITE_NAME = 'getxmatch';
+const SITE_TAGLINE = 'A lightweight social space for adults — profiles, galleries, quizzes, polls and real-time chat.';
+const DEFAULT_OG_TYPE = 'website';
+
+// HTML-escape text for safe interpolation into markup.
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Escape a value for use inside an HTML attribute (quotes matter most).
+function escAttr(s) {
+  return esc(s);
+}
+
+// Turn a site-relative path into an absolute URL using the configured base.
+function absUrl(pathname) {
+  if (!pathname) return config.publicUrl;
+  if (/^https?:\/\//i.test(pathname)) return pathname;
+  return config.publicUrl + (pathname.startsWith('/') ? '' : '/') + pathname;
+}
+
+// A URL-friendly slug (mirrors the admin slugify so canonical links match).
+function slugify(s) {
+  return String(s || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+// Canonical path for a content item: /<base>/<id>/<slug>. The id guarantees a
+// unique, always-resolvable URL; the slug carries the keywords for SEO.
+function itemPath(base, id, slugSource) {
+  const slug = slugify(slugSource);
+  return `/${base}/${id}${slug ? '/' + slug : ''}`;
+}
+
+// Truncate a plain-text string to `n` chars on a word boundary, adding an
+// ellipsis. Used to build meta descriptions from body text.
+function summarize(text, n = 160) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (t.length <= n) return t;
+  return t.slice(0, n - 1).replace(/\s+\S*$/, '') + '…';
+}
+
+// Merge an admin-provided SEO object with fallbacks derived from the content.
+// Returns a flat, ready-to-render descriptor.
+//   seo            the parsed `seo` JSON blob (may be {})
+//   canonicalPath  site-relative canonical path for this page
+//   title/desc     content-derived fallbacks
+//   image          site-relative or absolute fallback image (optional)
+//   type           OG type (website / article)
+function resolveSeo(seo, { canonicalPath, title, description, image, type }) {
+  seo = seo || {};
+  const metaTitle = (seo.metaTitle || title || SITE_NAME).slice(0, 70);
+  const fullTitle = metaTitle === SITE_NAME ? SITE_NAME : `${metaTitle} · ${SITE_NAME}`;
+  const metaDescription = (seo.metaDescription || description || SITE_TAGLINE).slice(0, 320);
+  const canonical = absUrl(seo.canonicalUrl || canonicalPath);
+  const ogImage = seo.ogImage || seo.twitterImage || image || '';
+  return {
+    title: fullTitle,
+    metaTitle,
+    description: metaDescription,
+    keywords: seo.metaKeywords || '',
+    canonical,
+    noindex: !!seo.noindex,
+    nofollow: !!seo.nofollow,
+    ogTitle: seo.ogTitle || metaTitle,
+    ogDescription: seo.ogDescription || metaDescription,
+    ogType: seo.ogType || type || DEFAULT_OG_TYPE,
+    ogImage: ogImage ? absUrl(ogImage) : '',
+    twitterCard: seo.twitterCard || (ogImage ? 'summary_large_image' : 'summary'),
+    twitterTitle: seo.twitterTitle || seo.ogTitle || metaTitle,
+    twitterDescription: seo.twitterDescription || seo.ogDescription || metaDescription,
+    twitterImage: (seo.twitterImage || ogImage) ? absUrl(seo.twitterImage || ogImage) : '',
+  };
+}
+
+// Build the <head> meta block from a resolved SEO descriptor.
+function headTags(s) {
+  const robots = [s.noindex ? 'noindex' : 'index', s.nofollow ? 'nofollow' : 'follow'].join(', ');
+  const tags = [
+    `<title>${esc(s.title)}</title>`,
+    `<meta name="description" content="${escAttr(s.description)}" />`,
+    s.keywords ? `<meta name="keywords" content="${escAttr(s.keywords)}" />` : '',
+    `<meta name="robots" content="${robots}" />`,
+    `<link rel="canonical" href="${escAttr(s.canonical)}" />`,
+    // Open Graph
+    `<meta property="og:site_name" content="${escAttr(SITE_NAME)}" />`,
+    `<meta property="og:title" content="${escAttr(s.ogTitle)}" />`,
+    `<meta property="og:description" content="${escAttr(s.ogDescription)}" />`,
+    `<meta property="og:type" content="${escAttr(s.ogType)}" />`,
+    `<meta property="og:url" content="${escAttr(s.canonical)}" />`,
+    s.ogImage ? `<meta property="og:image" content="${escAttr(s.ogImage)}" />` : '',
+    // Twitter
+    `<meta name="twitter:card" content="${escAttr(s.twitterCard)}" />`,
+    `<meta name="twitter:title" content="${escAttr(s.twitterTitle)}" />`,
+    `<meta name="twitter:description" content="${escAttr(s.twitterDescription)}" />`,
+    s.twitterImage ? `<meta name="twitter:image" content="${escAttr(s.twitterImage)}" />` : '',
+  ];
+  return tags.filter(Boolean).join('\n  ');
+}
+
+// One or more JSON-LD blocks.
+function jsonLdTag(obj) {
+  if (!obj) return '';
+  const arr = Array.isArray(obj) ? obj : [obj];
+  return arr
+    .filter(Boolean)
+    .map((o) => `<script type="application/ld+json">${JSON.stringify(o).replace(/</g, '\\u003c')}</script>`)
+    .join('\n  ');
+}
+
+// A BreadcrumbList JSON-LD from [{name, path}] crumbs.
+function breadcrumbLd(crumbs) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: crumbs.map((c, i) => ({
+      '@type': 'ListItem',
+      position: i + 1,
+      name: c.name,
+      item: absUrl(c.path),
+    })),
+  };
+}
+
+// Visible breadcrumb trail markup.
+function breadcrumbHtml(crumbs) {
+  const parts = crumbs.map((c, i) =>
+    i === crumbs.length - 1
+      ? `<span aria-current="page">${esc(c.name)}</span>`
+      : `<a href="${escAttr(c.path)}">${esc(c.name)}</a>`
+  );
+  return `<nav class="crumbs" aria-label="Breadcrumb">${parts.join('<span class="sep">›</span>')}</nav>`;
+}
+
+// The shared inline stylesheet for public pages — small, fast, theme-aware, and
+// independent of the app's large SPA stylesheet.
+const PAGE_CSS = `
+:root{--bg:#0f1117;--bg2:#171a23;--bg3:#20242f;--text:#e8eaf0;--muted:#9aa0ad;--border:#2a2f3a;--accent:#ff4d7d;--accent2:#7c5cff}
+@media (prefers-color-scheme:light){:root{--bg:#f7f8fb;--bg2:#fff;--bg3:#eef0f5;--text:#1a1d26;--muted:#606672;--border:#e2e5ec;--accent:#e5356a;--accent2:#6a4bff}}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.6}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:820px;margin:0 auto;padding:0 20px}
+header.site{border-bottom:1px solid var(--border);background:var(--bg2)}
+header.site .wrap{display:flex;align-items:center;justify-content:space-between;height:60px;gap:16px}
+.brand{font-weight:800;font-size:20px;color:var(--text)}.brand .x{color:var(--accent)}
+nav.top a{color:var(--muted);font-weight:600;margin-left:18px;font-size:15px}
+nav.top a:hover{color:var(--text)}
+main{padding:28px 0 56px}
+h1{font-size:30px;line-height:1.25;margin:.2em 0 .4em}
+h2{font-size:22px;margin:1.4em 0 .5em}
+.lede{color:var(--muted);font-size:18px;margin:0 0 20px}
+.crumbs{font-size:13px;color:var(--muted);margin-bottom:14px}
+.crumbs a{color:var(--muted)}.crumbs .sep{margin:0 7px;opacity:.6}
+.card{display:block;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin:0 0 14px}
+.card h3{margin:0 0 6px;font-size:19px}.card h3 a{color:var(--text)}
+.meta{color:var(--muted);font-size:13px;margin:0 0 8px}
+.excerpt{margin:0;color:var(--text)}
+.q{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin:0 0 12px}
+.q .prompt{font-weight:700;margin:0 0 8px}
+.q ul{margin:0;padding-left:20px}.q li{margin:3px 0}
+.opt{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}
+.opt:last-child{border-bottom:none}
+.bar{height:8px;border-radius:6px;background:linear-gradient(90deg,var(--accent),var(--accent2));margin-top:4px}
+.cta{display:inline-block;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-weight:700;padding:12px 22px;border-radius:999px;margin:18px 0}
+.cta:hover{text-decoration:none;opacity:.92}
+.cover{width:100%;max-height:380px;object-fit:cover;border-radius:14px;margin:0 0 20px}
+article.post{font-size:17px}article.post p{margin:0 0 1em}
+footer.site{border-top:1px solid var(--border);color:var(--muted);font-size:13px;padding:24px 0;background:var(--bg2)}
+footer.site .wrap{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between}
+footer.site a{color:var(--muted)}
+.empty{color:var(--muted);padding:30px 0}
+`;
+
+// Full HTML document for a public page.
+//   seoDescriptor   from resolveSeo()
+//   jsonLd          object/array for structured data
+//   bodyHtml        the <main> inner markup (already escaped)
+function renderDocument({ seoDescriptor, jsonLd, bodyHtml }) {
+  const favicon = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>💬</text></svg>";
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0f1117" />
+  ${headTags(seoDescriptor)}
+  <link rel="icon" href="${favicon}" />
+  ${jsonLdTag(jsonLd)}
+  <style>${PAGE_CSS}</style>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="/">getx<span class="x">match</span></a>
+      <nav class="top">
+        <a href="/quizzes">Quizzes</a>
+        <a href="/polls">Polls</a>
+        <a href="/blog">Blog</a>
+        <a href="/">Open app</a>
+      </nav>
+    </div>
+  </header>
+  <main>
+    <div class="wrap">
+${bodyHtml}
+    </div>
+  </main>
+  <footer class="site">
+    <div class="wrap">
+      <span>© ${new Date().getFullYear()} ${esc(SITE_NAME)} — ${esc(SITE_TAGLINE)}</span>
+      <span><a href="/quizzes">Quizzes</a> · <a href="/polls">Polls</a> · <a href="/blog">Blog</a> · <a href="/sitemap.xml">Sitemap</a></span>
+    </div>
+  </footer>
+</body>
+</html>`;
+}
+
+module.exports = {
+  SITE_NAME,
+  SITE_TAGLINE,
+  esc,
+  escAttr,
+  absUrl,
+  slugify,
+  itemPath,
+  summarize,
+  resolveSeo,
+  jsonLdTag,
+  breadcrumbLd,
+  breadcrumbHtml,
+  renderDocument,
+};
