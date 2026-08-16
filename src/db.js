@@ -481,6 +481,21 @@ for (const t of ['quizzes', 'polls', 'blogs']) {
   for (const r of orphans) insert.run(r.id, String(r.username).slice(0, 50), now);
 })();
 
+// Presence + digest bookkeeping on users, for the daily "offline activity"
+// email. last_seen_at = when the user last went fully offline (messages after
+// it are unseen); last_digest_at = the cut-off up to which they've been emailed.
+// Existing users are backfilled to "now" so the first run never dumps a backlog.
+{
+  const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!cols.includes('last_seen_at')) {
+    db.exec('ALTER TABLE users ADD COLUMN last_seen_at INTEGER');
+  }
+  if (!cols.includes('last_digest_at')) {
+    db.exec('ALTER TABLE users ADD COLUMN last_digest_at INTEGER NOT NULL DEFAULT 0');
+    db.prepare('UPDATE users SET last_digest_at = ?').run(Date.now());
+  }
+}
+
 // Seed the single admin row (email from config). Never overwrites an existing
 // password; updates the target email if it changed in config.
 (function seedAdmin() {

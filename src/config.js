@@ -33,6 +33,12 @@ const config = {
   // Admin password reset link lifetime.
   adminResetTtlMs: (parseInt(process.env.ADMIN_RESET_TTL_MIN, 10) || 60) * 60 * 1000,
 
+  // Daily "offline activity" digest email. Sent once a day at digestHour (local
+  // server time, 0-23) to offline users who got messages/requests since they
+  // were last online. Set DIGEST_ENABLED=false to turn it off.
+  digestEnabled: process.env.DIGEST_ENABLED !== 'false',
+  digestHour: Math.min(23, Math.max(0, parseInt(process.env.DIGEST_HOUR, 10) || 12)),
+
   // Outgoing mail (Hostinger SMTP by default). If user/pass are blank the
   // mailer falls back to logging messages to the server console.
   smtp: {

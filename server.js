@@ -10,6 +10,7 @@ const { Server } = require('socket.io');
 const config = require('./src/config');
 const { initSocket } = require('./src/socket');
 const { startActivityStream } = require('./src/activityStream');
+const { startDigestScheduler } = require('./src/digest');
 
 const authRoutes = require('./src/routes/auth');
 const profileRoutes = require('./src/routes/profile');
@@ -113,6 +114,7 @@ const io = new Server(server, {
 });
 initSocket(io);
 startActivityStream(); // continuous, shared "recent activity" generator
+startDigestScheduler(); // daily offline-activity email digest
 
 server.listen(config.port, () => {
   console.log(`getxmatch listening on http://localhost:${config.port} (${config.env})`);

@@ -59,4 +59,34 @@ function sendAdminResetLink(url) {
   return sendMail({ to: config.adminEmail, subject, text, html });
 }
 
-module.exports = { sendMail, sendSignupOtp, sendAdminResetLink, smtpReady };
+// Daily "you have unseen activity" digest for an offline user. `parts` is an
+// array of human-readable lines (e.g. "3 new messages", "1 friend request").
+function sendOfflineDigest(email, { name, parts, appUrl }) {
+  const greeting = name ? `Hi ${name},` : 'Hi,';
+  const subject = 'You have new activity on getxmatch';
+  const bullets = parts.map((p) => `• ${p}`).join('\n');
+  const text =
+    `${greeting}\n\n` +
+    `While you were away, you received:\n\n${bullets}\n\n` +
+    `Sign in to see them: ${appUrl}\n\n` +
+    `— getxmatch\n\n` +
+    `You're receiving this because you have an account on getxmatch.`;
+  const liHtml = parts.map((p) => `<li>${escapeHtml(p)}</li>`).join('');
+  const html =
+    `<p>${escapeHtml(greeting)}</p>` +
+    `<p>While you were away, you received:</p>` +
+    `<ul style="font-size:16px;line-height:1.6">${liHtml}</ul>` +
+    `<p><a href="${escapeHtml(appUrl)}" style="display:inline-block;background:#ff4d7d;color:#fff;` +
+    `font-weight:700;padding:12px 22px;border-radius:999px;text-decoration:none">Open getxmatch →</a></p>` +
+    `<p style="color:#888;font-size:12px">You're receiving this because you have an account on getxmatch.</p>`;
+  return sendMail({ to: email, subject, text, html });
+}
+
+// Minimal HTML escaping for values interpolated into the digest markup.
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+module.exports = { sendMail, sendSignupOtp, sendAdminResetLink, sendOfflineDigest, smtpReady };

@@ -440,6 +440,13 @@ function initSocket(io) {
 
     socket.on('disconnect', () => {
       removeSocket(me.id, socket.id);
+      // When the user's last tab disconnects they're fully offline: stamp the
+      // time so the daily digest knows which later messages went unseen.
+      if (!isOnline(me.id)) {
+        try {
+          db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), me.id);
+        } catch (_e) { /* non-fatal */ }
+      }
     });
   });
 }
