@@ -18,6 +18,8 @@
     typingTimer: null,
     gifts: null,         // naughty-gift catalog, loaded lazily
     giftsById: {},       // id -> gift for rendering
+    liveByPeer: {},      // otherUserId -> broadcast view when a chat of mine is live
+    watching: null,      // token of a broadcast being watched inline, or null
   };
 
   // Fetch (and cache) the naughty-gift catalog.
@@ -475,6 +477,7 @@
             <button data-view="polls">📊 Polls</button>
             <button data-view="blogs">📝 Blogs</button>
             <button data-view="leaderboard">🏆 Leaderboard<span class="ndot"></span></button>
+            <button data-view="live">🔴 Live<span class="ndot"></span></button>
             <button data-view="events">✨ Recent Activity</button>
           </div>
           <div class="search"><input id="searchInput" placeholder="Search people…" /></div>
@@ -526,6 +529,7 @@
     });
 
     connectSocket();
+    syncMyBroadcasts(); // restore live banner for any broadcast I'm already in
     renderList();
     renderMainHome(); // chat box shows the recent-activity feed by default
     refreshRequestBadge();
@@ -821,6 +825,7 @@
     catch (e) { return notify(e.message); }
     try { messages = (await api.get('/api/groups/' + gid + '/messages')).messages || []; } catch (_e) {}
 
+    stopWatching(); // leaving any inline broadcast we were watching
     state.peer = null;
     state.group = { gid, name: group.name, members: group.members, max: group.max };
     closeReactionPalette();
@@ -916,6 +921,7 @@
   function renderMainHome(focusMain) {
     const main = document.getElementById('main');
     if (!main) return;
+    stopWatching(); // leaving any inline broadcast we were watching
     state.peer = null;
     closeReactionPalette();
     if (focusMain) document.getElementById('shell').classList.add('viewing-main');
@@ -1104,6 +1110,7 @@
   }
 
   async function openChat(peer) {
+    stopWatching(); // leaving any inline broadcast we were watching
     state.peer = peer;
     state.group = null; // leaving any group view
     state.replyTo = null; // clear any half-composed reply from a previous chat
@@ -1130,8 +1137,10 @@
             <div class="name" id="peerName" style="cursor:pointer">${esc(peer.displayName || peer.username)}</div>
             <div class="status">@${esc(peer.username)}</div>
           </div>
+          <button class="ghost small" id="broadcastBtn" title="Broadcast this chat live — anyone can watch and comment">🔴 Broadcast</button>
           <button class="ghost small" id="makeGroupBtn" title="Start a group chat with this person and others">👥 Group</button>
         </div>
+        <div class="live-banner hidden" id="liveBanner"></div>
         <div class="chat-activity-bar hidden" id="activityBar">
           <div class="activity-status" id="activityStatus"></div>
           <button class="icon-btn small" id="activityImgBtn" type="button" title="Share an image / GIF to Recent Activity (max 5 MB)">🖼️</button>
@@ -1142,7 +1151,10 @@
             <input id="activityCustom" class="hidden" type="text" maxlength="40" placeholder="type your own…" />
           </label>
         </div>
-        <div class="chat-body" id="chatBody"></div>
+        <div class="chat-stage">
+          <div class="chat-body" id="chatBody"></div>
+          <div class="fly-layer" id="chatFlyLayer"></div>
+        </div>
         <div class="typing hidden" id="typing">typing…</div>
         <div class="roleplay-bar hidden" id="roleplayBar"></div>
         <div class="gift-picker hidden" id="giftPicker"></div>
@@ -1170,6 +1182,10 @@
     view.querySelector('#peerAvatar').addEventListener('click', openPeerProfile);
     view.querySelector('#peerName').addEventListener('click', openPeerProfile);
     view.querySelector('#makeGroupBtn').addEventListener('click', () => openGroupCreator(peer));
+    view.querySelector('#broadcastBtn').addEventListener('click', () => toggleBroadcast(peer));
+
+    // If this conversation is already being broadcast, show its live banner.
+    reflectBroadcast(peer.id);
 
     setupActivityBar(view, peer);
 
@@ -1706,6 +1722,243 @@
     scrollBody();
   }
 
+  /* ---------- broadcast ("live chat") ---------- */
+
+  // On (re)connect, learn about any broadcast I'm already a participant of —
+  // e.g. after a reload, or when my peer started one before this socket
+  // connected. The live event only fires at start, so we backfill here.
+  async function syncMyBroadcasts() {
+    try {
+      const { broadcasts } = await api.get('/api/broadcast');
+      (broadcasts || []).forEach((v) => {
+        if (v.ownerId === state.me.id || v.peerId === state.me.id) {
+          const otherId = v.ownerId === state.me.id ? v.peerId : v.ownerId;
+          state.liveByPeer[otherId] = v;
+        }
+      });
+      if (state.peer) reflectBroadcast(state.peer.id);
+    } catch (_e) { /* ignore */ }
+  }
+
+  // Start or stop broadcasting the open conversation with `peer`.
+  function toggleBroadcast(peer) {
+    if (!state.socket) return;
+    const existing = state.liveByPeer[peer.id];
+    if (existing) {
+      state.socket.emit('broadcast:stop', { token: existing.token }, (res) => {
+        if (res && res.error) notify(res.error);
+      });
+      return;
+    }
+    const title = prompt(
+      'Broadcast this chat live?\n\nAnyone — including logged-out visitors — will be able to WATCH this conversation from now on and post flying comments. They can never join or send private messages.\n\nGive it a title (optional):',
+      ''
+    );
+    if (title === null) return; // cancelled
+    state.socket.emit('broadcast:start', { peerId: peer.id, title: (title || '').trim() }, (res) => {
+      if (res && res.error) notify(res.error);
+      // The broadcast:live event updates the UI.
+    });
+  }
+
+  // Reflect the current broadcast state for a conversation into its chat head
+  // button and live banner.
+  function reflectBroadcast(peerId) {
+    const banner = document.getElementById('liveBanner');
+    const btn = document.getElementById('broadcastBtn');
+    if (!banner) return;
+    const b = state.liveByPeer[peerId];
+    if (!b) {
+      banner.classList.add('hidden');
+      banner.innerHTML = '';
+      if (btn) { btn.classList.remove('on'); btn.textContent = '🔴 Broadcast'; }
+      return;
+    }
+    if (btn) { btn.classList.add('on'); btn.textContent = '⏹ Stop live'; }
+    const link = location.origin + '/live/' + encodeURIComponent(b.token);
+    banner.classList.remove('hidden');
+    banner.innerHTML = '';
+    const bar = el(`
+      <div class="live-banner-inner">
+        <span class="live-dot"></span>
+        <span class="live-banner-label">LIVE</span>
+        <span class="live-banner-count" id="liveBannerCount">👁️ ${b.viewers || 0} watching</span>
+        <button class="ghost small" id="liveCopyBtn" title="Copy the public watch link">🔗 Copy link</button>
+        <button class="ghost small" id="liveStopBtn">Stop</button>
+      </div>
+    `);
+    banner.appendChild(bar);
+    bar.querySelector('#liveStopBtn').addEventListener('click', () => {
+      state.socket.emit('broadcast:stop', { token: b.token }, (res) => { if (res && res.error) notify(res.error); });
+    });
+    bar.querySelector('#liveCopyBtn').addEventListener('click', async () => {
+      const cb = bar.querySelector('#liveCopyBtn');
+      try { await navigator.clipboard.writeText(link); const t = cb.textContent; cb.textContent = 'Copied!'; setTimeout(() => { cb.textContent = t; }, 1500); }
+      catch (_e) { prompt('Copy this link to share:', link); }
+    });
+  }
+
+  // Create a short-lived flying comment inside a `.fly-layer` (id given). It
+  // drifts across and is removed within 10 seconds.
+  const _flownIds = {};
+  function flyComment(layerId, c) {
+    const layer = document.getElementById(layerId);
+    if (!layer || !c) return;
+    if (c.id) { // one comment flies once, even if delivered on two channels
+      if (_flownIds[c.id]) return;
+      _flownIds[c.id] = 1;
+      setTimeout(() => { delete _flownIds[c.id]; }, 12000);
+    }
+    const node = el('<div class="fly-comment"><b></b><span></span></div>');
+    node.querySelector('b').textContent = (c.name || 'Guest') + ': ';
+    node.querySelector('span').textContent = c.text || '';
+    node.style.top = (6 + Math.random() * 78) + '%';
+    layer.appendChild(node);
+    const kill = () => { if (node.parentNode) node.parentNode.removeChild(node); };
+    node.addEventListener('animationend', kill);
+    setTimeout(kill, 10000);
+  }
+
+  // The Live directory (registered users): every active broadcast, watchable
+  // inline.
+  async function renderLive() {
+    const main = openMainView();
+    main.appendChild(sectionShell('🔴 Live chats',
+      'Conversations being broadcast right now. Watch any of them unfold live and drop a flying comment — participants only see how many are watching, never who.'));
+    const body = main.querySelector('#sectionBody');
+    let data;
+    try { data = await api.get('/api/broadcast'); }
+    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+    const list = data.broadcasts || [];
+    body.innerHTML = '';
+    if (!list.length) {
+      body.appendChild(el('<div class="empty-main">📭 No one is broadcasting right now. Open any chat and hit 🔴 Broadcast to go live.</div>'));
+      return;
+    }
+    const grid = el('<div class="live-grid"></div>');
+    list.forEach((b) => {
+      const card = el(`
+        <div class="live-card as-btn" tabindex="0">
+          <div class="live-card-badge">● LIVE</div>
+          <div class="live-card-title">${esc(b.title || 'A live chat')}</div>
+          <div class="live-card-people"><span>${esc(b.ownerName)}</span><span class="live-card-amp">⇄</span><span>${esc(b.peerName)}</span></div>
+          <div class="live-card-meta"><span>👁️ ${b.viewers} watching</span></div>
+        </div>
+      `);
+      card.addEventListener('click', () => renderLiveWatch(b.token));
+      card.addEventListener('keydown', (e) => { if (e.key === 'Enter') renderLiveWatch(b.token); });
+      grid.appendChild(card);
+    });
+    body.appendChild(grid);
+  }
+
+  // Watch a single broadcast inline, reusing the app's socket.
+  function renderLiveWatch(token) {
+    const main = openMainView(); // leaves any previously-watched broadcast
+    state.watching = token;
+    const view = el(`
+      <div class="watch inapp">
+        <div class="watch-head">
+          <button class="icon-btn small" id="watchBack" title="All live chats">←</button>
+          <div class="watch-id">
+            <div class="watch-title" id="watchTitle">Live chat</div>
+            <div class="watch-people" id="watchPeople"></div>
+          </div>
+          <div class="watch-live"><span class="live-dot"></span>LIVE</div>
+          <div class="watch-viewers" id="watchViewers">👁️ 0</div>
+        </div>
+        <div class="watch-stage">
+          <div class="watch-body" id="watchBody"><div class="loading">Connecting…</div></div>
+          <div class="fly-layer" id="watchFlyLayer"></div>
+        </div>
+        <div class="watch-note">👀 You're watching — you can't join the chat, but your comment flies across everyone's screen for a moment.</div>
+        <div class="watch-composer">
+          <input type="text" id="watchComment" class="watch-comment" maxlength="200" placeholder="Send a flying comment…" autocomplete="off" />
+          <button class="primary" id="watchSend">Send</button>
+          <button class="ghost" id="watchShare" title="Share this live chat">Share</button>
+        </div>
+      </div>
+    `);
+    main.appendChild(view);
+
+    view.querySelector('#watchBack').addEventListener('click', () => { stopWatching(); renderLive(); });
+    const input = view.querySelector('#watchComment');
+    const send = () => {
+      const text = (input.value || '').trim();
+      if (!text) return;
+      state.socket.emit('broadcast:comment', { token, text }, (res) => { if (res && res.error) flashWatchError(res.error); });
+      input.value = ''; input.focus();
+    };
+    view.querySelector('#watchSend').addEventListener('click', send);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+    view.querySelector('#watchShare').addEventListener('click', () => {
+      const url = location.origin + '/live/' + encodeURIComponent(token);
+      navigator.clipboard.writeText(url).then(() => notifyToast('Link copied to share')).catch(() => prompt('Copy this link:', url));
+    });
+
+    state.socket.emit('broadcast:watch', { token }, (res) => {
+      const body = document.getElementById('watchBody');
+      if (!body || state.watching !== token) return;
+      if (!res || res.error) { body.innerHTML = `<div class="empty-main">${esc((res && res.error) || 'This broadcast has ended.')}</div>`; return; }
+      state.watchInfo = res.info;
+      document.getElementById('watchTitle').textContent = res.info.title || 'Live chat';
+      document.getElementById('watchPeople').textContent = res.info.ownerName + ' ⇄ ' + res.info.peerName;
+      document.getElementById('watchViewers').textContent = '👁️ ' + res.info.viewers;
+      body.innerHTML = '';
+      const msgs = res.messages || [];
+      if (!msgs.length) body.appendChild(el('<div class="watch-hint">Waiting for the next message…</div>'));
+      else msgs.forEach(appendWatchMessage);
+    });
+  }
+
+  function appendWatchMessage(m) {
+    const body = document.getElementById('watchBody');
+    if (!body) return;
+    const hint = body.querySelector('.watch-hint');
+    if (hint) hint.remove();
+    const side = state.watchInfo && m.from === state.watchInfo.ownerId ? 'owner' : 'peer';
+    const row = el(`
+      <div class="watch-msg ${side}">
+        <div class="watch-msg-name">${esc(m.fromName)}</div>
+        <div class="watch-bubble${m.kind && m.kind !== 'text' ? ' special' : ''}"></div>
+        <div class="watch-msg-time">${fmtTime(m.at)}</div>
+      </div>
+    `);
+    row.querySelector('.watch-bubble').textContent = m.text;
+    body.appendChild(row);
+    const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 120;
+    if (nearBottom) body.scrollTop = body.scrollHeight;
+  }
+
+  function flashWatchError(msg) {
+    const input = document.getElementById('watchComment');
+    if (!input) return;
+    const prev = input.placeholder;
+    input.placeholder = msg;
+    setTimeout(() => { if (input) input.placeholder = prev; }, 1800);
+  }
+
+  // Toast-ish helper that never depends on an open chat body.
+  function notifyToast(text) {
+    const t = el(`<div class="toast">${esc(text)}</div>`);
+    document.body.appendChild(t);
+    setTimeout(() => { if (t.parentNode) t.parentNode.removeChild(t); }, 2200);
+  }
+
+  function showWatchEnded() {
+    const body = document.getElementById('watchBody');
+    if (body) body.innerHTML = '<div class="empty-main">📴 This broadcast has ended.</div>';
+  }
+
+  // Stop watching the current broadcast (if any) and tell the server.
+  function stopWatching() {
+    if (!state.watching) return;
+    const token = state.watching;
+    state.watching = null;
+    state.watchInfo = null;
+    if (state.socket) state.socket.emit('broadcast:unwatch', { token });
+  }
+
   /* ---------- socket ---------- */
   function connectSocket() {
     if (state.socket) state.socket.disconnect();
@@ -1816,6 +2069,63 @@
       const peerId = state.peer && state.peer.id;
       // Only update the banner when the progress is for the open conversation.
       if (peerId && p && p.peerId === peerId) updateRoleplayBar(p);
+    });
+
+    // ----- broadcast ("live chat") events -----
+
+    // A conversation I'm part of went live (I'm owner or peer).
+    s.on('broadcast:live', (view) => {
+      if (!view) return;
+      const otherId = view.ownerId === state.me.id ? view.peerId : view.ownerId;
+      state.liveByPeer[otherId] = view;
+      if (state.peer && state.peer.id === otherId) reflectBroadcast(otherId);
+    });
+
+    // A broadcast ended (mine, or one I'm watching).
+    s.on('broadcast:ended', (e) => {
+      const token = e && e.token;
+      Object.keys(state.liveByPeer).forEach((k) => {
+        if (state.liveByPeer[k] && state.liveByPeer[k].token === token) delete state.liveByPeer[k];
+      });
+      if (state.peer) reflectBroadcast(state.peer.id);
+      if (state.watching === token) showWatchEnded();
+      if (isExploreActive('live')) renderLive();
+    });
+
+    // Live viewer count changed.
+    s.on('broadcast:viewers', (e) => {
+      if (!e) return;
+      Object.values(state.liveByPeer).forEach((v) => { if (v.token === e.token) v.viewers = e.count; });
+      const b = state.peer && state.liveByPeer[state.peer.id];
+      if (b && b.token === e.token) {
+        const c = document.getElementById('liveBannerCount');
+        if (c) c.textContent = `👁️ ${e.count} watching`;
+      }
+      if (state.watching === e.token) {
+        const wv = document.getElementById('watchViewers');
+        if (wv) wv.textContent = '👁️ ' + e.count;
+      }
+    });
+
+    // A flying comment on a broadcast — for a participant (over their chat) or
+    // for the broadcast being watched inline.
+    s.on('broadcast:comment', (c) => {
+      if (!c) return;
+      const b = state.peer && state.liveByPeer[state.peer.id];
+      if (b && c.token === b.token) flyComment('chatFlyLayer', c);
+      if (state.watching && c.token === state.watching) flyComment('watchFlyLayer', c);
+    });
+
+    // A mirrored chat message for the broadcast being watched inline.
+    s.on('broadcast:message', (m) => {
+      if (state.watching) appendWatchMessage(m);
+    });
+
+    // The set of active broadcasts changed — refresh an open Live list, else
+    // blink the nav button so people notice a new live chat.
+    s.on('broadcast:listChanged', () => {
+      if (isExploreActive('live')) renderLive();
+      else markNav('live', true);
     });
 
     s.on('connect_error', () => { /* auth or network issue; UI still works for browsing */ });
@@ -2234,6 +2544,7 @@
 
   // Prepare the main pane for a full-width section and return its element.
   function openMainView() {
+    stopWatching(); // leaving any inline broadcast we were watching
     document.getElementById('shell').classList.add('viewing-main');
     state.peer = null;
     const main = document.getElementById('main');
@@ -2278,6 +2589,7 @@
     if (view === 'polls') return renderPolls();
     if (view === 'blogs') return renderBlogs();
     if (view === 'leaderboard') return renderLeaderboard();
+    if (view === 'live') return renderLive();
     if (view === 'events') return renderMainHome(true); // activity lives in the chat box now
   }
 

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>getxmatch · live chats</title>
+  <meta name="description" content="Watch live broadcast chats on getxmatch — see conversations unfold in real time and drop a flying comment." />
+  <meta name="robots" content="noindex" />
+  <meta name="theme-color" content="#0f1117" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🔴</text></svg>" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="live-page">
+    <header class="live-topbar">
+      <a class="live-brand" href="/live">🔴 getxmatch <span>live</span></a>
+      <a class="ghost small" href="/">Open app</a>
+    </header>
+    <main id="liveRoot" class="live-root">
+      <div class="loading">Loading…</div>
+    </main>
+  </div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/live.js"></script>
+</body>
+</html>

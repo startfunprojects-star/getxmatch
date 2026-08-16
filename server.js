@@ -23,6 +23,7 @@ const eventsRoutes = require('./src/routes/events');
 const groupRoutes = require('./src/routes/groups');
 const roleplayRoutes = require('./src/routes/roleplay');
 const matchRoutes = require('./src/routes/match');
+const broadcastRoutes = require('./src/routes/broadcast');
 const pageRoutes = require('./src/routes/pages');
 
 const app = express();
@@ -68,6 +69,7 @@ app.use('/api/events', eventsRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/roleplay', roleplayRoutes);
 app.use('/api/match', matchRoutes); // public: shared compatibility-quiz links
+app.use('/api/broadcast', broadcastRoutes); // public: directory of live broadcasts
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
@@ -84,6 +86,13 @@ app.get(/^\/admin(\/.*)?$/, (req, res) => {
 // it works for logged-out recipients without the auth-gated main SPA.
 app.get(/^\/m(\/.*)?$/, (req, res) => {
   res.sendFile(path.join(publicDir, 'match.html'));
+});
+
+// Live broadcast pages: /live (directory of active broadcasts) and
+// /live/<token> (watch a broadcast). A standalone page so logged-out visitors
+// can watch, comment and share without the auth-gated main SPA.
+app.get(/^\/live(\/.*)?$/, (req, res) => {
+  res.sendFile(path.join(publicDir, 'live.html'));
 });
 
 // Public, server-rendered, crawlable pages + sitemap.xml + robots.txt. Mounted

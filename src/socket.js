@@ -7,6 +7,7 @@ const { userFromToken } = require('./auth');
 const { areBlocked } = require('./relations');
 const { getGift } = require('./gifts');
 const roleplay = require('./roleplay');
+const broadcast = require('./broadcast');
 
 // Emoji reactions a user may place on a message/gift. Server-side allow-list so
 // clients can't store arbitrary strings.
@@ -46,6 +47,8 @@ function deliverNarration(io, a, b, payload) {
   const msg = { id: info.lastInsertRowid, from: a, to: b, body, kind: 'narration', at: now };
   io.to(`user:${a}`).emit('chat:message', { ...msg, mine: true });
   io.to(`user:${b}`).emit('chat:message', { ...msg, mine: false });
+  // Mirror roleplay narration to broadcast watchers, if any.
+  mirrorLiveMessage(io, a, b, 'narration', body, now);
 }
 
 function emitRoleplayProgress(io, a, b, session) {
@@ -130,27 +133,252 @@ function broadcastLeaderboardChange() {
   if (ioRef) ioRef.emit('leaderboard:changed', { at: Date.now() });
 }
 
+/* --------------------------------------------------------------------------
+   Broadcast ("live chat") helpers
+-------------------------------------------------------------------------- */
+
+let commentSeq = 0;
+
+function broadcastRoom(token) {
+  return `bcast:${token}`;
+}
+
+// Display name (or @username) for a user id — used to label broadcast messages
+// and comments without leaking anything private.
+function nameOf(uid) {
+  const r = db
+    .prepare('SELECT p.display_name, u.username FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?')
+    .get(uid);
+  return r ? (r.display_name || r.username) : 'Someone';
+}
+
+// Render a stored message row into the viewer-safe shape sent to watchers.
+function broadcastMessageView(row) {
+  const kind = row.kind || 'text';
+  let text = row.body;
+  if (kind === 'gift') {
+    const g = getGift(row.body);
+    text = g ? `${g.emoji} ${g.name}` : '🎁 a gift';
+  } else if (kind === 'narration') {
+    try {
+      const p = JSON.parse(row.body);
+      text = p.final ? '🎬 The End' : `🎭 ${p.title || 'Roleplay'}`;
+    } catch (_e) { text = '🎭 Roleplay'; }
+  }
+  return { from: row.sender_id, fromName: nameOf(row.sender_id), kind, text, at: row.created_at };
+}
+
+// The conversation, from the broadcast's start onward (older, pre-broadcast
+// history is deliberately withheld from viewers).
+function recentBroadcastMessages(b) {
+  const rows = db
+    .prepare(
+      `SELECT id, sender_id, body, kind, created_at FROM messages
+        WHERE created_at >= ?
+          AND ((sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?))
+        ORDER BY created_at ASC LIMIT 60`
+    )
+    .all(b.startedAt, b.ownerId, b.peerId, b.peerId, b.ownerId);
+  return rows.map(broadcastMessageView);
+}
+
+// Push the current viewer count to the watch room AND to both participants
+// (who watch the count from inside their private chat).
+function emitViewerCount(io, b) {
+  const evt = { token: b.token, count: b.viewers.size };
+  io.to(broadcastRoom(b.token)).emit('broadcast:viewers', evt);
+  io.to(`user:${b.ownerId}`).emit('broadcast:viewers', evt);
+  io.to(`user:${b.peerId}`).emit('broadcast:viewers', evt);
+}
+
+// If the pair (from -> to) is being broadcast, mirror a just-sent message to
+// everyone watching. kind is 'text' | 'gift' | 'narration'; body is the raw
+// stored value (gift id / narration JSON / text).
+function mirrorLiveMessage(io, from, to, kind, body, at) {
+  const b = broadcast.forPair(from, to);
+  if (!b) return;
+  let text = body;
+  if (kind === 'gift') {
+    const g = getGift(body);
+    text = g ? `${g.emoji} ${g.name}` : '🎁 a gift';
+  } else if (kind === 'narration') {
+    try {
+      const p = JSON.parse(body);
+      text = p.final ? '🎬 The End' : `🎭 ${p.title || 'Roleplay'}`;
+    } catch (_e) { text = '🎭 Roleplay'; }
+  }
+  io.to(broadcastRoom(b.token)).emit('broadcast:message', {
+    from, fromName: nameOf(from), kind, text, at,
+  });
+}
+
+// Tear down a broadcast and tell watchers + participants it's over.
+function endBroadcast(io, b) {
+  if (!b) return;
+  broadcast.stop(b.token);
+  const room = broadcastRoom(b.token);
+  io.to(room).emit('broadcast:ended', { token: b.token });
+  io.to(`user:${b.ownerId}`).emit('broadcast:ended', { token: b.token });
+  io.to(`user:${b.peerId}`).emit('broadcast:ended', { token: b.token });
+  io.emit('broadcast:listChanged', { at: Date.now() });
+}
+
+// Remove a watching socket from a broadcast and refresh the viewer count.
+function leaveWatch(io, socket, token) {
+  if (!token) return;
+  socket.leave(broadcastRoom(token));
+  if (socket.data) socket.data.watching = null;
+  const b = broadcast.get(token);
+  if (b) {
+    b.viewers.delete(socket.id);
+    b.lastComment.delete(socket.id);
+    emitViewerCount(io, b);
+  }
+}
+
+// Viewer-side handlers — available to EVERY socket, including anonymous
+// (logged-out) visitors watching the public /live pages.
+function registerBroadcastViewer(io, socket) {
+  const me = socket.user; // may be null (anonymous)
+  if (!socket.data) socket.data = {};
+
+  socket.on('broadcast:watch', (payload, ack) => {
+    try {
+      const token = String((payload && payload.token) || '');
+      const b = broadcast.get(token);
+      if (!b) return ack && ack({ error: 'This broadcast has ended.' });
+      // Leave any previous broadcast this socket was watching.
+      if (socket.data.watching && socket.data.watching !== token) {
+        leaveWatch(io, socket, socket.data.watching);
+      }
+      socket.join(broadcastRoom(token));
+      b.viewers.add(socket.id);
+      socket.data.watching = token;
+      emitViewerCount(io, b);
+      ack && ack({ ok: true, info: broadcast.publicView(b), messages: recentBroadcastMessages(b) });
+    } catch (_e) {
+      ack && ack({ error: 'Server error.' });
+    }
+  });
+
+  socket.on('broadcast:unwatch', (payload, ack) => {
+    const token = String((payload && payload.token) || socket.data.watching || '');
+    leaveWatch(io, socket, token);
+    ack && ack && ack({ ok: true });
+  });
+
+  // A flying comment from a watcher (or a participant). Ephemeral — never
+  // stored; relayed to the room and to both participants for 10s of on-screen
+  // life (the client removes it).
+  socket.on('broadcast:comment', (payload, ack) => {
+    try {
+      const token = String((payload && payload.token) || '');
+      const b = broadcast.get(token);
+      if (!b) return ack && ack({ error: 'This broadcast has ended.' });
+      const text = String((payload && payload.text) || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      if (!text) return ack && ack({ error: 'Say something first.' });
+
+      // Lightweight per-socket rate limit.
+      const now = Date.now();
+      const last = b.lastComment.get(socket.id) || 0;
+      if (now - last < 700) return ack && ack({ error: 'Slow down a moment.' });
+      b.lastComment.set(socket.id, now);
+
+      let name;
+      if (me) {
+        name = nameOf(me.id);
+      } else {
+        name = String((payload && payload.guestName) || '')
+          .replace(/\s+/g, ' ').trim().slice(0, 24) || 'Guest';
+      }
+      const comment = { id: `c${++commentSeq}`, token, name, text, at: now, guest: !me };
+      io.to(broadcastRoom(token)).emit('broadcast:comment', comment);
+      // Participants aren't in the watch room; deliver to their private tabs.
+      io.to(`user:${b.ownerId}`).emit('broadcast:comment', comment);
+      io.to(`user:${b.peerId}`).emit('broadcast:comment', comment);
+      ack && ack({ ok: true });
+    } catch (_e) {
+      ack && ack({ error: 'Server error.' });
+    }
+  });
+
+  socket.on('disconnect', () => {
+    if (socket.data && socket.data.watching) leaveWatch(io, socket, socket.data.watching);
+  });
+}
+
+// Owner-side controls — only wired for authenticated sockets.
+function registerBroadcastOwner(io, socket) {
+  const me = socket.user;
+
+  socket.on('broadcast:start', (payload, ack) => {
+    try {
+      const to = parseInt(payload && payload.peerId, 10);
+      if (!to || to === me.id) return ack && ack({ error: 'Invalid chat to broadcast.' });
+      const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
+      if (!recipient) return ack && ack({ error: 'Recipient not found.' });
+      if (areBlocked(me.id, to)) return ack && ack({ error: 'You cannot broadcast this chat.' });
+
+      const title = String((payload && payload.title) || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+      const b = broadcast.start({
+        ownerId: me.id, ownerName: nameOf(me.id), peerId: to, peerName: nameOf(to), title,
+      });
+      const view = broadcast.publicView(b);
+      io.to(`user:${me.id}`).emit('broadcast:live', view);
+      io.to(`user:${to}`).emit('broadcast:live', view);
+      io.emit('broadcast:listChanged', { at: Date.now() });
+      ack && ack({ ok: true, broadcast: view });
+    } catch (_e) {
+      ack && ack({ error: 'Server error.' });
+    }
+  });
+
+  socket.on('broadcast:stop', (payload, ack) => {
+    try {
+      const token = String((payload && payload.token) || '');
+      const b = broadcast.get(token);
+      if (!b) return ack && ack({ ok: true });
+      if (!broadcast.isParticipant(b, me.id)) return ack && ack({ error: 'Not your broadcast.' });
+      endBroadcast(io, b);
+      ack && ack({ ok: true });
+    } catch (_e) {
+      ack && ack({ error: 'Server error.' });
+    }
+  });
+}
+
 function initSocket(io) {
   ioRef = io;
-  // Authenticate every socket from the httpOnly auth cookie.
+  // Attach the user from the httpOnly auth cookie when present, but DO NOT
+  // reject anonymous sockets: logged-out visitors need a live socket to watch
+  // and comment on public broadcasts. socket.user is null for them, and every
+  // private-chat handler below is gated behind an authenticated user.
   io.use((socket, next) => {
     try {
       const raw = socket.handshake.headers.cookie || '';
       const parsed = cookie.parse(raw);
-      const user = userFromToken(parsed[config.cookieName]);
-      if (!user) return next(new Error('unauthorized'));
-      socket.user = user;
-      next();
-    } catch (e) {
-      next(new Error('unauthorized'));
+      socket.user = userFromToken(parsed[config.cookieName]) || null;
+    } catch (_e) {
+      socket.user = null;
     }
+    next();
   });
 
   io.on('connection', (socket) => {
     const me = socket.user;
+
+    // Watching/commenting on broadcasts is open to everyone (incl. anonymous).
+    registerBroadcastViewer(io, socket);
+
+    // Anonymous sockets get nothing more than the viewer handlers above.
+    if (!me) return;
+
     addSocket(me.id, socket.id);
     // Personal room makes it easy to target all of a user's sockets.
     socket.join(`user:${me.id}`);
+
+    // Owner controls for starting/stopping a broadcast of a private chat.
+    registerBroadcastOwner(io, socket);
 
     // Text message → persisted to history, then delivered live if online.
     socket.on('chat:message', (payload, ack) => {
@@ -180,6 +408,9 @@ function initSocket(io) {
         // Deliver to recipient's sockets and echo to sender's other tabs.
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
         socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
+
+        // If this conversation is being broadcast, mirror it to watchers.
+        mirrorLiveMessage(io, me.id, to, 'text', body, now);
 
         // Count the message toward any active roleplay; reveal the next stage
         // when both players have hit the threshold.
@@ -252,6 +483,9 @@ function initSocket(io) {
 
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
         socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
+
+        // Mirror the gift to any watchers of this broadcast.
+        mirrorLiveMessage(io, me.id, to, 'gift', gift.id, now);
 
         ack && ack({ ok: true, message: { ...msg, mine: true } });
       } catch (e) {
@@ -441,10 +675,20 @@ function initSocket(io) {
     socket.on('disconnect', () => {
       removeSocket(me.id, socket.id);
       // When the user's last tab disconnects they're fully offline: stamp the
-      // time so the daily digest knows which later messages went unseen.
+      // time so the daily digest knows which later messages went unseen, and
+      // end any broadcast they were a participant of (no ghost live chats).
       if (!isOnline(me.id)) {
         try {
           db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), me.id);
+        } catch (_e) { /* non-fatal */ }
+        try {
+          broadcast.stopForUser(me.id).forEach((b) => {
+            const room = broadcastRoom(b.token);
+            io.to(room).emit('broadcast:ended', { token: b.token });
+            io.to(`user:${b.ownerId}`).emit('broadcast:ended', { token: b.token });
+            io.to(`user:${b.peerId}`).emit('broadcast:ended', { token: b.token });
+          });
+          io.emit('broadcast:listChanged', { at: Date.now() });
         } catch (_e) { /* non-fatal */ }
       }
     });
