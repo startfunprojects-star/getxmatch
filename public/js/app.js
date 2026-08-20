@@ -157,6 +157,12 @@
     const card = el(`
       <div class="auth-split">
         <aside class="auth-activity">
+          <nav class="auth-nav" aria-label="Explore">
+            <a href="/quizzes">Quizzes</a>
+            <a href="/polls">Polls</a>
+            <a href="/blog">Blog</a>
+            <a href="/how-it-works">How it works</a>
+          </nav>
           <div class="auth-activity-head">✨ Live activity on get<span class="x">x</span>match</div>
           <div class="auth-activity-feed" id="authFeed"></div>
         </aside>
