@@ -113,6 +113,12 @@ function broadcastActivity(payload) {
   if (ioRef) ioRef.emit('activity:new', payload);
 }
 
+// Broadcast a new Highway post to every connected client. The client's
+// `highway:new` handler prepends it to an open Highway feed.
+function broadcastHighway(payload) {
+  if (ioRef) ioRef.emit('highway:new', payload);
+}
+
 // Tell the given users that a group they're in changed (created, invited,
 // joined, left) so their UI can refetch. Used by the groups HTTP routes.
 function notifyGroup(userIds, groupId) {
@@ -695,4 +701,4 @@ function initSocket(io) {
   });
 }
 
-module.exports = { initSocket, isOnline, broadcastActivity, notifyGroup, notifyUser, broadcastLeaderboardChange };
+module.exports = { initSocket, isOnline, broadcastActivity, broadcastHighway, notifyGroup, notifyUser, broadcastLeaderboardChange };

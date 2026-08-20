@@ -590,6 +590,7 @@
             <button data-tab="chats">Chats<span class="ndot"></span></button>
           </div>
           <div class="explore-nav" id="exploreNav">
+            <button data-view="highway">🛣️ Highway</button>
             <button data-view="requests">🔔 Requests <span class="req-badge hidden" id="reqBadge">0</span></button>
             <button data-view="quizzes">🧠 Quizzes</button>
             <button data-view="polls">📊 Polls</button>
@@ -2184,6 +2185,9 @@
       });
     });
 
+    // A new Highway post from anyone — prepend it to an open Highway feed.
+    s.on('highway:new', (p) => { if (p && p.id) pushHighwayPost(p); });
+
     s.on('chat:reaction', (e) => {
       if (e && e.messageId != null) updateReaction(e.messageId, e.userId, e.emoji);
     });
@@ -2707,6 +2711,7 @@
   }
 
   function openExplore(view) {
+    if (view === 'highway') return renderHighway();
     if (view === 'requests') return renderRequests();
     if (view === 'quizzes') return renderQuizzes();
     if (view === 'polls') return renderPolls();
@@ -2714,6 +2719,152 @@
     if (view === 'leaderboard') return renderLeaderboard();
     if (view === 'live') return renderLive();
     if (view === 'events') return renderMainHome(true); // activity lives in the chat box now
+  }
+
+  /* ======================================================================
+     HIGHWAY — a shared pool of posts (text / images / links). Any registered
+     user can post; only the newest 100 are kept. Live-updated over the socket.
+  ====================================================================== */
+  let highwayFeed = null; // the mounted feed element, for live socket updates
+
+  async function renderHighway() {
+    const main = openMainView();
+    main.appendChild(sectionShell('🛣️ Highway',
+      'The community pool — share text, images, links, or videos. Anyone can post, and only the latest 100 posts stay on the road.'));
+    const body = main.querySelector('#sectionBody');
+    body.innerHTML = '';
+
+    // Composer
+    const composer = el(`
+      <div class="card highway-composer">
+        <textarea id="hwText" maxlength="2000" placeholder="Share something with everyone — a thought, a link, a YouTube / Instagram / Facebook URL…"></textarea>
+        <div class="hw-compose-actions">
+          <label class="hw-attach" title="Attach an image">📷 <span id="hwFileName">Add image</span>
+            <input type="file" id="hwImage" accept="image/*" hidden />
+          </label>
+          <span class="spacer"></span>
+          <button class="primary" id="hwPost">Post to Highway</button>
+        </div>
+        <div class="msg" id="hwMsg"></div>
+      </div>
+    `);
+    body.appendChild(composer);
+
+    const feed = el('<div class="highway-feed" id="hwFeed"><div class="hint" style="padding:16px">Loading…</div></div>');
+    body.appendChild(feed);
+    highwayFeed = feed;
+
+    const fileInput = composer.querySelector('#hwImage');
+    const fileName = composer.querySelector('#hwFileName');
+    fileInput.addEventListener('change', () => {
+      fileName.textContent = fileInput.files[0] ? fileInput.files[0].name.slice(0, 22) : 'Add image';
+    });
+    const postBtn = composer.querySelector('#hwPost');
+    postBtn.addEventListener('click', async () => {
+      const msg = composer.querySelector('#hwMsg'); msg.className = 'msg';
+      const text = composer.querySelector('#hwText').value.trim();
+      if (!text && !fileInput.files[0]) { msg.className = 'msg error'; msg.textContent = 'Write something or add an image.'; return; }
+      const fd = new FormData();
+      fd.append('body', text);
+      if (fileInput.files[0]) fd.append('image', fileInput.files[0]);
+      postBtn.disabled = true;
+      try {
+        const { post } = await api.postForm('/api/highway', fd);
+        composer.querySelector('#hwText').value = '';
+        fileInput.value = ''; fileName.textContent = 'Add image';
+        prependHighwayPost(feed, post);
+        trimHighwayFeed(feed);
+      } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
+      finally { postBtn.disabled = false; }
+    });
+
+    try {
+      const { posts } = await api.get('/api/highway');
+      feed.innerHTML = '';
+      if (!posts.length) feed.appendChild(el('<div class="empty-main">No posts yet — be the first to hit the Highway!</div>'));
+      else posts.forEach((p) => feed.appendChild(highwayPostEl(p)));
+    } catch (e) { feed.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; }
+  }
+
+  // Build one Highway post card.
+  function highwayPostEl(p) {
+    const card = el(`
+      <div class="card highway-post" data-id="${p.id}">
+        <div class="hw-head">
+          <img class="avatar sm hw-avatar" src="${avatarUrl(p.author.avatar)}" alt="" />
+          <div class="hw-who">
+            <div class="hw-name"></div>
+            <div class="hw-time hint">${fmtDate(p.createdAt)} · ${fmtTime(p.createdAt)}</div>
+          </div>
+          <div class="hw-action"></div>
+        </div>
+        <div class="hw-body"></div>
+      </div>
+    `);
+    const nameEl = card.querySelector('.hw-name');
+    nameEl.textContent = p.author.displayName + ' ';
+    nameEl.appendChild(el(`<span class="hw-handle">@${esc(p.author.username)}</span>`));
+    const goProfile = () => showProfile(p.author.username);
+    nameEl.style.cursor = 'pointer';
+    nameEl.addEventListener('click', goProfile);
+    card.querySelector('.hw-avatar').addEventListener('click', goProfile);
+
+    const bodyEl = card.querySelector('.hw-body');
+    if (p.body) appendRichText(bodyEl, p.body); else bodyEl.remove();
+    if (p.image) {
+      const img = el('<img class="hw-image" loading="lazy" alt="shared image" />');
+      img.src = p.image;
+      img.addEventListener('click', () => openLightbox(p.image));
+      card.appendChild(img);
+    }
+
+    const actionSlot = card.querySelector('.hw-action');
+    if (p.mine) {
+      const del = el('<button class="ghost small" title="Delete this post">Delete</button>');
+      del.addEventListener('click', async () => {
+        if (!confirm('Delete this post?')) return;
+        try { await api.del('/api/highway/' + p.id); card.remove(); } catch (e) { alert(e.message); }
+      });
+      actionSlot.appendChild(del);
+    } else {
+      // A relationship-request control, re-rendered to reflect the new state.
+      const fb = friendButtonEl(p.author.username, p.friendState || 'none', () => {
+        const fresh = friendButtonEl(p.author.username, 'outgoing', () => {});
+        actionSlot.innerHTML = '';
+        if (fresh) actionSlot.appendChild(fresh);
+      });
+      if (fb) actionSlot.appendChild(fb);
+    }
+    return card;
+  }
+
+  function prependHighwayPost(feed, post) {
+    if (!feed) return;
+    const dup = feed.querySelector(`.highway-post[data-id="${post.id}"]`);
+    if (dup) dup.remove();
+    const empty = feed.querySelector('.empty-main');
+    if (empty) empty.remove();
+    feed.insertBefore(highwayPostEl(post), feed.firstChild);
+  }
+
+  function trimHighwayFeed(feed) {
+    if (!feed) return;
+    let posts = feed.querySelectorAll('.highway-post');
+    while (posts.length > 100) {
+      feed.removeChild(posts[posts.length - 1]);
+      posts = feed.querySelectorAll('.highway-post');
+    }
+  }
+
+  // Live socket push: a new post from anyone. Fill in viewer-specific fields.
+  function pushHighwayPost(payload) {
+    if (!highwayFeed || !document.body.contains(highwayFeed)) { highwayFeed = null; return; }
+    const mine = !!(state.me && payload.author && payload.author.id === state.me.id);
+    prependHighwayPost(highwayFeed, {
+      id: payload.id, body: payload.body, image: payload.image, createdAt: payload.createdAt,
+      author: payload.author, mine, friendState: mine ? 'self' : 'none',
+    });
+    trimHighwayFeed(highwayFeed);
   }
 
   /* ---------- Friend requests ---------- */

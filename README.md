@@ -36,6 +36,13 @@ self-host on a single VPS: no external database or storage service required.
 - **Quizzes, Polls & Blogs** — admin-authored content users can engage with:
   take quizzes (auto-graded, attempts recorded), vote in polls (live tallies),
   and read blog posts. All are created/edited/deleted from the admin dashboard.
+- **Highway** — a shared community pool on the main menu where any registered
+  member can post text, an image and/or links (YouTube videos embed inline;
+  Instagram/Facebook and other links render as rich links). Each post shows who
+  posted it, and viewers can send that person a relationship request straight
+  from the post. The pool keeps only the **newest 100 posts** — older ones (and
+  their images) are pruned automatically as new posts arrive — and updates live
+  over the socket.
 - **Leaderboard** — ranks every member by an engagement score built from their
   ratings, friends and quiz activity. Users can send a **friend request** to
   anyone directly from the leaderboard.

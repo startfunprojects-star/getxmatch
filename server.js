@@ -25,6 +25,7 @@ const roleplayRoutes = require('./src/routes/roleplay');
 const matchRoutes = require('./src/routes/match');
 const broadcastRoutes = require('./src/routes/broadcast');
 const adsRoutes = require('./src/routes/ads');
+const highwayRoutes = require('./src/routes/highway');
 const pageRoutes = require('./src/routes/pages');
 
 const app = express();
@@ -72,6 +73,7 @@ app.use('/api/roleplay', roleplayRoutes);
 app.use('/api/match', matchRoutes); // public: shared compatibility-quiz links
 app.use('/api/broadcast', broadcastRoutes); // public: directory of live broadcasts
 app.use('/api/ads', adsRoutes); // public: serve ads + log clicks
+app.use('/api/highway', highwayRoutes); // registered users: shared post pool
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 

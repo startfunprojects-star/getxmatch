@@ -504,6 +504,32 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .tile .pill { background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
 .tile button { margin-top: auto; align-self: flex-start; }
 
+/* ---------- Highway (shared post pool) ---------- */
+.highway-composer { margin-bottom: 18px; }
+.highway-composer textarea { min-height: 84px; resize: vertical; }
+.hw-compose-actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.hw-compose-actions .spacer { flex: 1; }
+.hw-attach {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+  padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--bg-3); color: var(--muted); font-size: 13px; font-weight: 600; margin: 0;
+}
+.hw-attach:hover { border-color: var(--accent); color: var(--text); }
+.highway-feed { display: flex; flex-direction: column; gap: 14px; }
+.highway-post { padding: 16px 18px; }
+.hw-head { display: flex; align-items: center; gap: 10px; }
+.hw-avatar { cursor: pointer; }
+.hw-who { flex: 1; min-width: 0; }
+.hw-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hw-name:hover { color: var(--accent); }
+.hw-handle { color: var(--muted); font-weight: 500; font-size: 13px; }
+.hw-time { margin-top: 1px; }
+.hw-action { flex: none; display: flex; align-items: center; gap: 8px; }
+.hw-body { margin-top: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.hw-body .msg-embed { width: 100%; max-width: 480px; }
+.hw-body .msg-img, .hw-body .msg-video { max-width: 360px; }
+.hw-image { display: block; margin-top: 12px; max-width: 100%; max-height: 460px; border-radius: 12px; border: 1px solid var(--border); cursor: zoom-in; }
+
 /* ---------- Quiz ---------- */
 .quiz-form { display: flex; flex-direction: column; gap: 18px; }
 .quiz-q { border-bottom: 1px solid var(--border); padding-bottom: 14px; }

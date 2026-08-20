@@ -489,6 +489,21 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_ad_clicks_placement ON ad_clicks (placement, created_at);
 `);
 
+// "Highway" — a shared public pool where any registered user can post text,
+// an image, and/or links (YouTube/Instagram/Facebook/etc). The pool is capped
+// at the newest 100 posts: older posts (and their images) are pruned when new
+// ones arrive (see src/routes/highway.js).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS highway_posts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL DEFAULT '',
+    image      TEXT,                     -- optional filename in uploads/
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_highway_recent ON highway_posts (created_at);
+`);
+
 // Relationship kind on a friendship request (friend / girlfriend / crush / …).
 // Added idempotently for databases created before the relationship-request feature.
 {
