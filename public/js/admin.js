@@ -346,6 +346,7 @@
     ['events', 'Recent Events'],
     ['fake', 'Fake Activity'],
     ['ads', 'Ads'],
+    ['highway', 'Highway'],
     ['leaderboard', 'Leaderboard'],
   ];
 
@@ -394,6 +395,7 @@
     if (tab === 'events') return renderEventsTab();
     if (tab === 'fake') return renderFakeActivityTab();
     if (tab === 'ads') return renderAdsTab();
+    if (tab === 'highway') return renderHighwayTab();
     if (tab === 'leaderboard') return renderLeaderboardTab();
   }
 
@@ -1092,6 +1094,70 @@
       <p class="count" style="margin-top:12px">Total clicks — all locations, all time: <strong>${s.total || 0}</strong></p>
       <p class="hint">Clicks are tracked for image ads via a redirect. Script / ad-network ads report their own clicks in the network's dashboard.</p>
     `;
+  }
+
+  /* ==================================================================
+     Highway tab — moderate the shared post pool: delete any post, pin
+     any post to positions 1–10.
+  ================================================================== */
+  let highwayCache = [];
+
+  async function renderHighwayTab() {
+    const host = tabHost();
+    host.innerHTML = `
+      <div class="admin-card">
+        <h2>Highway posts</h2>
+        <p class="count">The shared community pool (newest 100). Delete any post, or pin one to a fixed position 1–10 — pinned posts show first everywhere and are never auto-removed.</p>
+        <div id="hwAdminList" class="count">Loading…</div>
+      </div>`;
+    await loadHighwayAdmin();
+  }
+
+  async function loadHighwayAdmin() {
+    const box = document.getElementById('hwAdminList');
+    if (!box) return;
+    try { highwayCache = (await api.get('/api/admin/highway')).posts; }
+    catch (e) { if (e.status === 401) return renderLogin(true); box.textContent = e.message; return; }
+    paintHighwayAdmin();
+  }
+
+  function paintHighwayAdmin() {
+    const box = document.getElementById('hwAdminList');
+    if (!box) return;
+    if (!highwayCache.length) { box.innerHTML = '<div class="count">No posts yet.</div>'; return; }
+    box.innerHTML = '';
+    const { slice, pager } = pageFor('highway', highwayCache, paintHighwayAdmin);
+    slice.forEach((p) => {
+      const snippet = (p.body || '').slice(0, 140) || (p.image ? '[image]' : '');
+      const pinOpts = ['<option value="0">Not pinned</option>']
+        .concat(Array.from({ length: 10 }, (_, i) => {
+          const r = i + 1;
+          return `<option value="${r}"${p.pinned && p.pinRank === r ? ' selected' : ''}>Pin at #${r}</option>`;
+        })).join('');
+      const item = el(`
+        <div class="admin-item">
+          <h3>${esc(p.author.displayName)} <span class="pill">@${esc(p.author.username)}</span>${p.pinned ? ` <span class="pill">📌 #${p.pinRank || '?'}</span>` : ''}</h3>
+          <div class="count">${esc(fmtDate(p.createdAt))}</div>
+          <div style="margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere">${esc(snippet)}</div>
+          ${p.image ? `<img src="${esc(p.image)}" alt="" style="max-height:80px;border-radius:8px;margin:4px 0" />` : ''}
+          <div class="admin-item-actions" style="align-items:center">
+            <select class="hw-pin-select" style="width:auto">${pinOpts}</select>
+            <button class="danger small" data-del>Delete</button>
+          </div>
+        </div>
+      `);
+      item.querySelector('.hw-pin-select').addEventListener('change', async (e) => {
+        try { await api.post('/api/admin/highway/' + p.id + '/pin', { rank: Number(e.target.value) }); await loadHighwayAdmin(); }
+        catch (err) { alert(err.message); }
+      });
+      item.querySelector('[data-del]').addEventListener('click', async () => {
+        if (!confirm('Delete this post permanently?')) return;
+        try { await api.del('/api/admin/highway/' + p.id); await loadHighwayAdmin(); }
+        catch (err) { alert(err.message); }
+      });
+      box.appendChild(item);
+    });
+    if (pager) box.appendChild(pager);
   }
 
   /* ==================================================================

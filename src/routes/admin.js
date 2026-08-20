@@ -17,6 +17,7 @@ const { buildProfile } = require('../profileData');
 const { saveProfile } = require('../profileWrite');
 const { isFakeActivityEnabled, setFakeActivityEnabled } = require('../settings');
 const ads = require('../ads');
+const hw = require('../highway');
 const {
   ADMIN_COOKIE,
   signAdminToken,
@@ -870,6 +871,50 @@ router.delete('/ads/:id', requireAdmin, (req, res) => {
   db.prepare('DELETE FROM ads WHERE id = ?').run(row.id); // cascades ad_clicks
   removeUpload(row.image);
   res.json({ ok: true });
+});
+
+/* ===========================================================================
+   Highway moderation (admin only): delete any post, pin to positions 1–10.
+=========================================================================== */
+
+// GET /api/admin/highway — every post in display order, for moderation.
+router.get('/highway', requireAdmin, (req, res) => {
+  res.json({
+    posts: hw.allOrdered().map((r) => ({
+      id: r.id,
+      body: r.body || '',
+      image: r.image ? `/uploads/${r.image}` : null,
+      author: { username: r.username, displayName: r.display_name || r.username },
+      pinned: !!r.pinned,
+      pinRank: r.pinned ? (r.pin_rank || null) : null,
+      createdAt: r.created_at,
+    })),
+    maxPin: 10,
+  });
+});
+
+// DELETE /api/admin/highway/:id — remove any post.
+router.delete('/highway/:id', requireAdmin, (req, res) => {
+  const row = db.prepare('SELECT id, image FROM highway_posts WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Post not found.' });
+  db.prepare('DELETE FROM highway_posts WHERE id = ?').run(row.id);
+  removeUpload(row.image);
+  res.json({ ok: true });
+});
+
+// POST /api/admin/highway/:id/pin  { rank } — pin to position 1–10, or rank 0
+// (or empty) to unpin.
+router.post('/highway/:id/pin', requireAdmin, (req, res) => {
+  const row = db.prepare('SELECT id FROM highway_posts WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Post not found.' });
+  const rank = parseInt(req.body && req.body.rank, 10);
+  if (!rank || rank < 1) {
+    db.prepare('UPDATE highway_posts SET pinned = 0, pin_rank = NULL WHERE id = ?').run(row.id);
+    return res.json({ ok: true, pinned: false });
+  }
+  const r = Math.min(10, rank);
+  db.prepare('UPDATE highway_posts SET pinned = 1, pin_rank = ? WHERE id = ?').run(r, row.id);
+  res.json({ ok: true, pinned: true, pinRank: r });
 });
 
 module.exports = router;

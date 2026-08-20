@@ -15,6 +15,7 @@ const db = require('../db');
 const config = require('../config');
 const seo = require('../seo');
 const ads = require('../ads');
+const hw = require('../highway');
 
 const router = express.Router();
 
@@ -57,7 +58,7 @@ function parseJson(raw, fallback) {
   }
 }
 
-const { esc, escAttr, itemPath, slugify, summarize, resolveSeo, jsonLdTag, breadcrumbLd, breadcrumbHtml, organizationLd, websiteLd, renderDocument, absUrl, SITE_NAME, SITE_TAGLINE, SITE_OG_IMAGE } = seo;
+const { esc, escAttr, itemPath, slugify, summarize, resolveSeo, jsonLdTag, breadcrumbLd, breadcrumbHtml, organizationLd, websiteLd, renderUserText, renderDocument, absUrl, SITE_NAME, SITE_TAGLINE, SITE_OG_IMAGE } = seo;
 
 // Landing page: serve the SPA shell, but inject the absolute canonical / OG URLs
 // and the default social-share image (all domain-dependent, so done here rather
@@ -381,6 +382,48 @@ ${cover ? `<img class="cover" src="${escAttr(cover)}" alt="${escAttr(r.title)}" 
 <article class="post">${paras || `<p>${esc(r.excerpt || '')}</p>`}</article>
 ${ads.slotHtml('content_inline')}
 <a class="cta" href="/">Join getxmatch →</a>`;
+  sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
+});
+
+/* ===========================================================================
+   Highway — public, read-only view of the community post pool. Logged-out
+   visitors can browse posts; posting and connecting happen in the app.
+=========================================================================== */
+
+function highwayCard(p) {
+  const avatar = p.avatar ? `/uploads/${p.avatar}` : null;
+  const who = esc(p.display_name || p.username);
+  return `<article class="hw-card${p.pinned ? ' pinned' : ''}">
+      <header class="hw-card-head">
+        ${avatar ? `<img class="hw-av" src="${escAttr(avatar)}" alt="" loading="lazy" />` : '<span class="hw-av hw-av-ph">👤</span>'}
+        <div class="hw-meta"><span class="hw-who">${who}</span> <span class="hw-handle">@${esc(p.username)}</span> <span class="hw-date">${esc(humanDate(p.created_at))}</span></div>
+        ${p.pinned ? '<span class="hw-pin">📌 Pinned</span>' : ''}
+      </header>
+      ${p.body ? renderUserText(p.body) : ''}
+      ${p.image ? `<a href="/uploads/${escAttr(p.image)}" target="_blank" rel="noopener"><img class="hw-card-img" src="/uploads/${escAttr(p.image)}" alt="" loading="lazy" /></a>` : ''}
+    </article>`;
+}
+
+router.get('/highway', (req, res) => {
+  const posts = hw.allOrdered();
+  const cards = posts.length
+    ? joinWithInlineAds(posts.map(highwayCard))
+    : '<p class="empty">No posts on the Highway yet — be the first once you join.</p>';
+
+  // Volatile, user-generated content: viewable by everyone but kept out of the
+  // search index.
+  const seoDescriptor = resolveSeo({ noindex: true }, {
+    canonicalPath: '/highway',
+    title: 'Highway',
+    description: 'The getxmatch community pool — see what members are sharing right now: posts, images, links and videos.',
+  });
+  const jsonLd = breadcrumbLd([{ name: 'Home', path: '/' }, { name: 'Highway', path: '/highway' }]);
+  const bodyHtml = `
+${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Highway', path: '/highway' }])}
+<h1>🛣️ Highway</h1>
+<p class="lede">The community pool — members share text, images, links and videos. Only the latest 100 posts stay on the road.</p>
+<a class="cta" href="/">Join getxmatch to post &amp; connect →</a>
+${cards}`;
   sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
 

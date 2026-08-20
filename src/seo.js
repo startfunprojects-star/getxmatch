@@ -195,6 +195,49 @@ function websiteLd() {
   };
 }
 
+// Extract a YouTube video id from a watch/share/embed URL, or null.
+function youtubeId(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host === 'youtu.be') return u.pathname.slice(1).split('/')[0] || null;
+    if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtube-nocookie.com') {
+      if (u.pathname === '/watch') return u.searchParams.get('v');
+      const mm = u.pathname.match(/^\/(embed|shorts|v)\/([^/?#]+)/);
+      if (mm) return mm[2];
+    }
+  } catch (_e) { /* not a url */ }
+  return null;
+}
+
+// Safely render a user-authored post body to HTML: everything is escaped, URLs
+// become links, and YouTube / image / video links are embedded below the text.
+function renderUserText(text) {
+  const URL_RE = /\bhttps?:\/\/[^\s<>"']+/gi;
+  const str = String(text == null ? '' : text);
+  let html = '';
+  let last = 0;
+  let m;
+  const embeds = [];
+  while ((m = URL_RE.exec(str)) !== null) {
+    const url = m[0];
+    html += esc(str.slice(last, m.index));
+    html += `<a href="${escAttr(url)}" target="_blank" rel="nofollow noopener">${esc(url)}</a>`;
+    last = m.index + url.length;
+    const yt = youtubeId(url);
+    if (yt) {
+      embeds.push(`<iframe class="hw-embed" src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(yt)}" title="YouTube video" allow="accelerometer; encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe>`);
+    } else if (/\.(jpe?g|png|gif|webp|bmp|svg)(\?|#|$)/i.test(url)) {
+      embeds.push(`<a href="${escAttr(url)}" target="_blank" rel="noopener"><img class="hw-media-img" src="${escAttr(url)}" alt="" loading="lazy" /></a>`);
+    } else if (/\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url)) {
+      embeds.push(`<video class="hw-media-video" src="${escAttr(url)}" controls preload="metadata"></video>`);
+    }
+  }
+  html += esc(str.slice(last));
+  html = html.replace(/\n/g, '<br />');
+  return `<div class="hw-text">${html}</div>` + (embeds.length ? `<div class="hw-embeds">${embeds.join('')}</div>` : '');
+}
+
 // Visible breadcrumb trail markup.
 function breadcrumbHtml(crumbs) {
   const parts = crumbs.map((c, i) =>
@@ -269,6 +312,22 @@ footer.site .fnav{line-height:2}
 .ad-slot .ad-frame{max-width:100%;border-radius:12px;overflow:hidden;background:transparent}
 .ad-header,.ad-footer{border:1px dashed var(--border);border-radius:14px;padding:12px}
 .ad-content_inline{margin:18px auto}
+/* Highway (public post pool) */
+.hw-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:16px 18px;margin:0 0 14px;box-shadow:0 1px 2px rgba(0,0,0,.2),0 10px 30px rgba(0,0,0,.12)}
+.hw-card.pinned{border-color:color-mix(in srgb,var(--accent) 55%,var(--border))}
+.hw-card-head{display:flex;align-items:center;gap:10px;margin:0 0 8px}
+.hw-av{width:38px;height:38px;border-radius:50%;object-fit:cover;flex:none;background:var(--bg3)}
+.hw-av-ph{display:grid;place-items:center;font-size:18px}
+.hw-meta{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;min-width:0}
+.hw-who{font-weight:700}.hw-handle{color:var(--muted);font-size:13px}
+.hw-date{color:var(--muted);font-size:12px}
+.hw-pin{margin-left:auto;font-size:12px;font-weight:700;color:var(--accent);white-space:nowrap}
+.hw-text{white-space:normal;line-height:1.55;overflow-wrap:anywhere}
+.hw-embeds{margin-top:10px;display:flex;flex-direction:column;gap:10px}
+.hw-embed{width:100%;max-width:520px;aspect-ratio:16/9;height:auto;border:0;border-radius:12px}
+.hw-media-img{max-width:100%;max-height:420px;border-radius:12px;border:1px solid var(--border)}
+.hw-media-video{max-width:100%;border-radius:12px}
+.hw-card-img{display:block;margin-top:12px;max-width:100%;max-height:460px;border-radius:12px;border:1px solid var(--border)}
 /* Side-rail layout used when rail ads are present. */
 .page-shell{display:block}
 @media (min-width:1180px){
@@ -305,6 +364,7 @@ function renderDocument({ seoDescriptor, jsonLd, bodyHtml, railLeft, railRight }
     <div class="wrap">
       <a class="brand" href="/">getx<span class="x">match</span></a>
       <nav class="top">
+        <a href="/highway">Highway</a>
         <a href="/quizzes">Quizzes</a>
         <a href="/polls">Polls</a>
         <a href="/blog">Blog</a>
@@ -326,7 +386,7 @@ ${bodyHtml}
     <div class="wrap">
       <span>© ${new Date().getFullYear()} ${esc(SITE_NAME)} — a social space for adults 18+.</span>
       <nav class="fnav" aria-label="Footer">
-        <a href="/about">About</a> · <a href="/how-it-works">How it works</a> · <a href="/quizzes">Quizzes</a> · <a href="/polls">Polls</a> · <a href="/blog">Blog</a> · <a href="/faq">FAQ</a> · <a href="/safety">Safety</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/sitemap.xml">Sitemap</a>
+        <a href="/highway">Highway</a> · <a href="/about">About</a> · <a href="/how-it-works">How it works</a> · <a href="/quizzes">Quizzes</a> · <a href="/polls">Polls</a> · <a href="/blog">Blog</a> · <a href="/faq">FAQ</a> · <a href="/safety">Safety</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/sitemap.xml">Sitemap</a>
       </nav>
     </div>
   </footer>
@@ -351,5 +411,6 @@ module.exports = {
   breadcrumbHtml,
   organizationLd,
   websiteLd,
+  renderUserText,
   renderDocument,
 };

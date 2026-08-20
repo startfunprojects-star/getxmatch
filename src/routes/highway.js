@@ -17,10 +17,10 @@ const { requireAuth } = require('../auth');
 const { imageUpload } = require('../upload');
 const { friendState } = require('../profileData');
 const { broadcastHighway } = require('../socket');
+const hw = require('../highway');
 
 const router = express.Router();
 
-const MAX_POSTS = 100;
 const BODY_MAX = 2000;
 
 const postLimiter = rateLimit({
@@ -52,20 +52,14 @@ function shapePost(r, viewerId) {
     },
     mine: r.user_id === viewerId,
     friendState: friendState(r.user_id, viewerId),
+    pinned: !!r.pinned,
+    pinRank: r.pinned ? (r.pin_rank || null) : null,
   };
 }
 
-const POST_SELECT =
-  `SELECT h.id, h.user_id, h.body, h.image, h.created_at,
-          u.username, p.display_name, p.avatar
-     FROM highway_posts h
-     JOIN users u ON u.id = h.user_id
-     LEFT JOIN profiles p ON p.user_id = h.user_id`;
-
-// GET /api/highway — newest 100 posts.
+// GET /api/highway — the pool in display order (pinned first, then newest).
 router.get('/', requireAuth, (req, res) => {
-  const rows = db.prepare(`${POST_SELECT} ORDER BY h.created_at DESC, h.id DESC LIMIT ?`).all(MAX_POSTS);
-  res.json({ posts: rows.map((r) => shapePost(r, req.user.id)), max: MAX_POSTS });
+  res.json({ posts: hw.allOrdered().map((r) => shapePost(r, req.user.id)), max: hw.MAX_POSTS });
 });
 
 // POST /api/highway — create a post (text and/or image), then prune to 100.
@@ -80,16 +74,10 @@ router.post('/', requireAuth, postLimiter, imageUpload.single('image'), (req, re
   const info = db.prepare('INSERT INTO highway_posts (user_id, body, image, created_at) VALUES (?, ?, ?, ?)')
     .run(req.user.id, body, image, now);
 
-  // Prune anything beyond the newest MAX_POSTS, deleting their images too.
-  const stale = db.prepare(
-    'SELECT id, image FROM highway_posts WHERE id NOT IN (SELECT id FROM highway_posts ORDER BY created_at DESC, id DESC LIMIT ?)'
-  ).all(MAX_POSTS);
-  if (stale.length) {
-    const del = db.prepare('DELETE FROM highway_posts WHERE id = ?');
-    stale.forEach((s) => { del.run(s.id); removeUpload(s.image); });
-  }
+  // Prune unpinned posts beyond the cap, deleting their images too.
+  hw.prune().forEach(removeUpload);
 
-  const row = db.prepare(`${POST_SELECT} WHERE h.id = ?`).get(info.lastInsertRowid);
+  const row = hw.byId(info.lastInsertRowid);
   const post = shapePost(row, req.user.id);
 
   // Live-push to everyone. Viewer-specific fields (mine/friendState) are filled
@@ -97,7 +85,7 @@ router.post('/', requireAuth, postLimiter, imageUpload.single('image'), (req, re
   try {
     broadcastHighway({
       id: post.id, body: post.body, image: post.image, createdAt: post.createdAt,
-      author: post.author, prunedIds: stale.map((s) => s.id),
+      author: post.author,
     });
   } catch (_e) { /* never block the response */ }
 

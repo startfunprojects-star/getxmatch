@@ -262,6 +262,7 @@
       <div class="auth-split">
         <aside class="auth-activity">
           <nav class="auth-nav" aria-label="Explore">
+            <a href="/highway">Highway</a>
             <a href="/quizzes">Quizzes</a>
             <a href="/polls">Polls</a>
             <a href="/blog">Blog</a>
@@ -2789,12 +2790,12 @@
   // Build one Highway post card.
   function highwayPostEl(p) {
     const card = el(`
-      <div class="card highway-post" data-id="${p.id}">
+      <div class="card highway-post${p.pinned ? ' hw-pinned' : ''}" data-id="${p.id}">
         <div class="hw-head">
           <img class="avatar sm hw-avatar" src="${avatarUrl(p.author.avatar)}" alt="" />
           <div class="hw-who">
             <div class="hw-name"></div>
-            <div class="hw-time hint">${fmtDate(p.createdAt)} · ${fmtTime(p.createdAt)}</div>
+            <div class="hw-time hint">${p.pinned ? '📌 Pinned · ' : ''}${fmtDate(p.createdAt)} · ${fmtTime(p.createdAt)}</div>
           </div>
           <div class="hw-action"></div>
         </div>
@@ -2844,7 +2845,9 @@
     if (dup) dup.remove();
     const empty = feed.querySelector('.empty-main');
     if (empty) empty.remove();
-    feed.insertBefore(highwayPostEl(post), feed.firstChild);
+    // New (unpinned) posts go above the rest but below any pinned posts.
+    const anchor = post.pinned ? feed.firstChild : feed.querySelector('.highway-post:not(.hw-pinned)');
+    feed.insertBefore(highwayPostEl(post), anchor || null);
   }
 
   function trimHighwayFeed(feed) {

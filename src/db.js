@@ -504,6 +504,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_highway_recent ON highway_posts (created_at);
 `);
 
+// Admin pinning for Highway: a pinned post is exempt from the 100-post prune and
+// is shown ahead of the rest, ordered by pin_rank (1..10). Added idempotently.
+{
+  const cols = db.prepare('PRAGMA table_info(highway_posts)').all().map((c) => c.name);
+  if (!cols.includes('pinned')) db.exec('ALTER TABLE highway_posts ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('pin_rank')) db.exec('ALTER TABLE highway_posts ADD COLUMN pin_rank INTEGER');
+}
+
 // Relationship kind on a friendship request (friend / girlfriend / crush / …).
 // Added idempotently for databases created before the relationship-request feature.
 {

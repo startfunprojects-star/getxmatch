@@ -42,7 +42,11 @@ self-host on a single VPS: no external database or storage service required.
   posted it, and viewers can send that person a relationship request straight
   from the post. The pool keeps only the **newest 100 posts** — older ones (and
   their images) are pruned automatically as new posts arrive — and updates live
-  over the socket.
+  over the socket. There's a **public, read-only `/highway` page** (linked from
+  the homepage menu) so logged-out visitors can browse posts too. From the admin
+  dashboard's **Highway** tab, the admin can **delete any post** and **pin a post
+  to a fixed position 1–10** — pinned posts show first everywhere and are exempt
+  from the 100-post prune.
 - **Leaderboard** — ranks every member by an engagement score built from their
   ratings, friends and quiz activity. Users can send a **friend request** to
   anyone directly from the leaderboard.
