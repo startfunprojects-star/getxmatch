@@ -67,7 +67,7 @@
      Ads are fetched once and rendered into named placement slots. Image ads are
      click-tracked via a redirect; script ads run inside a sandboxed same-origin
      iframe so ad-network code can't touch the page, cookies or user data. */
-  const AD_PLACEMENTS = 'content_header,content_footer,content_sidebar_left,content_sidebar_right,content_inline,chat_inline,live_inline';
+  const AD_PLACEMENTS = 'content_header,content_footer,content_sidebar_left,content_sidebar_right,content_inline,highway_header,highway_footer,highway_inline,chat_inline,live_inline';
   const adState = { slots: null, promise: null, counters: {} };
 
   async function loadAds() {
@@ -2781,9 +2781,19 @@
 
     try {
       const { posts } = await api.get('/api/highway');
+      await loadAds().catch(() => {});
       feed.innerHTML = '';
+      const header = slotEl('highway_header');
+      if (header) feed.appendChild(header);
       if (!posts.length) feed.appendChild(el('<div class="empty-main">No posts yet — be the first to hit the Highway!</div>'));
-      else posts.forEach((p) => feed.appendChild(highwayPostEl(p)));
+      else posts.forEach((p, i) => {
+        feed.appendChild(highwayPostEl(p));
+        // An ad after every 5th post.
+        if ((i + 1) % 5 === 0 && i < posts.length - 1) {
+          const ad = slotEl('highway_inline', Math.floor(i / 5));
+          if (ad) { ad.classList.add('ad-stream'); feed.appendChild(ad); }
+        }
+      });
     } catch (e) { feed.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; }
   }
 

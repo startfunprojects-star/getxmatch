@@ -60,8 +60,9 @@ self-host on a single VPS: no external database or storage service required.
   Quizzes, Polls, Blogs and Recent Events, and shows a read-only Leaderboard.
 - **Advertisements** — the admin can place image banners (with click tracking)
   or ad-network script/HTML snippets into named slots: header, footer, both
-  sidebars and between items on the quizzes/polls/blogs pages, after every 20
-  messages in a chat, and after every 15 items in the live-activity feed. Script
+  sidebars and between items on the quizzes/polls/blogs pages **and, as a
+  separately-targeted group, the Highway feed**, after every 20 messages in a
+  chat, and after every 15 items in the live-activity feed. Script
   ads run inside a **sandboxed same-origin iframe** (served with its own
   permissive CSP) so ad code can never read the page, cookies or user data —
   the main app keeps its strict `script-src 'self'` policy. The Ads tab shows

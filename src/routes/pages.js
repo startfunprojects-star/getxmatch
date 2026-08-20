@@ -19,30 +19,32 @@ const hw = require('../highway');
 
 const router = express.Router();
 
-// Wrap a content page's body with header + footer ad slots and supply the
-// left/right sidebar rails. Only used on the quizzes/polls/blog pages (not the
-// info/legal pages), per the ad placement plan.
-function withAds(bodyHtml) {
+// Wrap a page's body with header + footer ad slots and supply the left/right
+// sidebar rails, for a given placement group ('content' for quizzes/polls/blogs,
+// 'highway' for the Highway pool).
+function withAds(bodyHtml, prefix) {
+  prefix = prefix || 'content';
   return {
-    bodyHtml: ads.slotHtml('content_header') + bodyHtml + ads.slotHtml('content_footer'),
-    railLeft: ads.slotHtml('content_sidebar_left'),
-    railRight: ads.slotHtml('content_sidebar_right'),
+    bodyHtml: ads.slotHtml(`${prefix}_header`) + bodyHtml + ads.slotHtml(`${prefix}_footer`),
+    railLeft: ads.slotHtml(`${prefix}_sidebar_left`),
+    railRight: ads.slotHtml(`${prefix}_sidebar_right`),
   };
 }
 
 // Join a list of item-HTML strings, dropping an inline ad after every 4 items.
-function joinWithInlineAds(items) {
+function joinWithInlineAds(items, prefix) {
+  prefix = prefix || 'content';
   const out = [];
   items.forEach((html, i) => {
     out.push(html);
-    if ((i + 1) % 4 === 0 && i < items.length - 1) out.push(ads.slotHtml('content_inline', Math.floor(i / 4)));
+    if ((i + 1) % 4 === 0 && i < items.length - 1) out.push(ads.slotHtml(`${prefix}_inline`, Math.floor(i / 4)));
   });
   return out.join('');
 }
 
 // Send a content page with ad slots injected (header/footer/rails).
-function sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml, status }) {
-  const a = withAds(bodyHtml);
+function sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml, status, adPrefix }) {
+  const a = withAds(bodyHtml, adPrefix);
   const html = renderDocument({ seoDescriptor, jsonLd, bodyHtml: a.bodyHtml, railLeft: a.railLeft, railRight: a.railRight });
   if (status) res.status(status);
   res.send(html);
@@ -407,7 +409,7 @@ function highwayCard(p) {
 router.get('/highway', (req, res) => {
   const posts = hw.allOrdered();
   const cards = posts.length
-    ? joinWithInlineAds(posts.map(highwayCard))
+    ? joinWithInlineAds(posts.map(highwayCard), 'highway')
     : '<p class="empty">No posts on the Highway yet — be the first once you join.</p>';
 
   // Volatile, user-generated content: viewable by everyone but kept out of the
@@ -424,7 +426,7 @@ ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Highway', path: '/highwa
 <p class="lede">The community pool — members share text, images, links and videos. Only the latest 100 posts stay on the road.</p>
 <a class="cta" href="/">Join getxmatch to post &amp; connect →</a>
 ${cards}`;
-  sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
+  sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml, adPrefix: 'highway' });
 });
 
 /* ===========================================================================

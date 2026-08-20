@@ -17,6 +17,11 @@ const PLACEMENTS = [
   { key: 'content_sidebar_left', label: 'Content — left sidebar' },
   { key: 'content_sidebar_right', label: 'Content — right sidebar' },
   { key: 'content_inline', label: 'Content — between items' },
+  { key: 'highway_header', label: 'Highway — top of feed' },
+  { key: 'highway_footer', label: 'Highway — bottom of feed' },
+  { key: 'highway_sidebar_left', label: 'Highway — left sidebar' },
+  { key: 'highway_sidebar_right', label: 'Highway — right sidebar' },
+  { key: 'highway_inline', label: 'Highway — between posts' },
   { key: 'chat_inline', label: 'Chat — after every 20 messages' },
   { key: 'live_inline', label: 'Live activity — after every 15 items' },
 ];
@@ -24,17 +29,10 @@ const PLACEMENT_KEYS = PLACEMENTS.map((p) => p.key);
 const isPlacement = (k) => PLACEMENT_KEYS.includes(k);
 
 // Default iframe dimensions per placement (script ads). Admin values override.
+// Sidebar slots are a 300×250 medium rectangle; everything else is full-width.
 function defaultDims(placement) {
-  switch (placement) {
-    case 'content_sidebar_left':
-    case 'content_sidebar_right':
-      return { w: 300, h: 250 };
-    case 'chat_inline':
-    case 'live_inline':
-      return { w: 0, h: 120 }; // 0 width → full-width
-    default:
-      return { w: 0, h: 120 };
-  }
+  if (/sidebar/.test(placement)) return { w: 300, h: 250 };
+  return { w: 0, h: 120 }; // 0 width → full-width
 }
 
 function esc(s) {
