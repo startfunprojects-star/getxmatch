@@ -16,6 +16,7 @@ const { imageUpload } = require('../upload');
 const { buildProfile } = require('../profileData');
 const { saveProfile } = require('../profileWrite');
 const { isFakeActivityEnabled, setFakeActivityEnabled } = require('../settings');
+const ads = require('../ads');
 const {
   ADMIN_COOKIE,
   signAdminToken,
@@ -774,6 +775,101 @@ router.get('/leaderboard', requireAdmin, (req, res) => {
   scored.sort((a, b) => b.score - a.score || b.ratingAvg - a.ratingAvg);
   scored.forEach((row, i) => { row.rank = i + 1; });
   res.json({ leaderboard: scored });
+});
+
+/* ===========================================================================
+   Advertisements (admin only): CRUD + click analytics.
+=========================================================================== */
+
+function intOrNull(v) {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 4096) : null;
+}
+
+// Shape an ad row for the admin UI (includes the raw script so it can be edited).
+function adForAdmin(r) {
+  return {
+    id: r.id,
+    name: r.name,
+    type: r.type,
+    placement: r.placement,
+    image: r.image ? `/uploads/${r.image}` : null,
+    link: r.link || '',
+    script: r.script || '',
+    width: r.width || null,
+    height: r.height || null,
+    active: !!r.active,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+// GET /api/admin/ads — every ad + the placement catalog + click analytics.
+router.get('/ads', requireAdmin, (req, res) => {
+  const rows = db.prepare('SELECT * FROM ads ORDER BY created_at DESC').all();
+  res.json({
+    ads: rows.map(adForAdmin),
+    placements: ads.PLACEMENTS,
+    stats: ads.stats(),
+  });
+});
+
+// Validate a posted ad. Returns { value } or { error }.
+function normalizeAd(body, file, existing) {
+  const name = String((body && body.name) || '').trim().slice(0, 120);
+  if (!name) return { error: 'A name is required.' };
+  const type = (body && body.type) === 'script' ? 'script' : 'image';
+  const placement = String((body && body.placement) || '').trim();
+  if (!ads.isPlacement(placement)) return { error: 'Choose a valid placement.' };
+  const active = (body && (body.active === undefined ? true : truthy(body.active))) ? 1 : 0;
+
+  if (type === 'script') {
+    const script = String((body && body.script) || '').trim();
+    if (!script) return { error: 'Paste the ad HTML/script code.' };
+    return { value: { name, type, placement, image: null, link: null, script: script.slice(0, 20000), width: intOrNull(body.width), height: intOrNull(body.height), active } };
+  }
+  // image ad
+  const image = file ? file.filename : (existing ? existing.image : null);
+  if (!image) return { error: 'Upload an image for this ad.' };
+  const link = String((body && body.link) || '').trim().slice(0, 500);
+  return { value: { name, type, placement, image, link: link || null, script: null, width: intOrNull(body.width), height: intOrNull(body.height), active } };
+}
+
+// POST /api/admin/ads  (multipart: optional image)
+router.post('/ads', requireAdmin, imageUpload.single('image'), (req, res) => {
+  const norm = normalizeAd(req.body, req.file, null);
+  if (norm.error) { removeUpload(req.file && req.file.filename); return res.status(400).json({ error: norm.error }); }
+  const a = norm.value;
+  const now = Date.now();
+  const info = db.prepare(
+    'INSERT INTO ads (name, type, placement, image, link, script, width, height, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(a.name, a.type, a.placement, a.image, a.link, a.script, a.width, a.height, a.active, now, now);
+  res.status(201).json({ id: info.lastInsertRowid });
+});
+
+// PUT /api/admin/ads/:id  (multipart: optional replacement image)
+router.put('/ads/:id', requireAdmin, imageUpload.single('image'), (req, res) => {
+  const existing = db.prepare('SELECT * FROM ads WHERE id = ?').get(req.params.id);
+  if (!existing) { removeUpload(req.file && req.file.filename); return res.status(404).json({ error: 'Ad not found.' }); }
+  const norm = normalizeAd(req.body, req.file, existing);
+  if (norm.error) { removeUpload(req.file && req.file.filename); return res.status(400).json({ error: norm.error }); }
+  const a = norm.value;
+  // When a new image was uploaded (or the type switched away from image), drop
+  // the old file.
+  if (existing.image && existing.image !== a.image) removeUpload(existing.image);
+  db.prepare(
+    'UPDATE ads SET name = ?, type = ?, placement = ?, image = ?, link = ?, script = ?, width = ?, height = ?, active = ?, updated_at = ? WHERE id = ?'
+  ).run(a.name, a.type, a.placement, a.image, a.link, a.script, a.width, a.height, a.active, Date.now(), existing.id);
+  res.json({ ok: true });
+});
+
+// DELETE /api/admin/ads/:id
+router.delete('/ads/:id', requireAdmin, (req, res) => {
+  const row = db.prepare('SELECT id, image FROM ads WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Ad not found.' });
+  db.prepare('DELETE FROM ads WHERE id = ?').run(row.id); // cascades ad_clicks
+  removeUpload(row.image);
+  res.json({ ok: true });
 });
 
 module.exports = router;

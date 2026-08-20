@@ -261,13 +261,31 @@ footer.site .fnav{line-height:2}
 .hero{padding:14px 0 6px}
 .hero .lede{font-size:20px;max-width:640px}
 .updated{color:var(--muted);font-size:13px;margin:0 0 18px}
+/* Advertisements */
+.ad-slot{display:block;text-align:center;margin:22px auto;max-width:100%}
+.ad-slot .ad-label{display:block;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);opacity:.7;margin:0 0 6px}
+.ad-slot .ad-image{display:inline-block;line-height:0}
+.ad-slot .ad-image img{max-width:100%;height:auto;border-radius:12px;border:1px solid var(--border)}
+.ad-slot .ad-frame{max-width:100%;border-radius:12px;overflow:hidden;background:transparent}
+.ad-header,.ad-footer{border:1px dashed var(--border);border-radius:14px;padding:12px}
+.ad-content_inline{margin:18px auto}
+/* Side-rail layout used when rail ads are present. */
+.page-shell{display:block}
+@media (min-width:1180px){
+  .page-shell.has-rails{display:grid;grid-template-columns:1fr minmax(0,840px) 1fr;align-items:start;gap:20px;max-width:1320px;margin:0 auto}
+  .page-shell.has-rails .wrap{max-width:840px;padding:0 12px}
+  .page-shell .rail{position:sticky;top:80px;padding:0 8px}
+  .page-shell .rail .ad-slot{margin:0 auto 20px}
+}
+@media (max-width:1179px){.page-shell .rail{display:none}}
 `;
 
 // Full HTML document for a public page.
 //   seoDescriptor   from resolveSeo()
 //   jsonLd          object/array for structured data
 //   bodyHtml        the <main> inner markup (already escaped)
-function renderDocument({ seoDescriptor, jsonLd, bodyHtml }) {
+//   railLeft/railRight  optional ad markup for the side rails (wide screens)
+function renderDocument({ seoDescriptor, jsonLd, bodyHtml, railLeft, railRight }) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -296,8 +314,12 @@ function renderDocument({ seoDescriptor, jsonLd, bodyHtml }) {
     </div>
   </header>
   <main>
-    <div class="wrap">
+    <div class="page-shell${railLeft || railRight ? ' has-rails' : ''}">
+      ${railLeft ? `<div class="rail rail-left">${railLeft}</div>` : ''}
+      <div class="wrap">
 ${bodyHtml}
+      </div>
+      ${railRight ? `<div class="rail rail-right">${railRight}</div>` : ''}
     </div>
   </main>
   <footer class="site">

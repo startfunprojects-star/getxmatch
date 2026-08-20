@@ -47,6 +47,16 @@ self-host on a single VPS: no external database or storage service required.
   profile, and accept or decline. A live badge in the sidebar shows the count.
 - **Admin content management** — a tabbed `/admin` dashboard manages Users,
   Quizzes, Polls, Blogs and Recent Events, and shows a read-only Leaderboard.
+- **Advertisements** — the admin can place image banners (with click tracking)
+  or ad-network script/HTML snippets into named slots: header, footer, both
+  sidebars and between items on the quizzes/polls/blogs pages, after every 20
+  messages in a chat, and after every 15 items in the live-activity feed. Script
+  ads run inside a **sandboxed same-origin iframe** (served with its own
+  permissive CSP) so ad code can never read the page, cookies or user data —
+  the main app keeps its strict `script-src 'self'` policy. The Ads tab shows
+  clicks per placement for today / 7 days / 30 days / all-time, plus the total.
+  (Image-ad clicks are tracked via a redirect; script/ad-network ads report
+  their own clicks in the network's dashboard.)
 
 - **Search-engine friendly** — public content is server-rendered and crawlable
   even though the app itself is an SPA. Quizzes, polls and blog posts each get a

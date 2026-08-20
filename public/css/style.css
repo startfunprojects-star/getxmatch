@@ -466,6 +466,26 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .explore-nav button { flex: 1 1 45%; padding: 8px 10px; font-size: 13px; text-align: left; }
 .explore-nav button.active { background: var(--bg-3); border: 1px solid var(--accent); }
 
+/* ---------- Advertisements ---------- */
+.ad-slot { display: block; text-align: center; margin: 18px auto; max-width: 100%; }
+.ad-slot .ad-label { display: block; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); opacity: .65; margin: 0 0 6px; }
+.ad-slot .ad-image { display: inline-block; line-height: 0; }
+.ad-slot .ad-image img { max-width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--border); }
+.ad-slot .ad-frame { max-width: 100%; border-radius: 12px; overflow: hidden; background: transparent; }
+.ad-header, .ad-footer, .ad-content_header, .ad-content_footer { border: 1px dashed var(--border); border-radius: 14px; padding: 12px; }
+.ad-inline-row { grid-column: 1 / -1; }
+.ad-stream { margin: 12px auto; }
+.activity-side .ad-stream, .feed .ad-stream { margin: 8px 6px; }
+
+/* Content section side rails (quizzes/polls/blogs), wide screens only. */
+.section-view.has-ad-rails { max-width: 1280px; display: grid; grid-template-columns: 1fr minmax(0, 820px) 1fr; gap: 20px; align-items: start; }
+.section-view.has-ad-rails .section-col { min-width: 0; }
+.section-rail { position: sticky; top: 20px; }
+@media (max-width: 1179px) {
+  .section-view.has-ad-rails { display: block; max-width: 900px; }
+  .section-rail { display: none; }
+}
+
 /* ---------- Explore sections (main pane) ---------- */
 .section-view { overflow-y: auto; width: 100%; max-width: 900px; margin: 0 auto; padding: 20px 24px 48px; animation: pvIn .28s ease both; }
 .section-head { margin-bottom: 18px; }

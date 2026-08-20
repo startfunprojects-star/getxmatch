@@ -345,6 +345,7 @@
     ['roleplays', 'Roleplays'],
     ['events', 'Recent Events'],
     ['fake', 'Fake Activity'],
+    ['ads', 'Ads'],
     ['leaderboard', 'Leaderboard'],
   ];
 
@@ -392,6 +393,7 @@
     if (tab === 'roleplays') return renderRoleplaysTab();
     if (tab === 'events') return renderEventsTab();
     if (tab === 'fake') return renderFakeActivityTab();
+    if (tab === 'ads') return renderAdsTab();
     if (tab === 'leaderboard') return renderLeaderboardTab();
   }
 
@@ -938,6 +940,158 @@
       box.appendChild(item);
     });
     if (pager) box.appendChild(pager);
+  }
+
+  /* ==================================================================
+     Ads tab — create/manage advertisements + click analytics.
+  ================================================================== */
+  let adsCache = [], adPlacements = [], adStats = null;
+
+  async function renderAdsTab() {
+    const host = tabHost();
+    host.innerHTML = `
+      <div class="admin-split">
+        <div class="admin-main">
+          <div class="admin-card" id="adEditor"></div>
+          <div class="admin-card" id="adStats"><h2>Ad clicks by location</h2><div class="count">Loading…</div></div>
+        </div>
+        <aside class="admin-side"><div class="admin-card"><h2>Existing ads</h2><div id="adList" class="count">Loading…</div></div></aside>
+      </div>`;
+    await loadAdsData();
+    renderAdEditor(null);
+    paintAdList();
+    paintAdStats();
+  }
+
+  async function loadAdsData() {
+    try {
+      const r = await api.get('/api/admin/ads');
+      adsCache = r.ads; adPlacements = r.placements; adStats = r.stats;
+    } catch (e) { if (e.status === 401) return renderLogin(true); }
+  }
+
+  function placementLabel(key) {
+    const p = adPlacements.find((x) => x.key === key);
+    return p ? p.label : key;
+  }
+
+  function renderAdEditor(ad) {
+    const host = document.getElementById('adEditor');
+    if (!host) return;
+    const placementOpts = adPlacements.map((p) =>
+      `<option value="${esc(p.key)}"${ad && ad.placement === p.key ? ' selected' : ''}>${esc(p.label)}</option>`).join('');
+    const type = ad ? ad.type : 'image';
+    host.innerHTML = `
+      <h2>${ad ? 'Edit ad' : 'Create ad'}</h2>
+      <label>Name (internal reference)</label><input id="adName" value="${esc(ad ? ad.name : '')}" />
+      <label>Placement</label><select id="adPlacement">${placementOpts}</select>
+      <label>Type</label>
+      <select id="adType">
+        <option value="image"${type === 'image' ? ' selected' : ''}>Image banner (click-tracked)</option>
+        <option value="script"${type === 'script' ? ' selected' : ''}>Script / HTML (ad network)</option>
+      </select>
+      <div id="adImageFields">
+        <label>Image ${ad && ad.image ? '(leave empty to keep current)' : ''}</label>
+        <input type="file" id="adImage" accept="image/*" />
+        ${ad && ad.image ? `<div class="count"><img src="${esc(ad.image)}" alt="" style="max-height:64px;border-radius:8px;margin-top:6px" /></div>` : ''}
+        <label>Click-through URL</label><input id="adLink" placeholder="https://advertiser.example.com" value="${esc(ad ? ad.link : '')}" />
+      </div>
+      <div id="adScriptFields" class="hidden">
+        <label>Ad code (HTML / &lt;script&gt;)</label>
+        <textarea id="adScript" style="min-height:150px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px">${esc(ad ? ad.script : '')}</textarea>
+        <p class="hint">Paste the snippet from your ad network. It runs isolated in a sandboxed frame — its clicks are counted by the network, not here.</p>
+      </div>
+      <div class="form-grid" style="margin-top:10px">
+        <div><label>Width px (optional)</label><input id="adWidth" type="number" min="1" value="${ad && ad.width ? ad.width : ''}" /></div>
+        <div><label>Height px (optional)</label><input id="adHeight" type="number" min="1" value="${ad && ad.height ? ad.height : ''}" /></div>
+      </div>
+      <label class="seo-check" style="margin-top:12px"><input type="checkbox" id="adActive" ${!ad || ad.active ? 'checked' : ''} /> Active (show this ad)</label>
+      <div class="admin-item-actions">
+        <button type="button" class="primary" id="saveAd">${ad ? 'Save changes' : 'Create ad'}</button>
+        ${ad ? '<button type="button" class="ghost" id="cancelAd">Cancel</button>' : ''}
+      </div>
+      <div class="msg" id="adMsg"></div>
+    `;
+    const typeSel = host.querySelector('#adType');
+    const toggle = () => {
+      const isScript = typeSel.value === 'script';
+      host.querySelector('#adImageFields').classList.toggle('hidden', isScript);
+      host.querySelector('#adScriptFields').classList.toggle('hidden', !isScript);
+    };
+    typeSel.addEventListener('change', toggle); toggle();
+    const cancel = host.querySelector('#cancelAd');
+    if (cancel) cancel.addEventListener('click', () => renderAdEditor(null));
+    host.querySelector('#saveAd').addEventListener('click', async () => {
+      const msg = host.querySelector('#adMsg'); msg.className = 'msg';
+      const fd = new FormData();
+      fd.append('name', host.querySelector('#adName').value.trim());
+      fd.append('placement', host.querySelector('#adPlacement').value);
+      fd.append('type', typeSel.value);
+      fd.append('link', host.querySelector('#adLink').value.trim());
+      fd.append('script', host.querySelector('#adScript').value);
+      fd.append('width', host.querySelector('#adWidth').value);
+      fd.append('height', host.querySelector('#adHeight').value);
+      fd.append('active', host.querySelector('#adActive').checked ? 'true' : 'false');
+      const imgEl = host.querySelector('#adImage');
+      if (imgEl.files[0]) fd.append('image', imgEl.files[0]);
+      try {
+        if (ad) await api.putForm('/api/admin/ads/' + ad.id, fd);
+        else await api.postForm('/api/admin/ads', fd);
+        msg.className = 'msg ok'; msg.textContent = 'Saved.';
+        renderAdEditor(null);
+        await loadAdsData(); paintAdList(); paintAdStats();
+      } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
+    });
+  }
+
+  function paintAdList() {
+    const box = document.getElementById('adList');
+    if (!box) return;
+    if (!adsCache.length) { box.innerHTML = '<div class="count">No ads yet.</div>'; return; }
+    box.innerHTML = '';
+    adsCache.forEach((a) => {
+      const clicks = (adStats && adStats.byAd[a.id] && adStats.byAd[a.id].all) || 0;
+      const item = el(`
+        <div class="admin-item">
+          <h3>${esc(a.name)} ${a.active ? '' : '<span class="pill">paused</span>'}</h3>
+          <div class="count">${esc(placementLabel(a.placement))}</div>
+          <div class="count">${esc(a.type === 'script' ? 'Script/HTML' : 'Image')} · ${clicks} click${clicks === 1 ? '' : 's'}</div>
+          <div class="admin-item-actions">
+            <button class="ghost small" data-edit>Edit</button>
+            <button class="danger small" data-del>Delete</button>
+          </div>
+        </div>
+      `);
+      item.querySelector('[data-edit]').addEventListener('click', () => { renderAdEditor(a); window.scrollTo(0, 0); });
+      item.querySelector('[data-del]').addEventListener('click', async () => {
+        if (!confirm('Delete this ad? Its click history is also removed.')) return;
+        try { await api.del('/api/admin/ads/' + a.id); await loadAdsData(); paintAdList(); paintAdStats(); }
+        catch (e) { alert(e.message); }
+      });
+      box.appendChild(item);
+    });
+  }
+
+  function paintAdStats() {
+    const box = document.getElementById('adStats');
+    if (!box) return;
+    const s = adStats || { byPlacement: {}, byAd: {}, total: 0 };
+    const wl = [['today', 'Today'], ['week', '7 days'], ['month', '30 days'], ['all', 'All time']];
+    const rows = adPlacements.map((p) => {
+      const d = s.byPlacement[p.key] || {};
+      return `<tr><td>${esc(p.label)}</td>${wl.map(([k]) => `<td>${d[k] || 0}</td>`).join('')}</tr>`;
+    }).join('');
+    box.innerHTML = `
+      <h2>Ad clicks by location</h2>
+      <div class="table-scroll">
+        <table class="users">
+          <thead><tr><th>Placement</th>${wl.map(([, l]) => `<th>${l}</th>`).join('')}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <p class="count" style="margin-top:12px">Total clicks — all locations, all time: <strong>${s.total || 0}</strong></p>
+      <p class="hint">Clicks are tracked for image ads via a redirect. Script / ad-network ads report their own clicks in the network's dashboard.</p>
+    `;
   }
 
   /* ==================================================================

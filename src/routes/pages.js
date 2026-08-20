@@ -14,8 +14,38 @@ const express = require('express');
 const db = require('../db');
 const config = require('../config');
 const seo = require('../seo');
+const ads = require('../ads');
 
 const router = express.Router();
+
+// Wrap a content page's body with header + footer ad slots and supply the
+// left/right sidebar rails. Only used on the quizzes/polls/blog pages (not the
+// info/legal pages), per the ad placement plan.
+function withAds(bodyHtml) {
+  return {
+    bodyHtml: ads.slotHtml('content_header') + bodyHtml + ads.slotHtml('content_footer'),
+    railLeft: ads.slotHtml('content_sidebar_left'),
+    railRight: ads.slotHtml('content_sidebar_right'),
+  };
+}
+
+// Join a list of item-HTML strings, dropping an inline ad after every 4 items.
+function joinWithInlineAds(items) {
+  const out = [];
+  items.forEach((html, i) => {
+    out.push(html);
+    if ((i + 1) % 4 === 0 && i < items.length - 1) out.push(ads.slotHtml('content_inline', Math.floor(i / 4)));
+  });
+  return out.join('');
+}
+
+// Send a content page with ad slots injected (header/footer/rails).
+function sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml, status }) {
+  const a = withAds(bodyHtml);
+  const html = renderDocument({ seoDescriptor, jsonLd, bodyHtml: a.bodyHtml, railLeft: a.railLeft, railRight: a.railRight });
+  if (status) res.status(status);
+  res.send(html);
+}
 
 function parseJson(raw, fallback) {
   if (!raw) return fallback;
@@ -98,12 +128,12 @@ router.get('/quizzes', (req, res) => {
   });
 
   const cards = items.length
-    ? items.map((it) => `
+    ? joinWithInlineAds(items.map((it) => `
       <a class="card" href="${escAttr(it.path)}">
         <h3>${esc(it.title)}</h3>
         <p class="meta">${it.qCount} question${it.qCount === 1 ? '' : 's'}</p>
         ${it.description ? `<p class="excerpt">${esc(summarize(it.description, 160))}</p>` : ''}
-      </a>`).join('')
+      </a>`))
     : '<p class="empty">No quizzes published yet. Check back soon!</p>';
 
   const seoDescriptor = resolveSeo({}, {
@@ -124,7 +154,7 @@ ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Quizzes', path: '/quizze
 <h1>Compatibility Quizzes</h1>
 <p class="lede">Answer a few playful questions and discover how well you match. Share a link and compare answers with anyone.</p>
 ${cards}`;
-  res.send(renderDocument({ seoDescriptor, jsonLd, bodyHtml }));
+  sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
 
 router.get('/quizzes/:id/:slug?', (req, res, next) => {
@@ -167,8 +197,9 @@ ${row.description ? `<p class="lede">${esc(row.description)}</p>` : ''}
 <a class="cta" href="/">Take this quiz in the app →</a>
 <h2>Questions</h2>
 ${qHtml || '<p class="empty">This quiz has no questions yet.</p>'}
+${ads.slotHtml('content_inline')}
 <a class="cta" href="/">Find your match — open getxmatch →</a>`;
-  res.send(renderDocument({ seoDescriptor, jsonLd, bodyHtml }));
+  sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
 
 /* ===========================================================================
@@ -191,11 +222,11 @@ router.get('/polls', (req, res) => {
     return { id: r.id, question: r.question, closed: !!r.closed, path: itemPath('polls', r.id, s.slug || r.question) };
   });
   const cards = items.length
-    ? items.map((it) => `
+    ? joinWithInlineAds(items.map((it) => `
       <a class="card" href="${escAttr(it.path)}">
         <h3>${esc(it.question)}</h3>
         <p class="meta">${it.closed ? 'Closed' : 'Open for voting'}</p>
-      </a>`).join('')
+      </a>`))
     : '<p class="empty">No polls published yet. Check back soon!</p>';
 
   const seoDescriptor = resolveSeo({}, {
@@ -216,7 +247,7 @@ ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Polls', path: '/polls' }
 <h1>Community Polls</h1>
 <p class="lede">See what the getxmatch community thinks — then cast your own vote.</p>
 ${cards}`;
-  res.send(renderDocument({ seoDescriptor, jsonLd, bodyHtml }));
+  sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
 
 router.get('/polls/:id/:slug?', (req, res, next) => {
@@ -257,8 +288,9 @@ ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Polls', path: '/polls' }
 <h1>${esc(row.question)}</h1>
 <p class="lede">${total} vote${total === 1 ? '' : 's'} so far${row.closed ? ' · this poll is closed' : ''}.</p>
 ${optHtml}
+${ads.slotHtml('content_inline')}
 <a class="cta" href="/">${row.closed ? 'See more polls in the app →' : 'Cast your vote in the app →'}</a>`;
-  res.send(renderDocument({ seoDescriptor, jsonLd, bodyHtml }));
+  sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
 
 /* ===========================================================================
@@ -276,12 +308,12 @@ router.get('/blog', (req, res) => {
     };
   });
   const cards = items.length
-    ? items.map((it) => `
+    ? joinWithInlineAds(items.map((it) => `
       <a class="card" href="${escAttr(it.path)}">
         <h3>${esc(it.title)}</h3>
         <p class="meta">By ${esc(it.author)} · ${esc(humanDate(it.createdAt))}</p>
         ${it.excerpt ? `<p class="excerpt">${esc(summarize(it.excerpt, 180))}</p>` : ''}
-      </a>`).join('')
+      </a>`))
     : '<p class="empty">No blog posts yet. Check back soon!</p>';
 
   const seoDescriptor = resolveSeo({}, {
@@ -302,7 +334,7 @@ ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Blog', path: '/blog' }])
 <h1>Blog</h1>
 <p class="lede">Stories, dating tips and news from the getxmatch team.</p>
 ${cards}`;
-  res.send(renderDocument({ seoDescriptor, jsonLd, bodyHtml }));
+  sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
 
 router.get('/blog/:id/:slug?', (req, res, next) => {
@@ -347,8 +379,9 @@ ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Blog', path: '/blog' }, 
 <p class="meta">By ${esc(r.author)} · ${esc(humanDate(r.created_at))}</p>
 ${cover ? `<img class="cover" src="${escAttr(cover)}" alt="${escAttr(r.title)}" />` : ''}
 <article class="post">${paras || `<p>${esc(r.excerpt || '')}</p>`}</article>
+${ads.slotHtml('content_inline')}
 <a class="cta" href="/">Join getxmatch →</a>`;
-  res.send(renderDocument({ seoDescriptor, jsonLd, bodyHtml }));
+  sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
 
 /* ===========================================================================

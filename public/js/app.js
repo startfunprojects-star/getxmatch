@@ -63,6 +63,110 @@
     return new Date(ts).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
+  /* ================= Advertisements =================
+     Ads are fetched once and rendered into named placement slots. Image ads are
+     click-tracked via a redirect; script ads run inside a sandboxed same-origin
+     iframe so ad-network code can't touch the page, cookies or user data. */
+  const AD_PLACEMENTS = 'content_header,content_footer,content_sidebar_left,content_sidebar_right,content_inline,chat_inline,live_inline';
+  const adState = { slots: null, promise: null, counters: {} };
+
+  async function loadAds() {
+    if (adState.slots) return adState.slots;
+    if (!adState.promise) {
+      adState.promise = api.get('/api/ads/slots?placements=' + AD_PLACEMENTS)
+        .then((r) => { adState.slots = r.slots || {}; return adState.slots; })
+        .catch(() => { adState.slots = {}; return adState.slots; });
+    }
+    return adState.promise;
+  }
+  function adsFor(placement) { return (adState.slots && adState.slots[placement]) || []; }
+  function pickAd(placement, index) {
+    const list = adsFor(placement);
+    if (!list.length) return null;
+    return Number.isInteger(index) ? list[index % list.length] : list[Math.floor(Math.random() * list.length)];
+  }
+  // Build a DOM node for one ad, or null.
+  function adEl(ad) {
+    if (!ad) return null;
+    const slot = el('<aside class="ad-slot" aria-label="Advertisement"><span class="ad-label">Advertisement</span></aside>');
+    slot.classList.add('ad-' + ad.placement);
+    if (ad.type === 'image' && ad.image) {
+      const a = el('<a class="ad-image" target="_blank" rel="nofollow sponsored noopener"></a>');
+      a.href = ad.clickUrl;
+      const img = el('<img alt="Advertisement" loading="lazy" />');
+      img.src = ad.image;
+      a.appendChild(img);
+      slot.appendChild(a);
+    } else if (ad.type === 'script' && ad.frameUrl) {
+      const f = document.createElement('iframe');
+      f.className = 'ad-frame'; f.src = ad.frameUrl; f.title = 'Advertisement';
+      f.loading = 'lazy'; f.scrolling = 'no';
+      f.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms');
+      f.style.cssText = (ad.width ? 'width:' + ad.width + 'px;' : 'width:100%;') + 'height:' + (ad.height || 250) + 'px;border:0;display:block;margin:0 auto;';
+      slot.appendChild(f);
+    } else { return null; }
+    return slot;
+  }
+  function slotEl(placement, index) { return adEl(pickAd(placement, index)); }
+
+  // Decorate a content section (quizzes/polls/blogs) with header/footer/inline
+  // ads and left/right sidebar rails (wide screens only). Safe no-op when no
+  // ads are configured for a slot.
+  async function decorateSectionWithAds(main) {
+    try { await loadAds(); } catch (_e) { return; }
+    const view = main.querySelector('.section-view');
+    const body = main.querySelector('#sectionBody');
+    if (!view || !body) return;
+
+    const header = slotEl('content_header');
+    if (header) body.insertBefore(header, body.firstChild);
+    const footer = slotEl('content_footer');
+    if (footer) body.appendChild(footer);
+
+    // Inline ads between items (after every 4th), for both the card grid
+    // (quizzes/blogs) and the plain body list (polls).
+    const grid = body.querySelector('.card-grid') || body;
+    const inGrid = grid.classList && grid.classList.contains('card-grid');
+    const items = Array.from(grid.children).filter((c) => !c.classList.contains('ad-slot'));
+    let inserted = 0;
+    items.forEach((item, i) => {
+      if ((i + 1) % 4 === 0 && i < items.length - 1) {
+        const ad = slotEl('content_inline', inserted++);
+        if (ad) { if (inGrid) ad.classList.add('ad-inline-row'); grid.insertBefore(ad, item.nextSibling); }
+      }
+    });
+
+    // Sidebar rails — wrap the head+body into a centre column, add rails around.
+    const left = slotEl('content_sidebar_left');
+    const right = slotEl('content_sidebar_right');
+    if (left || right) {
+      const head = view.querySelector('.section-head');
+      const col = document.createElement('div');
+      col.className = 'section-col';
+      view.insertBefore(col, head || body);
+      if (head) col.appendChild(head);
+      col.appendChild(body);
+      if (left) { const r = el('<div class="section-rail"></div>'); r.appendChild(left); view.insertBefore(r, col); }
+      if (right) { const r = el('<div class="section-rail"></div>'); r.appendChild(right); view.appendChild(r); }
+      view.classList.add('has-ad-rails');
+    }
+  }
+
+  // Insert an ad into a running list (chat / activity) after every `every`
+  // items. `counterKey` scopes the running count; container is the list element.
+  function maybeInsertStreamAd(container, placement, counterKey, every) {
+    if (!container) return;
+    adState.counters[counterKey] = (adState.counters[counterKey] || 0) + 1;
+    if (adState.counters[counterKey] % every !== 0) return;
+    if (!adState.slots) { loadAds().then(() => insertStreamAd(container, placement, counterKey, every)); return; }
+    insertStreamAd(container, placement, counterKey, every);
+  }
+  function insertStreamAd(container, placement, counterKey, every) {
+    const idx = Math.floor((adState.counters[counterKey] || every) / every) - 1;
+    const ad = slotEl(placement, idx);
+    if (ad) { ad.classList.add('ad-stream'); container.appendChild(ad); }
+  }
+
   /* ---------- profile field option lists (mirror src/profileFields.js) ---------- */
   const OPT = {
     gender: ['Male', 'Female', 'Non-binary', 'Other', 'Prefer not to say'],
@@ -255,8 +359,16 @@
       container.innerHTML = '<div class="hint" style="padding:16px">Join to see what members are up to.</div>';
       return;
     }
+    try { await loadAds(); } catch (_e) { /* ads are optional */ }
     const feed = el('<div class="feed"></div>');
-    events.forEach((ev) => feed.appendChild(feedItemEl(ev, false)));
+    events.forEach((ev, i) => {
+      feed.appendChild(feedItemEl(ev, false));
+      // Advertisement after every 15 activity items.
+      if ((i + 1) % 15 === 0 && i < events.length - 1) {
+        const ad = slotEl('live_inline', Math.floor(i / 15));
+        if (ad) { ad.classList.add('ad-stream'); feed.appendChild(ad); }
+      }
+    });
     container.innerHTML = '';
     container.appendChild(feed);
     const sinceAt = Math.max(0, ...events.map((e) => e.at || 0));
@@ -1250,6 +1362,7 @@
     });
 
     // Load persisted history (text + gifts + roleplay narration).
+    adState.counters.chat = 0; // restart the every-20-messages ad cadence per chat
     try {
       const { messages } = await api.get(`/api/users/${peer.id}/messages`);
       messages.forEach((m) => appendMessage(m));
@@ -1376,6 +1489,10 @@
     else if (m.kind === 'narration') appendNarrationBubble(m.body, m.at);
     else if (m.kind === 'voice') return; // legacy voice notes (feature removed)
     else appendTextBubble(m);
+    // Advertisement after every 20 exchanged messages (text + gifts).
+    if (m.kind !== 'narration' && m.kind !== 'voice') {
+      maybeInsertStreamAd(chatBody(), 'chat_inline', 'chat', 20);
+    }
   }
 
   // Roleplay narration card. `raw` is the JSON payload stored in the message.
@@ -2750,6 +2867,7 @@
       grid.appendChild(card);
     });
     body.appendChild(grid);
+    decorateSectionWithAds(main);
   }
 
   async function openQuiz(id) {
@@ -2855,6 +2973,7 @@
     if (!polls.length) { body.innerHTML = '<div class="empty-main">No polls yet.</div>'; return; }
     body.innerHTML = '';
     polls.forEach((p) => body.appendChild(pollCard(p)));
+    decorateSectionWithAds(main);
   }
 
   function pollCard(p) {
@@ -2913,6 +3032,7 @@
       grid.appendChild(card);
     });
     body.appendChild(grid);
+    decorateSectionWithAds(main);
   }
 
   async function openBlog(id) {
@@ -3013,8 +3133,16 @@
     try { events = (await api.get('/api/events')).events; }
     catch (e) { container.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
     if (!events.length) { container.innerHTML = '<div class="empty-main">Nothing happening yet.</div>'; return; }
+    try { await loadAds(); } catch (_e) { /* ads are optional */ }
     const feed = el(`<div class="${opts.compact ? 'activity-side' : 'feed card'}"></div>`);
-    events.forEach((ev) => feed.appendChild(feedItemEl(ev, false)));
+    events.forEach((ev, i) => {
+      feed.appendChild(feedItemEl(ev, false));
+      // Advertisement after every 15 activity items.
+      if ((i + 1) % 15 === 0 && i < events.length - 1) {
+        const ad = slotEl('live_inline', Math.floor(i / 15));
+        if (ad) { ad.classList.add('ad-stream'); feed.appendChild(ad); }
+      }
+    });
     container.innerHTML = '';
     container.appendChild(feed);
     registerActivityFeed(feed);

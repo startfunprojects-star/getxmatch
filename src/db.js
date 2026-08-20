@@ -456,6 +456,39 @@ for (const t of ['quizzes', 'polls', 'blogs']) {
   }
 }
 
+// Advertisements + click tracking. Ads are placed by the admin into named
+// slots (header/footer/sidebars/inline on content pages, and inline in chat &
+// the live-activity feed). An ad is either an uploaded image (with a click-
+// through link) or a raw HTML/script snippet from an ad network. Every click on
+// an image ad is logged so the admin can see clicks per placement over time.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS ads (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    type       TEXT NOT NULL DEFAULT 'image',   -- 'image' | 'script'
+    placement  TEXT NOT NULL,                    -- slot key (see src/ads.js)
+    image      TEXT,                             -- filename in uploads/ (image ads)
+    link       TEXT,                             -- click-through URL (image ads)
+    script     TEXT,                             -- raw HTML/JS snippet (script ads)
+    width      INTEGER,                          -- optional px hint (script ads)
+    height     INTEGER,                          -- optional px hint (script ads)
+    active     INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ads_placement ON ads (placement, active);
+
+  CREATE TABLE IF NOT EXISTS ad_clicks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ad_id      INTEGER NOT NULL REFERENCES ads(id) ON DELETE CASCADE,
+    placement  TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ad_clicks_recent ON ad_clicks (created_at);
+  CREATE INDEX IF NOT EXISTS idx_ad_clicks_ad ON ad_clicks (ad_id);
+  CREATE INDEX IF NOT EXISTS idx_ad_clicks_placement ON ad_clicks (placement, created_at);
+`);
+
 // Relationship kind on a friendship request (friend / girlfriend / crush / …).
 // Added idempotently for databases created before the relationship-request feature.
 {
