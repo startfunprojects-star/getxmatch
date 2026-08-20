@@ -48,6 +48,17 @@ self-host on a single VPS: no external database or storage service required.
 - **Admin content management** — a tabbed `/admin` dashboard manages Users,
   Quizzes, Polls, Blogs and Recent Events, and shows a read-only Leaderboard.
 
+- **Search-engine friendly** — public content is server-rendered and crawlable
+  even though the app itself is an SPA. Quizzes, polls and blog posts each get a
+  real HTML page with canonical URLs, Open Graph/Twitter cards and JSON-LD
+  structured data (`Quiz`, `Question`, `BlogPosting`, `FAQPage`, `HowTo`,
+  `BreadcrumbList`, `Organization`, `WebSite`). There are crawlable **About,
+  How-it-works, Safety, FAQ, Privacy and Terms** pages, a site **search** page,
+  a default social-share image, a web-app manifest, and auto-generated
+  **`/sitemap.xml`** + **`/robots.txt`**. Personal member profiles are kept out
+  of the index by design. Set `PUBLIC_URL` (and optionally `TWITTER_HANDLE` /
+  `SOCIAL_LINKS`) so every absolute URL and tag points at your real domain.
+
 ## Tech
 
 Node.js · Express · Socket.IO · SQLite (Node's built-in `node:sqlite`, no native

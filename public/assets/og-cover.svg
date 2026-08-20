@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="getxmatch — meet, match and chat">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#171a23"/>
+      <stop offset="1" stop-color="#0f1117"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff4d7d"/>
+      <stop offset="1" stop-color="#7c5cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="1050" cy="120" r="260" fill="url(#accent)" opacity="0.14"/>
+  <circle cx="160" cy="560" r="200" fill="url(#accent)" opacity="0.10"/>
+  <g transform="translate(90,150)">
+    <rect width="120" height="120" rx="28" fill="url(#accent)"/>
+    <path d="M60 96c-.4 0-.8-.1-1.1-.4l-22-21c-9.3-8.8-9.3-23.2-.4-31.5 7.8-7.3 19.7-6.9 27.2 1l.3.4.3-.4c7.5-7.9 19.4-8.3 27.2-1 8.9 8.3 8.9 22.7-.4 31.5l-22 21c-.3.3-.7.4-1.1.4z" fill="#fff"/>
+  </g>
+  <text x="240" y="205" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="72" font-weight="800" fill="#e8eaf0">getx<tspan fill="#ff4d7d">match</tspan></text>
+  <text x="92" y="360" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="64" font-weight="800" fill="#e8eaf0">Meet, match &amp; chat</text>
+  <text x="92" y="430" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="34" font-weight="500" fill="#9aa0ad">Profiles, galleries, compatibility quizzes, community</text>
+  <text x="92" y="478" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="34" font-weight="500" fill="#9aa0ad">polls and real-time chat — a social space for adults 18+.</text>
+  <g transform="translate(92,520)">
+    <rect width="250" height="66" rx="33" fill="url(#accent)"/>
+    <text x="125" y="43" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="28" font-weight="700" fill="#fff" text-anchor="middle">Join free →</text>
+  </g>
+</svg>

@@ -1,0 +1,14 @@
+{
+  "name": "getxmatch",
+  "short_name": "getxmatch",
+  "description": "A lightweight social space for adults — profiles, galleries, compatibility quizzes, community polls and real-time chat.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f1117",
+  "theme_color": "#0f1117",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/assets/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
