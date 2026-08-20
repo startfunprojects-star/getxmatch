@@ -42,6 +42,24 @@ function joinWithInlineAds(items, prefix) {
   return out.join('');
 }
 
+// Join Highway post cards, inserting an inline ad between them at random, and
+// mandatorily after every 15 posts. Avoids two ads back-to-back.
+function joinHighwayPosts(cards) {
+  const out = [];
+  let adIdx = 0, lastWasAd = false;
+  cards.forEach((html, i) => {
+    out.push(html);
+    const isLast = i === cards.length - 1;
+    const mandatory = (i + 1) % 15 === 0;
+    const random = !lastWasAd && Math.random() < 0.15;
+    if (!isLast && (mandatory || random)) {
+      const ad = ads.slotHtml('highway_inline', adIdx++);
+      if (ad) { out.push(ad); lastWasAd = true; } else lastWasAd = false;
+    } else { lastWasAd = false; }
+  });
+  return out.join('');
+}
+
 // Send a content page with ad slots injected (header/footer/rails).
 function sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml, status, adPrefix }) {
   const a = withAds(bodyHtml, adPrefix);
@@ -409,7 +427,7 @@ function highwayCard(p) {
 router.get('/highway', (req, res) => {
   const posts = hw.allOrdered();
   const cards = posts.length
-    ? joinWithInlineAds(posts.map(highwayCard), 'highway')
+    ? joinHighwayPosts(posts.map(highwayCard))
     : '<p class="empty">No posts on the Highway yet — be the first once you join.</p>';
 
   // Volatile, user-generated content: viewable by everyone but kept out of the
@@ -422,8 +440,8 @@ router.get('/highway', (req, res) => {
   const jsonLd = breadcrumbLd([{ name: 'Home', path: '/' }, { name: 'Highway', path: '/highway' }]);
   const bodyHtml = `
 ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Highway', path: '/highway' }])}
-<h1>🛣️ Highway</h1>
-<p class="lede">The community pool — members share text, images, links and videos. Only the latest 100 posts stay on the road.</p>
+<h1>🌊 Highway</h1>
+<p class="lede">The community pool — members share text, images, links and videos.</p>
 <a class="cta" href="/">Join getxmatch to post &amp; connect →</a>
 ${cards}`;
   sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml, adPrefix: 'highway' });

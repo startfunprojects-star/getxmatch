@@ -591,7 +591,7 @@
             <button data-tab="chats">Chats<span class="ndot"></span></button>
           </div>
           <div class="explore-nav" id="exploreNav">
-            <button data-view="highway">🛣️ Highway</button>
+            <button data-view="highway">🌊 Highway</button>
             <button data-view="requests">🔔 Requests <span class="req-badge hidden" id="reqBadge">0</span></button>
             <button data-view="quizzes">🧠 Quizzes</button>
             <button data-view="polls">📊 Polls</button>
@@ -2730,8 +2730,8 @@
 
   async function renderHighway() {
     const main = openMainView();
-    main.appendChild(sectionShell('🛣️ Highway',
-      'The community pool — share text, images, links, or videos. Anyone can post, and only the latest 100 posts stay on the road.'));
+    main.appendChild(sectionShell('🌊 Highway',
+      'The community pool — share text, images, links, or videos. Anyone can post.'));
     const body = main.querySelector('#sectionBody');
     body.innerHTML = '';
 
@@ -2786,14 +2786,20 @@
       const header = slotEl('highway_header');
       if (header) feed.appendChild(header);
       if (!posts.length) feed.appendChild(el('<div class="empty-main">No posts yet — be the first to hit the Highway!</div>'));
-      else posts.forEach((p, i) => {
-        feed.appendChild(highwayPostEl(p));
-        // An ad after every 5th post.
-        if ((i + 1) % 5 === 0 && i < posts.length - 1) {
-          const ad = slotEl('highway_inline', Math.floor(i / 5));
-          if (ad) { ad.classList.add('ad-stream'); feed.appendChild(ad); }
-        }
-      });
+      else {
+        // Ads appear between posts at random, but are mandatory after every 15.
+        let adIdx = 0, lastWasAd = false;
+        posts.forEach((p, i) => {
+          feed.appendChild(highwayPostEl(p));
+          const isLast = i === posts.length - 1;
+          const mandatory = (i + 1) % 15 === 0;
+          const random = !lastWasAd && Math.random() < 0.15;
+          if (!isLast && (mandatory || random)) {
+            const ad = slotEl('highway_inline', adIdx++);
+            if (ad) { ad.classList.add('ad-stream'); feed.appendChild(ad); lastWasAd = true; } else lastWasAd = false;
+          } else { lastWasAd = false; }
+        });
+      }
     } catch (e) { feed.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; }
   }
 
