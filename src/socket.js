@@ -33,6 +33,35 @@ function isOnline(userId) {
 }
 
 /* --------------------------------------------------------------------------
+   Disappearing-messages helpers
+-------------------------------------------------------------------------- */
+
+// Normalize a pair of user ids so a conversation has one canonical key
+// regardless of who is the sender.
+function pairKey(a, b) {
+  return a < b ? { lo: a, hi: b } : { lo: b, hi: a };
+}
+
+// The disappearing-messages TTL (in seconds) armed for a conversation, or 0
+// when it's off. Either participant's setting applies to the whole pair.
+function convoTtl(a, b) {
+  const { lo, hi } = pairKey(a, b);
+  const row = db.prepare('SELECT ttl_seconds FROM chat_settings WHERE user_lo = ? AND user_hi = ?').get(lo, hi);
+  return row && row.ttl_seconds > 0 ? row.ttl_seconds : 0;
+}
+
+// Given a conversation's two ids, the epoch-ms a message sent now should
+// expire at, or null when disappearing is off.
+function expiryFor(a, b) {
+  const ttl = convoTtl(a, b);
+  return ttl > 0 ? Date.now() + ttl * 1000 : null;
+}
+
+// Largest voice note accepted (base64 data URL length). Keeps a single note
+// well under the socket buffer while allowing a couple of minutes of audio.
+const MAX_VOICE_CHARS = 6 * 1024 * 1024;
+
+/* --------------------------------------------------------------------------
    Roleplay delivery helpers
 -------------------------------------------------------------------------- */
 
@@ -99,6 +128,8 @@ function replyPreview(replyToId) {
     text = g ? `${g.emoji} ${g.name}` : 'a gift';
   } else if (row.kind === 'narration') {
     text = '🎭 Roleplay';
+  } else if (row.kind === 'voice') {
+    text = '🎤 Voice note';
   }
   return { id: row.id, from: row.sender_id, kind: row.kind || 'text', text: String(text).slice(0, 140) };
 }
@@ -170,6 +201,8 @@ function broadcastMessageView(row) {
       const p = JSON.parse(row.body);
       text = p.final ? '🎬 The End' : `🎭 ${p.title || 'Roleplay'}`;
     } catch (_e) { text = '🎭 Roleplay'; }
+  } else if (kind === 'voice') {
+    text = '🎤 Voice note';
   }
   return { from: row.sender_id, fromName: nameOf(row.sender_id), kind, text, at: row.created_at };
 }
@@ -212,6 +245,9 @@ function mirrorLiveMessage(io, from, to, kind, body, at) {
       const p = JSON.parse(body);
       text = p.final ? '🎬 The End' : `🎭 ${p.title || 'Roleplay'}`;
     } catch (_e) { text = '🎭 Roleplay'; }
+  } else if (kind === 'voice') {
+    // Never relay the audio itself to watchers — just a placeholder label.
+    text = '🎤 Voice note';
   }
   io.to(broadcastRoom(b.token)).emit('broadcast:message', {
     from, fromName: nameOf(from), kind, text, at,
@@ -353,8 +389,35 @@ function registerBroadcastOwner(io, socket) {
   });
 }
 
+// Periodically delete messages whose disappearing-messages TTL has elapsed and
+// tell both participants which bubble ids vanished so their UIs can drop them.
+function startExpirySweeper(io) {
+  setInterval(() => {
+    try {
+      const now = Date.now();
+      const rows = db
+        .prepare('SELECT id, sender_id, recipient_id FROM messages WHERE expires_at IS NOT NULL AND expires_at <= ?')
+        .all(now);
+      if (!rows.length) return;
+      const ids = rows.map((r) => r.id);
+      const placeholders = ids.map(() => '?').join(',');
+      db.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(...ids);
+      // Fan the vanished ids out to each affected user (sender + recipient).
+      const byUser = new Map();
+      for (const r of rows) {
+        for (const uid of [r.sender_id, r.recipient_id]) {
+          if (!byUser.has(uid)) byUser.set(uid, []);
+          byUser.get(uid).push(r.id);
+        }
+      }
+      byUser.forEach((idList, uid) => io.to(`user:${uid}`).emit('chat:expire', { ids: idList }));
+    } catch (_e) { /* non-fatal */ }
+  }, 2000);
+}
+
 function initSocket(io) {
   ioRef = io;
+  startExpirySweeper(io);
   // Attach the user from the httpOnly auth cookie when present, but DO NOT
   // reject anonymous sockets: logged-out visitors need a live socket to watch
   // and comment on public broadcasts. socket.user is null for them, and every
@@ -404,12 +467,13 @@ function initSocket(io) {
         const replyTo = resolveReplyTo(payload && payload.replyTo, me.id, to);
 
         const now = Date.now();
+        const expiresAt = expiryFor(me.id, to);
         const info = db
-          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at) VALUES (?, ?, ?, 'text', ?, ?)")
-          .run(me.id, to, body, replyTo, now);
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at, expires_at) VALUES (?, ?, ?, 'text', ?, ?, ?)")
+          .run(me.id, to, body, replyTo, now, expiresAt);
 
         const reply = replyPreview(replyTo);
-        const msg = { id: info.lastInsertRowid, from: me.id, to, body, kind: 'text', at: now, replyTo, reply };
+        const msg = { id: info.lastInsertRowid, from: me.id, to, body, kind: 'text', at: now, replyTo, reply, expiresAt };
 
         // Deliver to recipient's sockets and echo to sender's other tabs.
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
@@ -466,6 +530,93 @@ function initSocket(io) {
       }
     });
 
+    // Voice note → persisted as a kind='voice' message whose body holds the
+    // audio as a `data:audio/...;base64,...` URL. Persisting (unlike files) lets
+    // it appear in history and lets the disappearing-messages sweeper expire it.
+    socket.on('chat:voice', (payload, ack) => {
+      try {
+        const to = parseInt(payload && payload.to, 10);
+        const audio = payload && typeof payload.audio === 'string' ? payload.audio : '';
+        if (!to || !audio) return ack && ack({ error: 'Invalid voice note.' });
+        if (!/^data:audio\/[a-z0-9.+-]+;base64,/i.test(audio)) {
+          return ack && ack({ error: 'Unsupported audio format.' });
+        }
+        if (audio.length > MAX_VOICE_CHARS) {
+          return ack && ack({ error: 'Voice note is too long.' });
+        }
+
+        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
+        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
+        if (areBlocked(me.id, to)) {
+          return ack && ack({ error: 'You cannot send a voice note — a block is in place.' });
+        }
+
+        // Optional reply, and the recorded duration (seconds) for the player.
+        const replyTo = resolveReplyTo(payload && payload.replyTo, me.id, to);
+        const dur = Math.max(0, Math.min(600, Number(payload && payload.dur) || 0));
+
+        const now = Date.now();
+        const expiresAt = expiryFor(me.id, to);
+        const info = db
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at, expires_at) VALUES (?, ?, ?, 'voice', ?, ?, ?)")
+          .run(me.id, to, audio, replyTo, now, expiresAt);
+
+        const reply = replyPreview(replyTo);
+        const msg = { id: info.lastInsertRowid, from: me.id, to, body: audio, kind: 'voice', at: now, dur, replyTo, reply, expiresAt };
+
+        io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
+        socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
+
+        // Watchers of a broadcast see only a "🎤 Voice note" placeholder.
+        mirrorLiveMessage(io, me.id, to, 'voice', audio, now);
+
+        ack && ack({ ok: true, message: { ...msg, mine: true } });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // Arm / disarm disappearing messages for a conversation. seconds > 0 turns
+    // it on (every subsequent message self-destructs after that many seconds);
+    // 0 turns it off. Applies to the pair — either participant can change it —
+    // and both are notified so their UI stays in sync.
+    socket.on('chat:disappearing', (payload, ack) => {
+      try {
+        const to = parseInt(payload && payload.to, 10);
+        if (!to) return ack && ack({ error: 'Invalid request.' });
+        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
+        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
+        if (areBlocked(me.id, to)) {
+          return ack && ack({ error: 'You cannot change this chat — a block is in place.' });
+        }
+
+        // Clamp to 5 seconds .. 24 hours; 0 disables.
+        let seconds = Math.floor(Number(payload && payload.seconds) || 0);
+        if (seconds < 0) seconds = 0;
+        if (seconds > 0 && seconds < 5) seconds = 5;
+        if (seconds > 86400) seconds = 86400;
+
+        const { lo, hi } = pairKey(me.id, to);
+        const now = Date.now();
+        if (seconds === 0) {
+          db.prepare('DELETE FROM chat_settings WHERE user_lo = ? AND user_hi = ?').run(lo, hi);
+        } else {
+          db.prepare(
+            `INSERT INTO chat_settings (user_lo, user_hi, ttl_seconds, set_by, updated_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(user_lo, user_hi) DO UPDATE SET ttl_seconds = excluded.ttl_seconds, set_by = excluded.set_by, updated_at = excluded.updated_at`
+          ).run(lo, hi, seconds, me.id, now);
+        }
+
+        const evt = { from: me.id, to, seconds };
+        io.to(`user:${to}`).emit('chat:disappearing', evt);
+        io.to(`user:${me.id}`).emit('chat:disappearing', evt);
+        ack && ack({ ok: true, seconds });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
     // Naughty gift → persisted like a message (kind='gift', body holds the
     // gift id) so it shows in history, then delivered live if online.
     socket.on('chat:gift', (payload, ack) => {
@@ -481,11 +632,12 @@ function initSocket(io) {
         }
 
         const now = Date.now();
+        const expiresAt = expiryFor(me.id, to);
         const info = db
-          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at) VALUES (?, ?, ?, 'gift', ?)")
-          .run(me.id, to, gift.id, now);
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'gift', ?, ?)")
+          .run(me.id, to, gift.id, now, expiresAt);
 
-        const msg = { id: info.lastInsertRowid, from: me.id, to, body: gift.id, kind: 'gift', at: now };
+        const msg = { id: info.lastInsertRowid, from: me.id, to, body: gift.id, kind: 'gift', at: now, expiresAt };
 
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
         socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });

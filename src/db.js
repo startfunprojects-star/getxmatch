@@ -214,6 +214,34 @@ db.exec(`
   }
 })();
 
+// --- Migration: disappearing messages. When a conversation has disappearing
+// mode on, each new message is stamped with expires_at (epoch ms). A background
+// sweeper in src/socket.js deletes expired rows and tells both clients to drop
+// the bubbles. NULL means the message never auto-expires.
+(function migrateMessageExpiresAt() {
+  const cols = db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
+  if (!cols.includes('expires_at')) {
+    db.exec('ALTER TABLE messages ADD COLUMN expires_at INTEGER;');
+  }
+})();
+db.exec('CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages (expires_at);');
+
+// --- Per-conversation "disappearing messages" setting. One row per user pair
+// (stored normalized as user_lo < user_hi). ttl_seconds is how long a message
+// lives before it self-destructs; 0 / no row means disappearing is off. Either
+// participant can turn it on or off for the pair. set_by records who last
+// changed it so the other side can be told who armed/disarmed it.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_settings (
+    user_lo     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_hi     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ttl_seconds INTEGER NOT NULL DEFAULT 0,
+    set_by      INTEGER,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (user_lo, user_hi)
+  );
+`);
+
 // --- Emoji reactions on chat messages (text / gift / voice note). One row per
 // (message, user): a user has at most one reaction per message; picking a new
 // emoji replaces it, picking the same one again clears it.

@@ -1051,3 +1051,106 @@ a.share-link:hover { text-decoration: underline; }
   padding: 10px 16px; border-radius: 999px; z-index: 999;
   box-shadow: 0 6px 20px rgba(0, 0, 0, .4); font-size: 14px;
 }
+
+/* ============================================================
+   Chat privacy: disappearing messages, voice notes, anti-save
+   ============================================================ */
+
+/* --- Disappearing-messages toggle + banner --- */
+.ghost.small.active { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.disappear-banner {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 16px; font-size: 13px; color: var(--muted);
+  background: var(--grad-soft); border-bottom: 1px solid var(--border);
+}
+.disappear-banner strong { color: var(--accent); }
+.disappear-banner .db-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 0 rgba(255,77,125,.5); animation: dbpulse 1.6s infinite; flex: none;
+}
+@keyframes dbpulse {
+  0% { box-shadow: 0 0 0 0 rgba(255,77,125,.5); }
+  70% { box-shadow: 0 0 0 7px rgba(255,77,125,0); }
+  100% { box-shadow: 0 0 0 0 rgba(255,77,125,0); }
+}
+.disappear-banner .db-off {
+  margin-left: auto; background: none; border: 1px solid var(--border-strong);
+  color: var(--muted); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+}
+.disappear-banner .db-off:hover { color: var(--text); border-color: var(--accent); }
+
+/* Countdown pill shown on a disappearing bubble/voice note. */
+.expire-pill {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10px; opacity: .8; margin-top: 3px;
+  padding: 1px 6px; border-radius: 999px;
+  background: rgba(0,0,0,.18); width: fit-content;
+}
+.bubble.me .expire-pill { background: rgba(255,255,255,.18); }
+.disappearing { transition: opacity .4s ease, transform .4s ease, filter .4s ease; }
+.vanish { opacity: 0 !important; transform: scale(.9) translateY(-4px); filter: blur(3px); pointer-events: none; }
+
+/* --- Voice recorder (composer overlay while recording) --- */
+.voice-recorder {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px; border-top: 1px solid var(--border);
+  background: var(--bg-3);
+}
+.voice-recorder .vr-dot {
+  width: 12px; height: 12px; border-radius: 50%; background: var(--danger);
+  animation: dbpulse 1.2s infinite; flex: none;
+}
+.voice-recorder .vr-time { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 40px; }
+.voice-recorder .vr-wave { flex: 1; height: 34px; }
+.voice-recorder .vr-btn {
+  border: none; border-radius: 999px; padding: 7px 14px; cursor: pointer; font-size: 13px; font-weight: 600;
+}
+.voice-recorder .vr-cancel { background: var(--bg-elev); color: var(--muted); width: 34px; padding: 7px 0; }
+.voice-recorder .vr-send { background: var(--grad); color: #fff; box-shadow: var(--glow); }
+
+/* --- Voice-note bubble (custom player, no native controls) --- */
+.voice-msg {
+  display: flex; align-items: center; gap: 10px;
+  max-width: 68%; padding: 9px 13px; border-radius: 14px;
+  position: relative; flex-wrap: wrap;
+}
+.voice-msg.them { align-self: flex-start; background: var(--bg-3); border: 1px solid var(--border); border-bottom-left-radius: 4px; box-shadow: var(--shadow-sm); }
+.voice-msg.me { align-self: flex-end; background: var(--grad); color: #fff; border-bottom-right-radius: 4px; box-shadow: var(--glow); }
+.voice-msg .vm-play {
+  flex: none; width: 34px; height: 34px; border-radius: 50%; cursor: pointer;
+  border: none; font-size: 13px; display: grid; place-items: center;
+  background: rgba(255,255,255,.16); color: inherit;
+}
+.voice-msg.them .vm-play { background: var(--grad); color: #fff; }
+.voice-msg .vm-wave {
+  display: flex; align-items: center; gap: 2px; height: 34px; flex: 1; min-width: 120px;
+}
+.voice-msg .vm-bar {
+  flex: 1; min-width: 2px; border-radius: 2px; background: currentColor; opacity: .32;
+  transition: opacity .1s linear, background .1s linear;
+}
+.voice-msg.them .vm-bar { background: var(--muted); opacity: .5; }
+.voice-msg .vm-bar.played { opacity: 1; }
+.voice-msg.them .vm-bar.played { background: var(--accent); }
+.voice-msg .vm-dur { font-size: 11px; font-variant-numeric: tabular-nums; opacity: .8; min-width: 34px; text-align: right; }
+.voice-msg .time { width: 100%; font-size: 11px; opacity: .6; }
+.voice-msg .reply-quote { width: 100%; }
+
+/* --- Anti-save hardening: no text selection / image dragging in chat --- */
+.no-save { -webkit-user-select: none; -moz-user-select: none; user-select: none; }
+.no-save input, .no-save textarea { -webkit-user-select: text; user-select: text; }
+.no-save img, .no-save .shared, .no-save .vm-wave { -webkit-user-drag: none; user-drag: none; }
+.no-save .file { cursor: default; }
+
+/* --- Screenshot deterrents --- */
+.privacy-shield .chat-body,
+.privacy-shield .voice-msg,
+.privacy-shield .chat-stage { filter: blur(14px); transition: filter .05s; }
+.ss-toast {
+  position: fixed; left: 50%; top: 22px; transform: translateX(-50%) translateY(-12px);
+  background: var(--bg-elev); border: 1px solid var(--accent); color: var(--text);
+  padding: 10px 18px; border-radius: 999px; z-index: 1200; font-size: 14px;
+  box-shadow: var(--shadow); opacity: 0; pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease;
+}
+.ss-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }

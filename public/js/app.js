@@ -20,6 +20,7 @@
     giftsById: {},       // id -> gift for rendering
     liveByPeer: {},      // otherUserId -> broadcast view when a chat of mine is live
     watching: null,      // token of a broadcast being watched inline, or null
+    disappearing: 0,     // disappearing-messages TTL (seconds) for the open chat; 0 = off
   };
 
   // Fetch (and cache) the naughty-gift catalog.
@@ -1257,9 +1258,11 @@
             <div class="name" id="peerName" style="cursor:pointer">${esc(peer.displayName || peer.username)}</div>
             <div class="status">@${esc(peer.username)}</div>
           </div>
+          <button class="ghost small" id="disappearBtn" title="Disappearing messages">⏳ Vanish</button>
           <button class="ghost small" id="broadcastBtn" title="Broadcast this chat live — anyone can watch and comment">🔴 Broadcast</button>
           <button class="ghost small" id="makeGroupBtn" title="Start a group chat with this person and others">👥 Group</button>
         </div>
+        <div class="disappear-banner hidden" id="disappearBanner"></div>
         <div class="live-banner hidden" id="liveBanner"></div>
         <div class="chat-activity-bar hidden" id="activityBar">
           <div class="activity-status" id="activityStatus"></div>
@@ -1280,11 +1283,13 @@
         <div class="gift-picker hidden" id="giftPicker"></div>
         <div class="rp-picker hidden" id="rpPicker"></div>
         <div class="reply-banner hidden" id="replyBanner"></div>
+        <div class="voice-recorder hidden" id="voiceRecorder"></div>
         <div class="composer">
           <input type="file" id="fileInput" class="hidden" />
           <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
           <button class="icon-btn" id="giftBtn" title="Send a naughty gift">🎁</button>
           <button class="icon-btn" id="rpBtn" title="Start a roleplay story">🎭</button>
+          <button class="icon-btn" id="voiceBtn" title="Record a voice note">🎤</button>
           <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" />
           <button class="primary" id="sendBtn">Send</button>
         </div>
@@ -1303,6 +1308,12 @@
     view.querySelector('#peerName').addEventListener('click', openPeerProfile);
     view.querySelector('#makeGroupBtn').addEventListener('click', () => openGroupCreator(peer));
     view.querySelector('#broadcastBtn').addEventListener('click', () => toggleBroadcast(peer));
+    view.querySelector('#disappearBtn').addEventListener('click', () => promptDisappearing(peer));
+    view.querySelector('#voiceBtn').addEventListener('click', () => toggleVoiceRecorder(peer));
+
+    // Best-effort protection: block copy / context-menu / drag inside the chat
+    // so messages, images, files and voice notes can't be trivially saved.
+    hardenChat(view.querySelector('.chat-wrap') || view);
 
     // If this conversation is already being broadcast, show its live banner.
     reflectBroadcast(peer.id);
@@ -1365,10 +1376,13 @@
 
     // Load persisted history (text + gifts + roleplay narration).
     adState.counters.chat = 0; // restart the every-20-messages ad cadence per chat
+    state.disappearing = 0;
     try {
-      const { messages } = await api.get(`/api/users/${peer.id}/messages`);
+      const { messages, disappearing } = await api.get(`/api/users/${peer.id}/messages`);
+      state.disappearing = disappearing || 0;
       messages.forEach((m) => appendMessage(m));
     } catch (_e) {}
+    updateDisappearBanner();
     scrollBody();
 
     // Restore any active roleplay progress banner for this conversation.
@@ -1459,6 +1473,7 @@
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
     attachBubbleActions(bubble, m);
     b.appendChild(bubble);
+    if (m.expiresAt) scheduleExpiry(bubble, m.expiresAt);
     scrollBody();
   }
 
@@ -1471,17 +1486,19 @@
       const img = document.createElement('img');
       img.className = 'shared';
       img.src = objectUrl;
+      img.draggable = false;
+      img.addEventListener('contextmenu', (e) => e.preventDefault());
       bubble.appendChild(img);
     }
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.download = meta.name;
-    link.className = 'file';
-    link.appendChild(document.createTextNode('📄 ' + meta.name + ' (' + fmtSize(meta.size) + ')'));
-    bubble.appendChild(link);
-    bubble.appendChild(el(`<span class="ephemeral-note">Shared live · not stored</span>`));
+    // No download link: files are view-only. A non-anchor label keeps the name
+    // and size without a browser "Save as…" affordance.
+    bubble.appendChild(el(`<span class="file">📄 ${esc(meta.name)} (${fmtSize(meta.size)})</span>`));
+    bubble.appendChild(el(`<span class="ephemeral-note">Shared live · view-only · not stored</span>`));
     bubble.appendChild(el(`<span class="time">${fmtTime(meta.at || Date.now())}</span>`));
     b.appendChild(bubble);
+    // Files aren't persisted, so honour disappearing purely on the client: drop
+    // the bubble after the conversation's TTL (both sides run the same timer).
+    if (state.disappearing > 0) scheduleExpiry(bubble, Date.now() + state.disappearing * 1000);
     scrollBody();
   }
 
@@ -1489,10 +1506,10 @@
   function appendMessage(m) {
     if (m.kind === 'gift') appendGiftBubble(m);
     else if (m.kind === 'narration') appendNarrationBubble(m.body, m.at);
-    else if (m.kind === 'voice') return; // legacy voice notes (feature removed)
+    else if (m.kind === 'voice') appendVoiceBubble(m);
     else appendTextBubble(m);
-    // Advertisement after every 20 exchanged messages (text + gifts).
-    if (m.kind !== 'narration' && m.kind !== 'voice') {
+    // Advertisement after every 20 exchanged messages (text + gifts + voice).
+    if (m.kind !== 'narration') {
       maybeInsertStreamAd(chatBody(), 'chat_inline', 'chat', 20);
     }
   }
@@ -1610,6 +1627,7 @@
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
     attachBubbleActions(bubble, m);
     b.appendChild(bubble);
+    if (m.expiresAt) scheduleExpiry(bubble, m.expiresAt);
     scrollBody();
   }
 
@@ -1807,7 +1825,7 @@
     state.socket.emit('chat:gift', { to: state.peer.id, gift: giftId }, (res) => {
       if (res && res.error) return notify(res.error);
       const m = (res && res.message) || {};
-      appendGiftBubble({ body: giftId, mine: true, at: m.at || Date.now(), id: m.id });
+      appendGiftBubble({ body: giftId, mine: true, at: m.at || Date.now(), id: m.id, expiresAt: m.expiresAt });
     });
   }
 
@@ -1825,7 +1843,7 @@
       if (res && res.error) return notify(res.error);
       // Echo is handled here for the sending tab.
       const m = (res && res.message) || {};
-      appendTextBubble({ body, mine: true, at: m.at || Date.now(), id: m.id, reply: m.reply || replySnapshot });
+      appendTextBubble({ body, mine: true, at: m.at || Date.now(), id: m.id, reply: m.reply || replySnapshot, expiresAt: m.expiresAt });
     });
   }
 
@@ -1845,6 +1863,422 @@
     if (!b) return alert(text);
     b.appendChild(el(`<div class="typing" style="align-self:center;color:var(--danger)">${esc(text)}</div>`));
     scrollBody();
+  }
+
+  /* ---------- disappearing messages ---------- */
+
+  // Human-friendly rendering of a seconds TTL (e.g. 90 -> "1m 30s").
+  function fmtDuration(sec) {
+    sec = Math.max(0, Math.round(sec));
+    if (sec < 60) return sec + 's';
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    if (m < 60) return s ? `${m}m ${s}s` : `${m}m`;
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    return mm ? `${h}h ${mm}m` : `${h}h`;
+  }
+
+  // Ask the user for a TTL and arm/disarm disappearing messages for this chat.
+  function promptDisappearing(peer) {
+    if (!state.socket || !peer) return;
+    const current = state.disappearing || 0;
+    const raw = prompt(
+      'Disappearing messages\n\n' +
+      'Enter how many SECONDS each new message, file or voice note should live ' +
+      'before it self-destructs for both of you.\n\n' +
+      'Enter 0 to turn it off.',
+      current ? String(current) : '30'
+    );
+    if (raw === null) return; // cancelled
+    const seconds = Math.max(0, Math.floor(Number(raw) || 0));
+    state.socket.emit('chat:disappearing', { to: peer.id, seconds }, (res) => {
+      if (res && res.error) return notify(res.error);
+      // The authoritative value arrives via the 'chat:disappearing' broadcast,
+      // but reflect immediately for a snappy toggle.
+      applyDisappearing(res && typeof res.seconds === 'number' ? res.seconds : seconds);
+    });
+  }
+
+  // Set the current TTL and refresh the banner/button (called locally and from
+  // the socket broadcast so both participants stay in sync).
+  function applyDisappearing(seconds) {
+    state.disappearing = Math.max(0, Math.floor(Number(seconds) || 0));
+    updateDisappearBanner();
+  }
+
+  function updateDisappearBanner() {
+    const banner = document.getElementById('disappearBanner');
+    const btn = document.getElementById('disappearBtn');
+    const on = (state.disappearing || 0) > 0;
+    if (btn) btn.classList.toggle('active', on);
+    if (!banner) return;
+    if (!on) { banner.classList.add('hidden'); banner.innerHTML = ''; return; }
+    banner.innerHTML =
+      `<span class="db-dot"></span><span>Disappearing messages are ON — new messages vanish after ` +
+      `<strong>${esc(fmtDuration(state.disappearing))}</strong>.</span>` +
+      `<button class="db-off" id="disappearOff">Turn off</button>`;
+    banner.classList.remove('hidden');
+    const off = banner.querySelector('#disappearOff');
+    if (off && state.peer) {
+      off.addEventListener('click', () => {
+        state.socket.emit('chat:disappearing', { to: state.peer.id, seconds: 0 }, (res) => {
+          if (res && res.error) return notify(res.error);
+          applyDisappearing(0);
+        });
+      });
+    }
+  }
+
+  // Schedule the local removal of a disappearing bubble and show a live
+  // countdown pill on it. Server-side sweeping is authoritative; this keeps the
+  // sender's/receiver's view tidy in real time.
+  function scheduleExpiry(node, expiresAt) {
+    if (!node || !expiresAt) return;
+    const pill = el('<span class="expire-pill" title="Disappearing message">⏳ <span class="ep-t"></span></span>');
+    node.appendChild(pill);
+    node.classList.add('disappearing');
+    const tEl = pill.querySelector('.ep-t');
+    const tick = () => {
+      const left = expiresAt - Date.now();
+      if (left <= 0) {
+        node.classList.add('vanish');
+        setTimeout(() => node.remove(), 420);
+        clearInterval(timer);
+        return;
+      }
+      tEl.textContent = fmtDuration(left / 1000);
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    node._expiryTimer = timer;
+  }
+
+  // Remove a bubble (by persisted id) with the vanish animation — driven by the
+  // server's 'chat:expire' sweep.
+  function expireMessages(ids) {
+    const b = chatBody();
+    if (!b || !Array.isArray(ids)) return;
+    ids.forEach((id) => {
+      const node = b.querySelector(`.bubble[data-id="${id}"], .voice-msg[data-id="${id}"]`);
+      if (!node) return;
+      if (node._expiryTimer) clearInterval(node._expiryTimer);
+      node.classList.add('vanish');
+      setTimeout(() => node.remove(), 420);
+    });
+  }
+
+  /* ---------- sophisticated voice notes ---------- */
+
+  var voiceRec = null; // { stream, recorder, chunks, startedAt, raf, audioCtx, analyser, peer }
+
+  function toggleVoiceRecorder(peer) {
+    const box = document.getElementById('voiceRecorder');
+    if (!box) return;
+    if (voiceRec) { cancelVoiceRecorder(); return; }
+    startVoiceRecorder(peer, box);
+  }
+
+  async function startVoiceRecorder(peer, box) {
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
+      return notify('Voice notes are not supported by this browser.');
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (_e) {
+      return notify('Microphone permission is required for voice notes.');
+    }
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']
+      .find((t) => window.MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    const chunks = [];
+    recorder.addEventListener('dataavailable', (e) => { if (e.data && e.data.size) chunks.push(e.data); });
+
+    voiceRec = { stream, recorder, chunks, startedAt: Date.now(), peer, raf: null, audioCtx: null };
+
+    // Live meter driven by a Web Audio analyser.
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AC();
+      const src = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      src.connect(analyser);
+      voiceRec.audioCtx = audioCtx;
+      voiceRec.analyser = analyser;
+    } catch (_e) { /* meter is optional */ }
+
+    box.innerHTML =
+      '<span class="vr-dot"></span>' +
+      '<span class="vr-time" id="vrTime">0:00</span>' +
+      '<canvas class="vr-wave" id="vrWave" width="220" height="34"></canvas>' +
+      '<button class="vr-btn vr-cancel" id="vrCancel" title="Cancel">✕</button>' +
+      '<button class="vr-btn vr-send" id="vrSend" title="Send voice note">Send ➤</button>';
+    box.classList.remove('hidden');
+    box.querySelector('#vrCancel').addEventListener('click', cancelVoiceRecorder);
+    box.querySelector('#vrSend').addEventListener('click', finishVoiceRecorder);
+
+    const timeEl = box.querySelector('#vrTime');
+    const canvas = box.querySelector('#vrWave');
+    const ctx = canvas.getContext('2d');
+    const analyser = voiceRec.analyser;
+    const buf = analyser ? new Uint8Array(analyser.frequencyBinCount) : null;
+    const draw = () => {
+      voiceRec.raf = requestAnimationFrame(draw);
+      const secs = (Date.now() - voiceRec.startedAt) / 1000;
+      timeEl.textContent = Math.floor(secs / 60) + ':' + String(Math.floor(secs % 60)).padStart(2, '0');
+      // Auto-stop at 2 minutes.
+      if (secs >= 120) { finishVoiceRecorder(); return; }
+      if (!analyser || !buf) return;
+      analyser.getByteTimeDomainData(buf);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#ff4d7d';
+      ctx.strokeStyle = accent.trim() || '#ff4d7d';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const step = canvas.width / buf.length;
+      for (let i = 0; i < buf.length; i++) {
+        const v = (buf[i] - 128) / 128;
+        const y = canvas.height / 2 + v * (canvas.height / 2 - 2);
+        const x = i * step;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    };
+    recorder.start();
+    draw();
+  }
+
+  // Stop and tear down the recorder without sending.
+  function cancelVoiceRecorder() {
+    teardownVoiceRec(true);
+  }
+
+  // Stop, assemble the recording and send it.
+  function finishVoiceRecorder() {
+    if (!voiceRec) return;
+    const rec = voiceRec;
+    const durSec = (Date.now() - rec.startedAt) / 1000;
+    const recorder = rec.recorder;
+    const finalize = () => {
+      const type = (recorder.mimeType || 'audio/webm').split(';')[0];
+      const blob = new Blob(rec.chunks, { type });
+      teardownVoiceRec(false);
+      if (durSec < 0.4 || !blob.size) return notify('That voice note was too short.');
+      sendVoice(blob, durSec, rec.peer);
+    };
+    if (recorder.state !== 'inactive') {
+      recorder.addEventListener('stop', finalize, { once: true });
+      recorder.stop();
+    } else {
+      finalize();
+    }
+  }
+
+  function teardownVoiceRec(alsoStop) {
+    const rec = voiceRec;
+    voiceRec = null;
+    if (!rec) return;
+    if (rec.raf) cancelAnimationFrame(rec.raf);
+    try { if (alsoStop && rec.recorder.state !== 'inactive') rec.recorder.stop(); } catch (_e) {}
+    try { rec.stream.getTracks().forEach((t) => t.stop()); } catch (_e) {}
+    try { if (rec.audioCtx) rec.audioCtx.close(); } catch (_e) {}
+    const box = document.getElementById('voiceRecorder');
+    if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+  }
+
+  function sendVoice(blob, durSec, peer) {
+    if (!state.socket || !peer) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result; // data:audio/...;base64,...
+      const replyTo = state.replyTo ? state.replyTo.id : null;
+      cancelReply();
+      state.socket.emit('chat:voice', { to: peer.id, audio: dataUrl, dur: durSec, replyTo }, (res) => {
+        if (res && res.error) return notify(res.error);
+        const m = (res && res.message) || {};
+        appendVoiceBubble({ body: dataUrl, mine: true, at: m.at || Date.now(), id: m.id, dur: durSec, expiresAt: m.expiresAt });
+      });
+    };
+    reader.readAsDataURL(blob);
+  }
+
+  // A voice-note bubble with its own play/pause control and a real waveform
+  // decoded from the audio. No native <audio> controls means no download UI.
+  function appendVoiceBubble(m) {
+    const b = chatBody();
+    if (!b) return;
+    const node = el(`
+      <div class="voice-msg ${m.mine ? 'me' : 'them'}">
+        <button class="vm-play" title="Play voice note">▶</button>
+        <div class="vm-wave"></div>
+        <span class="vm-dur">0:00</span>
+        <span class="time">${fmtTime(m.at)}</span>
+      </div>
+    `);
+    if (m.id) node.dataset.id = m.id;
+    if (m.reply) node.insertBefore(renderQuote(m.reply), node.firstChild);
+
+    const playBtn = node.querySelector('.vm-play');
+    const wave = node.querySelector('.vm-wave');
+    const durEl = node.querySelector('.vm-dur');
+
+    // Render a set of placeholder bars first; replace with real peaks once the
+    // audio decodes.
+    const BARS = 40;
+    for (let i = 0; i < BARS; i++) {
+      const bar = document.createElement('span');
+      bar.className = 'vm-bar';
+      bar.style.height = (18 + (i % 5) * 6) + '%';
+      wave.appendChild(bar);
+    }
+    const bars = Array.from(wave.children);
+
+    const audio = new Audio();
+    audio.preload = 'none';
+    audio.src = m.body;
+    audio.setAttribute('controlslist', 'nodownload noplaybackrate noremoteplayback');
+    let duration = m.dur || 0;
+    if (duration) durEl.textContent = fmtClock(duration);
+
+    // Decode for an accurate waveform + duration (best-effort).
+    decodeWaveform(m.body, BARS).then((info) => {
+      if (!info) return;
+      if (info.peaks) info.peaks.forEach((p, i) => { if (bars[i]) bars[i].style.height = Math.max(8, p * 100) + '%'; });
+      if (info.duration) { duration = info.duration; durEl.textContent = fmtClock(duration); }
+    });
+
+    const paint = () => {
+      const d = duration || audio.duration || 0;
+      const frac = d ? Math.min(1, audio.currentTime / d) : 0;
+      const filled = Math.round(frac * bars.length);
+      bars.forEach((bar, i) => bar.classList.toggle('played', i < filled));
+      if (d) durEl.textContent = fmtClock(Math.max(0, d - audio.currentTime));
+    };
+    let raf = null;
+    const loop = () => { paint(); if (!audio.paused) raf = requestAnimationFrame(loop); };
+
+    playBtn.addEventListener('click', () => {
+      if (audio.paused) {
+        // Pause any other playing voice note first.
+        document.querySelectorAll('.voice-msg.playing').forEach((o) => {
+          if (o !== node && o._audio) { o._audio.pause(); }
+        });
+        audio.play().then(() => { node.classList.add('playing'); playBtn.textContent = '❚❚'; loop(); }).catch(() => {});
+      } else {
+        audio.pause();
+      }
+    });
+    audio.addEventListener('pause', () => { node.classList.remove('playing'); playBtn.textContent = '▶'; if (raf) cancelAnimationFrame(raf); });
+    audio.addEventListener('ended', () => {
+      node.classList.remove('playing'); playBtn.textContent = '▶';
+      bars.forEach((bar) => bar.classList.remove('played'));
+      durEl.textContent = fmtClock(duration || audio.duration || 0);
+    });
+    node._audio = audio;
+
+    b.appendChild(node);
+    if (m.expiresAt) scheduleExpiry(node, m.expiresAt);
+    scrollBody();
+  }
+
+  function fmtClock(sec) {
+    sec = Math.max(0, Math.round(sec || 0));
+    return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+  }
+
+  // Decode an audio data URL into `bars` normalized peak heights (0..1) plus
+  // duration. Returns null on failure so the caller keeps placeholder bars.
+  async function decodeWaveform(dataUrl, bars) {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      // Decode the base64 payload directly — fetch() of a data: URL is blocked
+      // by our connect-src CSP, so build the ArrayBuffer by hand.
+      const comma = dataUrl.indexOf(',');
+      const bin = atob(dataUrl.slice(comma + 1));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const ctx = new AC();
+      const audioBuf = await ctx.decodeAudioData(bytes.buffer);
+      const ch = audioBuf.getChannelData(0);
+      const block = Math.floor(ch.length / bars) || 1;
+      const peaks = [];
+      let max = 0.0001;
+      for (let i = 0; i < bars; i++) {
+        let sum = 0;
+        for (let j = 0; j < block; j++) {
+          const v = ch[i * block + j] || 0;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / block);
+        peaks.push(rms);
+        if (rms > max) max = rms;
+      }
+      const norm = peaks.map((p) => p / max);
+      const duration = audioBuf.duration;
+      try { ctx.close(); } catch (_e) {}
+      return { peaks: norm, duration };
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  /* ---------- anti-save / anti-screenshot (best-effort) ---------- */
+
+  // Block copy, drag and the right-click "Save as…" menu inside a chat. This is
+  // a deterrent only — it cannot stop a determined user or the OS, but it stops
+  // casual saving of messages, images, files and voice notes.
+  function hardenChat(root) {
+    if (!root || root._hardened) return;
+    root._hardened = true;
+    root.classList.add('no-save');
+    root.addEventListener('contextmenu', (e) => { e.preventDefault(); }, false);
+    root.addEventListener('dragstart', (e) => { e.preventDefault(); }, false);
+    root.addEventListener('copy', (e) => { e.preventDefault(); }, false);
+  }
+
+  // Global, best-effort screenshot deterrents. There is NO web API that can
+  // actually block an OS screenshot, so this only: (1) blurs chat content when
+  // the tab is hidden or the window loses focus (foils many capture tools and
+  // screen-share previews), and (2) flashes a warning + clears the clipboard on
+  // PrintScreen. Set up once.
+  var screenshotGuardReady = false;
+  function setupScreenshotGuard() {
+    if (screenshotGuardReady) return;
+    screenshotGuardReady = true;
+
+    const shield = () => document.body.classList.add('privacy-shield');
+    const unshield = () => document.body.classList.remove('privacy-shield');
+
+    document.addEventListener('visibilitychange', () => { if (document.hidden) shield(); else unshield(); });
+    window.addEventListener('blur', shield);
+    window.addEventListener('focus', unshield);
+
+    const warn = () => {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          const p = navigator.clipboard.writeText('');
+          if (p && p.catch) p.catch(() => {});
+        }
+      } catch (_e) {}
+      let t = document.getElementById('ssToast');
+      if (!t) {
+        t = el('<div id="ssToast" class="ss-toast">🔒 Screenshots are discouraged in private chats.</div>');
+        document.body.appendChild(t);
+      }
+      t.classList.add('show');
+      clearTimeout(t._h);
+      t._h = setTimeout(() => t.classList.remove('show'), 2200);
+    };
+    window.addEventListener('keyup', (e) => { if (e.key === 'PrintScreen') warn(); });
+    window.addEventListener('keydown', (e) => {
+      // Best-effort: some capture shortcuts still reach the page (macOS
+      // Cmd+Shift+3/4/5). Windows' Win+Shift+S is captured by the OS first, so
+      // it usually never fires here — hence "deterrent, not a guarantee".
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && ['3', '4', '5'].includes(e.key)) warn();
+    });
   }
 
   /* ---------- broadcast ("live chat") ---------- */
@@ -2087,6 +2521,7 @@
   /* ---------- socket ---------- */
   function connectSocket() {
     if (state.socket) state.socket.disconnect();
+    setupScreenshotGuard();
     const s = io({ withCredentials: true });
     state.socket = s;
 
@@ -2192,6 +2627,17 @@
     s.on('chat:reaction', (e) => {
       if (e && e.messageId != null) updateReaction(e.messageId, e.userId, e.emoji);
     });
+
+    // Disappearing-messages setting changed for a conversation of mine.
+    s.on('chat:disappearing', (e) => {
+      const peerId = state.peer && state.peer.id;
+      if (!peerId || !e) return;
+      const involved = (e.from === peerId && e.to === state.me.id) || (e.from === state.me.id && e.to === peerId);
+      if (involved) applyDisappearing(e.seconds || 0);
+    });
+
+    // The server swept expired messages — drop those bubbles.
+    s.on('chat:expire', (e) => { if (e && e.ids) expireMessages(e.ids); });
 
     s.on('roleplay:progress', (p) => {
       const peerId = state.peer && state.peer.id;
