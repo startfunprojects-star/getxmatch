@@ -1283,13 +1283,11 @@
         <div class="gift-picker hidden" id="giftPicker"></div>
         <div class="rp-picker hidden" id="rpPicker"></div>
         <div class="reply-banner hidden" id="replyBanner"></div>
-        <div class="voice-recorder hidden" id="voiceRecorder"></div>
         <div class="composer">
           <input type="file" id="fileInput" class="hidden" />
           <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
           <button class="icon-btn" id="giftBtn" title="Send a naughty gift">🎁</button>
           <button class="icon-btn" id="rpBtn" title="Start a roleplay story">🎭</button>
-          <button class="icon-btn" id="voiceBtn" title="Record a voice note">🎤</button>
           <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" />
           <button class="primary" id="sendBtn">Send</button>
         </div>
@@ -1309,10 +1307,9 @@
     view.querySelector('#makeGroupBtn').addEventListener('click', () => openGroupCreator(peer));
     view.querySelector('#broadcastBtn').addEventListener('click', () => toggleBroadcast(peer));
     view.querySelector('#disappearBtn').addEventListener('click', () => promptDisappearing(peer));
-    view.querySelector('#voiceBtn').addEventListener('click', () => toggleVoiceRecorder(peer));
 
     // Best-effort protection: block copy / context-menu / drag inside the chat
-    // so messages, images, files and voice notes can't be trivially saved.
+    // so messages, images and files can't be trivially saved.
     hardenChat(view.querySelector('.chat-wrap') || view);
 
     // If this conversation is already being broadcast, show its live banner.
@@ -1506,10 +1503,10 @@
   function appendMessage(m) {
     if (m.kind === 'gift') appendGiftBubble(m);
     else if (m.kind === 'narration') appendNarrationBubble(m.body, m.at);
-    else if (m.kind === 'voice') appendVoiceBubble(m);
+    else if (m.kind === 'voice') return; // legacy voice notes (feature removed)
     else appendTextBubble(m);
-    // Advertisement after every 20 exchanged messages (text + gifts + voice).
-    if (m.kind !== 'narration') {
+    // Advertisement after every 20 exchanged messages (text + gifts).
+    if (m.kind !== 'narration' && m.kind !== 'voice') {
       maybeInsertStreamAd(chatBody(), 'chat_inline', 'chat', 20);
     }
   }
@@ -1912,7 +1909,7 @@
         <button class="modal-x" title="Close">×</button>
         <div class="dm-icon">⏳</div>
         <h3 class="dm-title">Disappearing messages</h3>
-        <p class="dm-sub">New messages, files and voice notes vanish for <strong>both of you</strong> after the time you choose.</p>
+        <p class="dm-sub">New messages and shared files vanish for <strong>both of you</strong> after the time you choose.</p>
         <div class="dm-presets"></div>
         <div class="dm-custom">
           <label for="dmCustom">Custom (seconds)</label>
@@ -2039,7 +2036,7 @@
     const b = chatBody();
     if (!b || !Array.isArray(ids)) return;
     ids.forEach((id) => {
-      const node = b.querySelector(`.bubble[data-id="${id}"], .voice-msg[data-id="${id}"]`);
+      const node = b.querySelector(`.bubble[data-id="${id}"]`);
       if (!node) return;
       if (node._expiryTimer) clearInterval(node._expiryTimer);
       node.classList.add('vanish');
@@ -2047,340 +2044,11 @@
     });
   }
 
-  /* ---------- sophisticated voice notes (raw PCM → WAV) ----------
-     We capture raw PCM via Web Audio and encode a 16-bit mono WAV rather than
-     leaning on MediaRecorder's opus/webm output, which some browsers decode
-     back as noise. WAV is unambiguous and plays cleanly everywhere. 16 kHz mono
-     is ideal for speech and keeps files small. */
-
-  var voiceRec = null;
-  const VOICE_SAMPLE_RATE = 16000;
-
-  function toggleVoiceRecorder(peer) {
-    const box = document.getElementById('voiceRecorder');
-    if (!box) return;
-    if (voiceRec) { cancelVoiceRecorder(); return; }
-    startVoiceRecorder(peer, box);
-  }
-
-  async function startVoiceRecorder(peer, box) {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !AC) {
-      return notify('Voice notes are not supported by this browser.');
-    }
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
-    } catch (_e) {
-      return notify('Microphone permission is required for voice notes.');
-    }
-
-    const audioCtx = new AC();
-    try { await audioCtx.resume(); } catch (_e) {}
-    const source = audioCtx.createMediaStreamSource(stream);
-    const analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 256;
-    source.connect(analyser);
-
-    // Capture raw PCM through a ScriptProcessor. A zero-gain sink keeps it
-    // pumping without routing the mic to the speakers (which would feed back).
-    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-    const mute = audioCtx.createGain();
-    mute.gain.value = 0;
-
-    const rec = {
-      stream, audioCtx, source, analyser, processor, mute,
-      chunks: [], length: 0, startedAt: Date.now(), peer, raf: null,
-    };
-    voiceRec = rec;
-
-    processor.onaudioprocess = (e) => {
-      const input = e.inputBuffer.getChannelData(0);
-      rec.chunks.push(new Float32Array(input)); // copy — the buffer is reused
-      rec.length += input.length;
-    };
-    source.connect(processor);
-    processor.connect(mute);
-    mute.connect(audioCtx.destination);
-
-    box.innerHTML =
-      '<span class="vr-dot"></span>' +
-      '<span class="vr-time" id="vrTime">0:00</span>' +
-      '<canvas class="vr-wave" id="vrWave" width="220" height="34"></canvas>' +
-      '<button class="vr-btn vr-cancel" id="vrCancel" title="Cancel">✕</button>' +
-      '<button class="vr-btn vr-send" id="vrSend" title="Send voice note">Send ➤</button>';
-    box.classList.remove('hidden');
-    box.querySelector('#vrCancel').addEventListener('click', cancelVoiceRecorder);
-    box.querySelector('#vrSend').addEventListener('click', finishVoiceRecorder);
-
-    const timeEl = box.querySelector('#vrTime');
-    const canvas = box.querySelector('#vrWave');
-    const ctx = canvas.getContext('2d');
-    const wf = new Uint8Array(analyser.frequencyBinCount);
-    const draw = () => {
-      rec.raf = requestAnimationFrame(draw);
-      const secs = (Date.now() - rec.startedAt) / 1000;
-      timeEl.textContent = Math.floor(secs / 60) + ':' + String(Math.floor(secs % 60)).padStart(2, '0');
-      if (secs >= 120) { finishVoiceRecorder(); return; } // auto-stop at 2 min
-      analyser.getByteTimeDomainData(wf);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const accent = (getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#ff4d7d').trim();
-      ctx.strokeStyle = accent || '#ff4d7d';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      const step = canvas.width / wf.length;
-      for (let i = 0; i < wf.length; i++) {
-        const v = (wf[i] - 128) / 128;
-        const y = canvas.height / 2 + v * (canvas.height / 2 - 2);
-        const x = i * step;
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    };
-    draw();
-  }
-
-  // Detach the audio graph and release the mic. Captured samples live in plain
-  // arrays, so it's safe to close the context afterwards.
-  function stopVoiceCapture(rec) {
-    if (rec.raf) cancelAnimationFrame(rec.raf);
-    try { rec.processor.onaudioprocess = null; } catch (_e) {}
-    try { rec.processor.disconnect(); } catch (_e) {}
-    try { rec.mute.disconnect(); } catch (_e) {}
-    try { rec.source.disconnect(); } catch (_e) {}
-    try { rec.stream.getTracks().forEach((t) => t.stop()); } catch (_e) {}
-    try { rec.audioCtx.close(); } catch (_e) {}
-  }
-
-  function hideRecorderBox() {
-    const box = document.getElementById('voiceRecorder');
-    if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
-  }
-
-  // Discard the recording.
-  function cancelVoiceRecorder() {
-    const rec = voiceRec;
-    voiceRec = null;
-    if (rec) stopVoiceCapture(rec);
-    hideRecorderBox();
-  }
-
-  // Stop, encode a WAV and send it.
-  function finishVoiceRecorder() {
-    const rec = voiceRec;
-    if (!rec) return;
-    voiceRec = null;
-    const srcRate = rec.audioCtx.sampleRate;
-    stopVoiceCapture(rec);
-    hideRecorderBox();
-
-    const merged = mergeSamples(rec.chunks, rec.length);
-    const samples = downsampleTo(merged, srcRate, VOICE_SAMPLE_RATE);
-    const durSec = samples.length / VOICE_SAMPLE_RATE;
-    if (durSec < 0.4 || !samples.length) return notify('That voice note was too short.');
-    const dataUrl = encodeWavDataUrl(samples, VOICE_SAMPLE_RATE);
-    sendVoice(dataUrl, durSec, rec.peer);
-  }
-
-  function mergeSamples(chunks, total) {
-    const out = new Float32Array(total);
-    let off = 0;
-    for (const c of chunks) { out.set(c, off); off += c.length; }
-    return out;
-  }
-
-  // Average-decimate to the target rate (mono). Good enough for speech.
-  function downsampleTo(samples, srcRate, dstRate) {
-    if (!srcRate || dstRate >= srcRate) return samples;
-    const ratio = srcRate / dstRate;
-    const outLen = Math.floor(samples.length / ratio);
-    const out = new Float32Array(outLen);
-    for (let i = 0; i < outLen; i++) {
-      const start = Math.floor(i * ratio);
-      const end = Math.min(samples.length, Math.floor((i + 1) * ratio)) || start + 1;
-      let sum = 0, n = 0;
-      for (let j = start; j < end; j++) { sum += samples[j]; n++; }
-      out[i] = n ? sum / n : 0;
-    }
-    return out;
-  }
-
-  // 16-bit PCM mono WAV as a base64 data URL.
-  function encodeWavDataUrl(samples, sampleRate) {
-    const n = samples.length;
-    const buffer = new ArrayBuffer(44 + n * 2);
-    const view = new DataView(buffer);
-    const wr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
-    wr(0, 'RIFF');
-    view.setUint32(4, 36 + n * 2, true);
-    wr(8, 'WAVE');
-    wr(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);            // PCM
-    view.setUint16(22, 1, true);            // mono
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true); // byte rate
-    view.setUint16(32, 2, true);            // block align
-    view.setUint16(34, 16, true);           // bits/sample
-    wr(36, 'data');
-    view.setUint32(40, n * 2, true);
-    let off = 44;
-    for (let i = 0; i < n; i++) {
-      let s = Math.max(-1, Math.min(1, samples[i]));
-      view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      off += 2;
-    }
-    return 'data:audio/wav;base64,' + base64FromBytes(new Uint8Array(buffer));
-  }
-
-  function base64FromBytes(bytes) {
-    let binary = '';
-    const CH = 0x8000;
-    for (let i = 0; i < bytes.length; i += CH) {
-      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
-    }
-    return btoa(binary);
-  }
-
-  function sendVoice(dataUrl, durSec, peer) {
-    if (!state.socket || !peer) return;
-    const replyTo = state.replyTo ? state.replyTo.id : null;
-    cancelReply();
-    state.socket.emit('chat:voice', { to: peer.id, audio: dataUrl, dur: durSec, replyTo }, (res) => {
-      if (res && res.error) return notify(res.error);
-      const m = (res && res.message) || {};
-      appendVoiceBubble({ body: dataUrl, mine: true, at: m.at || Date.now(), id: m.id, dur: durSec, expiresAt: m.expiresAt });
-    });
-  }
-
-  // A voice-note bubble with its own play/pause control and a real waveform
-  // decoded from the audio. No native <audio> controls means no download UI.
-  function appendVoiceBubble(m) {
-    const b = chatBody();
-    if (!b) return;
-    const node = el(`
-      <div class="voice-msg ${m.mine ? 'me' : 'them'}">
-        <button class="vm-play" title="Play voice note">▶</button>
-        <div class="vm-wave"></div>
-        <span class="vm-dur">0:00</span>
-        <span class="time">${fmtTime(m.at)}</span>
-      </div>
-    `);
-    if (m.id) node.dataset.id = m.id;
-    if (m.reply) node.insertBefore(renderQuote(m.reply), node.firstChild);
-
-    const playBtn = node.querySelector('.vm-play');
-    const wave = node.querySelector('.vm-wave');
-    const durEl = node.querySelector('.vm-dur');
-
-    // Render a set of placeholder bars first; replace with real peaks once the
-    // audio decodes.
-    const BARS = 40;
-    for (let i = 0; i < BARS; i++) {
-      const bar = document.createElement('span');
-      bar.className = 'vm-bar';
-      bar.style.height = (18 + (i % 5) * 6) + '%';
-      wave.appendChild(bar);
-    }
-    const bars = Array.from(wave.children);
-
-    const audio = new Audio();
-    audio.preload = 'none';
-    audio.src = m.body;
-    audio.setAttribute('controlslist', 'nodownload noplaybackrate noremoteplayback');
-    let duration = m.dur || 0;
-    if (duration) durEl.textContent = fmtClock(duration);
-
-    // Decode for an accurate waveform + duration (best-effort).
-    decodeWaveform(m.body, BARS).then((info) => {
-      if (!info) return;
-      if (info.peaks) info.peaks.forEach((p, i) => { if (bars[i]) bars[i].style.height = Math.max(8, p * 100) + '%'; });
-      if (info.duration) { duration = info.duration; durEl.textContent = fmtClock(duration); }
-    });
-
-    const paint = () => {
-      const d = duration || audio.duration || 0;
-      const frac = d ? Math.min(1, audio.currentTime / d) : 0;
-      const filled = Math.round(frac * bars.length);
-      bars.forEach((bar, i) => bar.classList.toggle('played', i < filled));
-      if (d) durEl.textContent = fmtClock(Math.max(0, d - audio.currentTime));
-    };
-    let raf = null;
-    const loop = () => { paint(); if (!audio.paused) raf = requestAnimationFrame(loop); };
-
-    playBtn.addEventListener('click', () => {
-      if (audio.paused) {
-        // Pause any other playing voice note first.
-        document.querySelectorAll('.voice-msg.playing').forEach((o) => {
-          if (o !== node && o._audio) { o._audio.pause(); }
-        });
-        audio.play().then(() => { node.classList.add('playing'); playBtn.textContent = '❚❚'; loop(); }).catch(() => {});
-      } else {
-        audio.pause();
-      }
-    });
-    audio.addEventListener('pause', () => { node.classList.remove('playing'); playBtn.textContent = '▶'; if (raf) cancelAnimationFrame(raf); });
-    audio.addEventListener('ended', () => {
-      node.classList.remove('playing'); playBtn.textContent = '▶';
-      bars.forEach((bar) => bar.classList.remove('played'));
-      durEl.textContent = fmtClock(duration || audio.duration || 0);
-    });
-    node._audio = audio;
-
-    b.appendChild(node);
-    if (m.expiresAt) scheduleExpiry(node, m.expiresAt);
-    scrollBody();
-  }
-
-  function fmtClock(sec) {
-    sec = Math.max(0, Math.round(sec || 0));
-    return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
-  }
-
-  // Decode an audio data URL into `bars` normalized peak heights (0..1) plus
-  // duration. Returns null on failure so the caller keeps placeholder bars.
-  async function decodeWaveform(dataUrl, bars) {
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return null;
-      // Decode the base64 payload directly — fetch() of a data: URL is blocked
-      // by our connect-src CSP, so build the ArrayBuffer by hand.
-      const comma = dataUrl.indexOf(',');
-      const bin = atob(dataUrl.slice(comma + 1));
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const ctx = new AC();
-      const audioBuf = await ctx.decodeAudioData(bytes.buffer);
-      const ch = audioBuf.getChannelData(0);
-      const block = Math.floor(ch.length / bars) || 1;
-      const peaks = [];
-      let max = 0.0001;
-      for (let i = 0; i < bars; i++) {
-        let sum = 0;
-        for (let j = 0; j < block; j++) {
-          const v = ch[i * block + j] || 0;
-          sum += v * v;
-        }
-        const rms = Math.sqrt(sum / block);
-        peaks.push(rms);
-        if (rms > max) max = rms;
-      }
-      const norm = peaks.map((p) => p / max);
-      const duration = audioBuf.duration;
-      try { ctx.close(); } catch (_e) {}
-      return { peaks: norm, duration };
-    } catch (_e) {
-      return null;
-    }
-  }
-
   /* ---------- anti-save / anti-screenshot (best-effort) ---------- */
 
   // Block copy, drag and the right-click "Save as…" menu inside a chat. This is
   // a deterrent only — it cannot stop a determined user or the OS, but it stops
-  // casual saving of messages, images, files and voice notes.
+  // casual saving of messages, images and files.
   function hardenChat(root) {
     if (!root || root._hardened) return;
     root._hardened = true;

@@ -1053,7 +1053,7 @@ a.share-link:hover { text-decoration: underline; }
 }
 
 /* ============================================================
-   Chat privacy: disappearing messages, voice notes, anti-save
+   Chat privacy: disappearing messages, anti-save
    ============================================================ */
 
 /* --- Disappearing-messages toggle + banner --- */
@@ -1079,7 +1079,7 @@ a.share-link:hover { text-decoration: underline; }
 }
 .disappear-banner .db-off:hover { color: var(--text); border-color: var(--accent); }
 
-/* Countdown pill shown on a disappearing bubble/voice note. */
+/* Countdown pill shown on a disappearing bubble. */
 .expire-pill {
   display: inline-flex; align-items: center; gap: 3px;
   font-size: 10px; opacity: .8; margin-top: 3px;
@@ -1090,61 +1090,14 @@ a.share-link:hover { text-decoration: underline; }
 .disappearing { transition: opacity .4s ease, transform .4s ease, filter .4s ease; }
 .vanish { opacity: 0 !important; transform: scale(.9) translateY(-4px); filter: blur(3px); pointer-events: none; }
 
-/* --- Voice recorder (composer overlay while recording) --- */
-.voice-recorder {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 16px; border-top: 1px solid var(--border);
-  background: var(--bg-3);
-}
-.voice-recorder .vr-dot {
-  width: 12px; height: 12px; border-radius: 50%; background: var(--danger);
-  animation: dbpulse 1.2s infinite; flex: none;
-}
-.voice-recorder .vr-time { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 40px; }
-.voice-recorder .vr-wave { flex: 1; height: 34px; }
-.voice-recorder .vr-btn {
-  border: none; border-radius: 999px; padding: 7px 14px; cursor: pointer; font-size: 13px; font-weight: 600;
-}
-.voice-recorder .vr-cancel { background: var(--bg-elev); color: var(--muted); width: 34px; padding: 7px 0; }
-.voice-recorder .vr-send { background: var(--grad); color: #fff; box-shadow: var(--glow); }
-
-/* --- Voice-note bubble (custom player, no native controls) --- */
-.voice-msg {
-  display: flex; align-items: center; gap: 10px;
-  max-width: 68%; padding: 9px 13px; border-radius: 14px;
-  position: relative; flex-wrap: wrap;
-}
-.voice-msg.them { align-self: flex-start; background: var(--bg-3); border: 1px solid var(--border); border-bottom-left-radius: 4px; box-shadow: var(--shadow-sm); }
-.voice-msg.me { align-self: flex-end; background: var(--grad); color: #fff; border-bottom-right-radius: 4px; box-shadow: var(--glow); }
-.voice-msg .vm-play {
-  flex: none; width: 34px; height: 34px; border-radius: 50%; cursor: pointer;
-  border: none; font-size: 13px; display: grid; place-items: center;
-  background: rgba(255,255,255,.16); color: inherit;
-}
-.voice-msg.them .vm-play { background: var(--grad); color: #fff; }
-.voice-msg .vm-wave {
-  display: flex; align-items: center; gap: 2px; height: 34px; flex: 1; min-width: 120px;
-}
-.voice-msg .vm-bar {
-  flex: 1; min-width: 2px; border-radius: 2px; background: currentColor; opacity: .32;
-  transition: opacity .1s linear, background .1s linear;
-}
-.voice-msg.them .vm-bar { background: var(--muted); opacity: .5; }
-.voice-msg .vm-bar.played { opacity: 1; }
-.voice-msg.them .vm-bar.played { background: var(--accent); }
-.voice-msg .vm-dur { font-size: 11px; font-variant-numeric: tabular-nums; opacity: .8; min-width: 34px; text-align: right; }
-.voice-msg .time { width: 100%; font-size: 11px; opacity: .6; }
-.voice-msg .reply-quote { width: 100%; }
-
 /* --- Anti-save hardening: no text selection / image dragging in chat --- */
 .no-save { -webkit-user-select: none; -moz-user-select: none; user-select: none; }
 .no-save input, .no-save textarea { -webkit-user-select: text; user-select: text; }
-.no-save img, .no-save .shared, .no-save .vm-wave { -webkit-user-drag: none; user-drag: none; }
+.no-save img, .no-save .shared { -webkit-user-drag: none; user-drag: none; }
 .no-save .file { cursor: default; }
 
 /* --- Screenshot deterrents --- */
 .privacy-shield .chat-body,
-.privacy-shield .voice-msg,
 .privacy-shield .chat-stage { filter: blur(14px); transition: filter .05s; }
 .ss-toast {
   position: fixed; left: 50%; top: 22px; transform: translateX(-50%) translateY(-12px);

@@ -57,10 +57,6 @@ function expiryFor(a, b) {
   return ttl > 0 ? Date.now() + ttl * 1000 : null;
 }
 
-// Largest voice note accepted (base64 data URL length). Keeps a single note
-// well under the socket buffer while allowing a couple of minutes of audio.
-const MAX_VOICE_CHARS = 6 * 1024 * 1024;
-
 /* --------------------------------------------------------------------------
    Roleplay delivery helpers
 -------------------------------------------------------------------------- */
@@ -128,8 +124,6 @@ function replyPreview(replyToId) {
     text = g ? `${g.emoji} ${g.name}` : 'a gift';
   } else if (row.kind === 'narration') {
     text = '🎭 Roleplay';
-  } else if (row.kind === 'voice') {
-    text = '🎤 Voice note';
   }
   return { id: row.id, from: row.sender_id, kind: row.kind || 'text', text: String(text).slice(0, 140) };
 }
@@ -201,8 +195,6 @@ function broadcastMessageView(row) {
       const p = JSON.parse(row.body);
       text = p.final ? '🎬 The End' : `🎭 ${p.title || 'Roleplay'}`;
     } catch (_e) { text = '🎭 Roleplay'; }
-  } else if (kind === 'voice') {
-    text = '🎤 Voice note';
   }
   return { from: row.sender_id, fromName: nameOf(row.sender_id), kind, text, at: row.created_at };
 }
@@ -245,9 +237,6 @@ function mirrorLiveMessage(io, from, to, kind, body, at) {
       const p = JSON.parse(body);
       text = p.final ? '🎬 The End' : `🎭 ${p.title || 'Roleplay'}`;
     } catch (_e) { text = '🎭 Roleplay'; }
-  } else if (kind === 'voice') {
-    // Never relay the audio itself to watchers — just a placeholder label.
-    text = '🎤 Voice note';
   }
   io.to(broadcastRoom(b.token)).emit('broadcast:message', {
     from, fromName: nameOf(from), kind, text, at,
@@ -525,52 +514,6 @@ function initSocket(io) {
 
         io.to(`user:${to}`).emit('chat:file', meta);
         ack && ack({ ok: true });
-      } catch (e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
-    // Voice note → persisted as a kind='voice' message whose body holds the
-    // audio as a `data:audio/...;base64,...` URL. Persisting (unlike files) lets
-    // it appear in history and lets the disappearing-messages sweeper expire it.
-    socket.on('chat:voice', (payload, ack) => {
-      try {
-        const to = parseInt(payload && payload.to, 10);
-        const audio = payload && typeof payload.audio === 'string' ? payload.audio : '';
-        if (!to || !audio) return ack && ack({ error: 'Invalid voice note.' });
-        if (!/^data:audio\/[a-z0-9.+-]+;base64,/i.test(audio)) {
-          return ack && ack({ error: 'Unsupported audio format.' });
-        }
-        if (audio.length > MAX_VOICE_CHARS) {
-          return ack && ack({ error: 'Voice note is too long.' });
-        }
-
-        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
-        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
-        if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot send a voice note — a block is in place.' });
-        }
-
-        // Optional reply, and the recorded duration (seconds) for the player.
-        const replyTo = resolveReplyTo(payload && payload.replyTo, me.id, to);
-        const dur = Math.max(0, Math.min(600, Number(payload && payload.dur) || 0));
-
-        const now = Date.now();
-        const expiresAt = expiryFor(me.id, to);
-        const info = db
-          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at, expires_at) VALUES (?, ?, ?, 'voice', ?, ?, ?)")
-          .run(me.id, to, audio, replyTo, now, expiresAt);
-
-        const reply = replyPreview(replyTo);
-        const msg = { id: info.lastInsertRowid, from: me.id, to, body: audio, kind: 'voice', at: now, dur, replyTo, reply, expiresAt };
-
-        io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
-        socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
-
-        // Watchers of a broadcast see only a "🎤 Voice note" placeholder.
-        mirrorLiveMessage(io, me.id, to, 'voice', audio, now);
-
-        ack && ack({ ok: true, message: { ...msg, mine: true } });
       } catch (e) {
         ack && ack({ error: 'Server error.' });
       }

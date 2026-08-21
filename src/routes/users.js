@@ -15,8 +15,6 @@ function buildReplyPreview(row) {
     text = g ? `${g.emoji} ${g.name}` : 'a gift';
   } else if (row.reply_kind === 'narration') {
     text = '🎭 Roleplay';
-  } else if (row.reply_kind === 'voice') {
-    text = '🎤 Voice note';
   }
   return { id: row.reply_id, from: row.reply_sender, kind: row.reply_kind || 'text', text: String(text).slice(0, 140) };
 }
