@@ -1879,25 +1879,104 @@
     return mm ? `${h}h ${mm}m` : `${h}h`;
   }
 
-  // Ask the user for a TTL and arm/disarm disappearing messages for this chat.
-  function promptDisappearing(peer) {
+  // Presets offered in the disappearing-messages dialog (label + seconds).
+  var DISAPPEAR_PRESETS = [
+    { label: 'Off', seconds: 0 },
+    { label: '5s', seconds: 5 },
+    { label: '10s', seconds: 10 },
+    { label: '30s', seconds: 30 },
+    { label: '1 min', seconds: 60 },
+    { label: '5 min', seconds: 300 },
+    { label: '1 hour', seconds: 3600 },
+  ];
+
+  // Commit a chosen TTL for this conversation.
+  function setDisappearing(peer, seconds) {
     if (!state.socket || !peer) return;
-    const current = state.disappearing || 0;
-    const raw = prompt(
-      'Disappearing messages\n\n' +
-      'Enter how many SECONDS each new message, file or voice note should live ' +
-      'before it self-destructs for both of you.\n\n' +
-      'Enter 0 to turn it off.',
-      current ? String(current) : '30'
-    );
-    if (raw === null) return; // cancelled
-    const seconds = Math.max(0, Math.floor(Number(raw) || 0));
     state.socket.emit('chat:disappearing', { to: peer.id, seconds }, (res) => {
       if (res && res.error) return notify(res.error);
-      // The authoritative value arrives via the 'chat:disappearing' broadcast,
-      // but reflect immediately for a snappy toggle.
       applyDisappearing(res && typeof res.seconds === 'number' ? res.seconds : seconds);
     });
+  }
+
+  // Open a centered modal to pick the self-destruct timer. Replaces the old
+  // browser prompt() with preset chips + a custom seconds field and a preview.
+  function promptDisappearing(peer) {
+    if (!state.socket || !peer) return;
+    closeDisappearModal();
+    const current = state.disappearing || 0;
+
+    const overlay = el('<div class="modal-overlay" id="disappearModal"></div>');
+    const card = el(`
+      <div class="modal-card disappear-modal" role="dialog" aria-modal="true" aria-label="Disappearing messages">
+        <button class="modal-x" title="Close">×</button>
+        <div class="dm-icon">⏳</div>
+        <h3 class="dm-title">Disappearing messages</h3>
+        <p class="dm-sub">New messages, files and voice notes vanish for <strong>both of you</strong> after the time you choose.</p>
+        <div class="dm-presets"></div>
+        <div class="dm-custom">
+          <label for="dmCustom">Custom (seconds)</label>
+          <input id="dmCustom" type="number" min="0" max="86400" step="1" placeholder="e.g. 45" />
+        </div>
+        <div class="dm-preview" id="dmPreview"></div>
+        <div class="dm-actions">
+          <button class="ghost" id="dmCancel">Cancel</button>
+          <button class="primary" id="dmApply">Apply</button>
+        </div>
+      </div>
+    `);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    // Live selection state (starts at the current value).
+    let chosen = current;
+    const presetsWrap = card.querySelector('.dm-presets');
+    const customInput = card.querySelector('#dmCustom');
+    const preview = card.querySelector('#dmPreview');
+
+    const renderPreview = () => {
+      preview.innerHTML = chosen > 0
+        ? `🔥 Messages will self-destruct <strong>${esc(fmtDuration(chosen))}</strong> after they're sent.`
+        : '♾️ Messages will stay until deleted (disappearing off).';
+      Array.from(presetsWrap.children).forEach((btn) => {
+        btn.classList.toggle('active', Number(btn.dataset.sec) === chosen);
+      });
+    };
+
+    DISAPPEAR_PRESETS.forEach((p) => {
+      const btn = el(`<button class="dm-chip" data-sec="${p.seconds}">${esc(p.label)}</button>`);
+      btn.addEventListener('click', () => { chosen = p.seconds; customInput.value = p.seconds ? String(p.seconds) : ''; renderPreview(); });
+      presetsWrap.appendChild(btn);
+    });
+    customInput.addEventListener('input', () => {
+      const v = Math.max(0, Math.min(86400, Math.floor(Number(customInput.value) || 0)));
+      chosen = v;
+      renderPreview();
+    });
+    if (current > 0) customInput.value = String(current);
+    renderPreview();
+
+    const close = () => closeDisappearModal();
+    card.querySelector('.modal-x').addEventListener('click', close);
+    card.querySelector('#dmCancel').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', disappearEscHandler);
+    card.querySelector('#dmApply').addEventListener('click', () => {
+      // Enforce the server's 5s floor client-side for a clear message.
+      let s = chosen;
+      if (s > 0 && s < 5) s = 5;
+      setDisappearing(peer, s);
+      close();
+    });
+    setTimeout(() => customInput.focus(), 30);
+  }
+
+  function disappearEscHandler(e) { if (e.key === 'Escape') closeDisappearModal(); }
+
+  function closeDisappearModal() {
+    const m = document.getElementById('disappearModal');
+    if (m) m.remove();
+    document.removeEventListener('keydown', disappearEscHandler);
   }
 
   // Set the current TTL and refresh the banner/button (called locally and from
@@ -1968,9 +2047,14 @@
     });
   }
 
-  /* ---------- sophisticated voice notes ---------- */
+  /* ---------- sophisticated voice notes (raw PCM → WAV) ----------
+     We capture raw PCM via Web Audio and encode a 16-bit mono WAV rather than
+     leaning on MediaRecorder's opus/webm output, which some browsers decode
+     back as noise. WAV is unambiguous and plays cleanly everywhere. 16 kHz mono
+     is ideal for speech and keeps files small. */
 
-  var voiceRec = null; // { stream, recorder, chunks, startedAt, raf, audioCtx, analyser, peer }
+  var voiceRec = null;
+  const VOICE_SAMPLE_RATE = 16000;
 
   function toggleVoiceRecorder(peer) {
     const box = document.getElementById('voiceRecorder');
@@ -1980,34 +2064,46 @@
   }
 
   async function startVoiceRecorder(peer, box) {
-    if (!navigator.mediaDevices || !window.MediaRecorder) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !AC) {
       return notify('Voice notes are not supported by this browser.');
     }
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
     } catch (_e) {
       return notify('Microphone permission is required for voice notes.');
     }
-    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']
-      .find((t) => window.MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
-    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-    const chunks = [];
-    recorder.addEventListener('dataavailable', (e) => { if (e.data && e.data.size) chunks.push(e.data); });
 
-    voiceRec = { stream, recorder, chunks, startedAt: Date.now(), peer, raf: null, audioCtx: null };
+    const audioCtx = new AC();
+    try { await audioCtx.resume(); } catch (_e) {}
+    const source = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 256;
+    source.connect(analyser);
 
-    // Live meter driven by a Web Audio analyser.
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      const audioCtx = new AC();
-      const src = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      src.connect(analyser);
-      voiceRec.audioCtx = audioCtx;
-      voiceRec.analyser = analyser;
-    } catch (_e) { /* meter is optional */ }
+    // Capture raw PCM through a ScriptProcessor. A zero-gain sink keeps it
+    // pumping without routing the mic to the speakers (which would feed back).
+    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    const mute = audioCtx.createGain();
+    mute.gain.value = 0;
+
+    const rec = {
+      stream, audioCtx, source, analyser, processor, mute,
+      chunks: [], length: 0, startedAt: Date.now(), peer, raf: null,
+    };
+    voiceRec = rec;
+
+    processor.onaudioprocess = (e) => {
+      const input = e.inputBuffer.getChannelData(0);
+      rec.chunks.push(new Float32Array(input)); // copy — the buffer is reused
+      rec.length += input.length;
+    };
+    source.connect(processor);
+    processor.connect(mute);
+    mute.connect(audioCtx.destination);
 
     box.innerHTML =
       '<span class="vr-dot"></span>' +
@@ -2022,86 +2118,141 @@
     const timeEl = box.querySelector('#vrTime');
     const canvas = box.querySelector('#vrWave');
     const ctx = canvas.getContext('2d');
-    const analyser = voiceRec.analyser;
-    const buf = analyser ? new Uint8Array(analyser.frequencyBinCount) : null;
+    const wf = new Uint8Array(analyser.frequencyBinCount);
     const draw = () => {
-      voiceRec.raf = requestAnimationFrame(draw);
-      const secs = (Date.now() - voiceRec.startedAt) / 1000;
+      rec.raf = requestAnimationFrame(draw);
+      const secs = (Date.now() - rec.startedAt) / 1000;
       timeEl.textContent = Math.floor(secs / 60) + ':' + String(Math.floor(secs % 60)).padStart(2, '0');
-      // Auto-stop at 2 minutes.
-      if (secs >= 120) { finishVoiceRecorder(); return; }
-      if (!analyser || !buf) return;
-      analyser.getByteTimeDomainData(buf);
+      if (secs >= 120) { finishVoiceRecorder(); return; } // auto-stop at 2 min
+      analyser.getByteTimeDomainData(wf);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#ff4d7d';
-      ctx.strokeStyle = accent.trim() || '#ff4d7d';
+      const accent = (getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#ff4d7d').trim();
+      ctx.strokeStyle = accent || '#ff4d7d';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      const step = canvas.width / buf.length;
-      for (let i = 0; i < buf.length; i++) {
-        const v = (buf[i] - 128) / 128;
+      const step = canvas.width / wf.length;
+      for (let i = 0; i < wf.length; i++) {
+        const v = (wf[i] - 128) / 128;
         const y = canvas.height / 2 + v * (canvas.height / 2 - 2);
         const x = i * step;
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.stroke();
     };
-    recorder.start();
     draw();
   }
 
-  // Stop and tear down the recorder without sending.
-  function cancelVoiceRecorder() {
-    teardownVoiceRec(true);
-  }
-
-  // Stop, assemble the recording and send it.
-  function finishVoiceRecorder() {
-    if (!voiceRec) return;
-    const rec = voiceRec;
-    const durSec = (Date.now() - rec.startedAt) / 1000;
-    const recorder = rec.recorder;
-    const finalize = () => {
-      const type = (recorder.mimeType || 'audio/webm').split(';')[0];
-      const blob = new Blob(rec.chunks, { type });
-      teardownVoiceRec(false);
-      if (durSec < 0.4 || !blob.size) return notify('That voice note was too short.');
-      sendVoice(blob, durSec, rec.peer);
-    };
-    if (recorder.state !== 'inactive') {
-      recorder.addEventListener('stop', finalize, { once: true });
-      recorder.stop();
-    } else {
-      finalize();
-    }
-  }
-
-  function teardownVoiceRec(alsoStop) {
-    const rec = voiceRec;
-    voiceRec = null;
-    if (!rec) return;
+  // Detach the audio graph and release the mic. Captured samples live in plain
+  // arrays, so it's safe to close the context afterwards.
+  function stopVoiceCapture(rec) {
     if (rec.raf) cancelAnimationFrame(rec.raf);
-    try { if (alsoStop && rec.recorder.state !== 'inactive') rec.recorder.stop(); } catch (_e) {}
+    try { rec.processor.onaudioprocess = null; } catch (_e) {}
+    try { rec.processor.disconnect(); } catch (_e) {}
+    try { rec.mute.disconnect(); } catch (_e) {}
+    try { rec.source.disconnect(); } catch (_e) {}
     try { rec.stream.getTracks().forEach((t) => t.stop()); } catch (_e) {}
-    try { if (rec.audioCtx) rec.audioCtx.close(); } catch (_e) {}
+    try { rec.audioCtx.close(); } catch (_e) {}
+  }
+
+  function hideRecorderBox() {
     const box = document.getElementById('voiceRecorder');
     if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
   }
 
-  function sendVoice(blob, durSec, peer) {
+  // Discard the recording.
+  function cancelVoiceRecorder() {
+    const rec = voiceRec;
+    voiceRec = null;
+    if (rec) stopVoiceCapture(rec);
+    hideRecorderBox();
+  }
+
+  // Stop, encode a WAV and send it.
+  function finishVoiceRecorder() {
+    const rec = voiceRec;
+    if (!rec) return;
+    voiceRec = null;
+    const srcRate = rec.audioCtx.sampleRate;
+    stopVoiceCapture(rec);
+    hideRecorderBox();
+
+    const merged = mergeSamples(rec.chunks, rec.length);
+    const samples = downsampleTo(merged, srcRate, VOICE_SAMPLE_RATE);
+    const durSec = samples.length / VOICE_SAMPLE_RATE;
+    if (durSec < 0.4 || !samples.length) return notify('That voice note was too short.');
+    const dataUrl = encodeWavDataUrl(samples, VOICE_SAMPLE_RATE);
+    sendVoice(dataUrl, durSec, rec.peer);
+  }
+
+  function mergeSamples(chunks, total) {
+    const out = new Float32Array(total);
+    let off = 0;
+    for (const c of chunks) { out.set(c, off); off += c.length; }
+    return out;
+  }
+
+  // Average-decimate to the target rate (mono). Good enough for speech.
+  function downsampleTo(samples, srcRate, dstRate) {
+    if (!srcRate || dstRate >= srcRate) return samples;
+    const ratio = srcRate / dstRate;
+    const outLen = Math.floor(samples.length / ratio);
+    const out = new Float32Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const start = Math.floor(i * ratio);
+      const end = Math.min(samples.length, Math.floor((i + 1) * ratio)) || start + 1;
+      let sum = 0, n = 0;
+      for (let j = start; j < end; j++) { sum += samples[j]; n++; }
+      out[i] = n ? sum / n : 0;
+    }
+    return out;
+  }
+
+  // 16-bit PCM mono WAV as a base64 data URL.
+  function encodeWavDataUrl(samples, sampleRate) {
+    const n = samples.length;
+    const buffer = new ArrayBuffer(44 + n * 2);
+    const view = new DataView(buffer);
+    const wr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+    wr(0, 'RIFF');
+    view.setUint32(4, 36 + n * 2, true);
+    wr(8, 'WAVE');
+    wr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);            // PCM
+    view.setUint16(22, 1, true);            // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); // byte rate
+    view.setUint16(32, 2, true);            // block align
+    view.setUint16(34, 16, true);           // bits/sample
+    wr(36, 'data');
+    view.setUint32(40, n * 2, true);
+    let off = 44;
+    for (let i = 0; i < n; i++) {
+      let s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      off += 2;
+    }
+    return 'data:audio/wav;base64,' + base64FromBytes(new Uint8Array(buffer));
+  }
+
+  function base64FromBytes(bytes) {
+    let binary = '';
+    const CH = 0x8000;
+    for (let i = 0; i < bytes.length; i += CH) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+    }
+    return btoa(binary);
+  }
+
+  function sendVoice(dataUrl, durSec, peer) {
     if (!state.socket || !peer) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result; // data:audio/...;base64,...
-      const replyTo = state.replyTo ? state.replyTo.id : null;
-      cancelReply();
-      state.socket.emit('chat:voice', { to: peer.id, audio: dataUrl, dur: durSec, replyTo }, (res) => {
-        if (res && res.error) return notify(res.error);
-        const m = (res && res.message) || {};
-        appendVoiceBubble({ body: dataUrl, mine: true, at: m.at || Date.now(), id: m.id, dur: durSec, expiresAt: m.expiresAt });
-      });
-    };
-    reader.readAsDataURL(blob);
+    const replyTo = state.replyTo ? state.replyTo.id : null;
+    cancelReply();
+    state.socket.emit('chat:voice', { to: peer.id, audio: dataUrl, dur: durSec, replyTo }, (res) => {
+      if (res && res.error) return notify(res.error);
+      const m = (res && res.message) || {};
+      appendVoiceBubble({ body: dataUrl, mine: true, at: m.at || Date.now(), id: m.id, dur: durSec, expiresAt: m.expiresAt });
+    });
   }
 
   // A voice-note bubble with its own play/pause control and a real waveform
