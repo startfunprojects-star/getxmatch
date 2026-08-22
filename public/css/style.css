@@ -270,28 +270,38 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
    two comic puff-bubbles rising from the picture up to the caption (instead of
    the pointed speech tail) plus a soft italic style. */
 .bubble.has-monologue {
+  font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', 'Times New Roman', serif;
   font-style: italic;
-  background: var(--bg-2);
-  border: 1px dashed var(--border-strong);
-  box-shadow: var(--shadow-sm);
+  font-weight: 400;
+  letter-spacing: .1px;
+  background: linear-gradient(180deg, var(--bg-elev), var(--bg-2));
+  border: 1px solid var(--border-strong);
+  border-radius: 13px;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, .32), inset 0 1px 0 rgba(255, 255, 255, .05);
   color: var(--text);
 }
+/* Slim accent "spine" on the picture side, so the thought reads as coming from
+   the portrait without the heaviness of the speech balloon. */
+.msg-row.them .bubble.has-monologue { border-left: 3px solid var(--accent-2); }
+.msg-row.me .bubble.has-monologue { border-right: 3px solid var(--accent-2); }
+.bubble.has-monologue .time { font-style: normal; opacity: .55; }
 .bubble.has-monologue.me {
-  /* keep it on-brand but clearly a "thought", not a spoken line */
-  background: color-mix(in srgb, var(--accent-2) 26%, var(--bg-2));
-  border-color: color-mix(in srgb, var(--accent-2) 55%, var(--border-strong));
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent-2) 24%, var(--bg-elev)),
+    color-mix(in srgb, var(--accent-2) 15%, var(--bg-2)));
+  border-color: color-mix(in srgb, var(--accent-2) 42%, var(--border-strong));
   color: #fff;
 }
 /* Thought puffs: two shrinking circles between the picture and the caption. */
 .msg-row .bubble.has-monologue::before,
 .msg-row .bubble.has-monologue::after {
   content: ''; position: absolute; border-radius: 50%;
-  background: var(--bg-2); box-shadow: 0 0 0 1px var(--border-strong);
+  background: var(--bg-elev); box-shadow: 0 0 0 1px var(--border-strong);
 }
 .msg-row.me .bubble.has-monologue::before,
 .msg-row.me .bubble.has-monologue::after {
-  background: color-mix(in srgb, var(--accent-2) 26%, var(--bg-2));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-2) 55%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent-2) 20%, var(--bg-elev));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-2) 45%, var(--border-strong));
 }
 .msg-row .bubble.has-monologue::before { width: 12px; height: 12px; top: 50%; transform: translateY(-50%); }
 .msg-row .bubble.has-monologue::after  { width: 7px;  height: 7px;  top: 50%; transform: translateY(-50%); }
