@@ -1631,6 +1631,11 @@
     const img = el(`<img class="chat-av" data-uid="${uid == null ? '' : uid}"${pending ? ' data-pending' : ''} src="${esc(src)}" alt="" />`);
     if (uid && !mine) img.addEventListener('click', () => { if (state.peer) showProfile(state.peer.username); });
     row.appendChild(img);
+    // Internal monologue: a trail of shrinking "thought" puffs between the
+    // picture and the caption (a comic thought-bubble tail).
+    if (bubble.classList.contains('has-monologue')) {
+      row.appendChild(el('<span class="think-trail"><i class="tp tp1"></i><i class="tp tp2"></i><i class="tp tp3"></i><i class="tp tp4"></i></span>'));
+    }
     row.appendChild(bubble);
     b.appendChild(row);
     ensureAvatars(uid, fallback);

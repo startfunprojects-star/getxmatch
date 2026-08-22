@@ -292,23 +292,28 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
   border-color: color-mix(in srgb, var(--accent-2) 42%, var(--border-strong));
   color: #fff;
 }
-/* Thought puffs: two shrinking circles between the picture and the caption. */
-.msg-row .bubble.has-monologue::before,
-.msg-row .bubble.has-monologue::after {
-  content: ''; position: absolute; border-radius: 50%;
+/* Thought trail: a run of shrinking puffs between the picture and the caption
+   (smallest nearest the picture, largest nearest the thought), so it reads as a
+   classic comic thought-bubble tail. Rendered as real elements in the row. */
+.think-trail { display: flex; align-items: center; gap: 3px; flex: none; }
+.msg-row.me .think-trail { flex-direction: row-reverse; } /* keep small end at the picture */
+.think-trail .tp {
+  border-radius: 50%;
   background: var(--bg-elev); box-shadow: 0 0 0 1px var(--border-strong);
 }
-.msg-row.me .bubble.has-monologue::before,
-.msg-row.me .bubble.has-monologue::after {
+.think-trail .tp1 { width: 5px;  height: 5px;  }
+.think-trail .tp2 { width: 8px;  height: 8px;  }
+.think-trail .tp3 { width: 11px; height: 11px; }
+.think-trail .tp4 { width: 14px; height: 14px; }
+/* Gentle rise toward the thought, like real thought bubbles. */
+.think-trail .tp1 { margin-top: 12px; }
+.think-trail .tp2 { margin-top: 4px; }
+.think-trail .tp3 { margin-top: -3px; }
+.think-trail .tp4 { margin-top: -10px; }
+.msg-row.me .think-trail .tp {
   background: color-mix(in srgb, var(--accent-2) 20%, var(--bg-elev));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-2) 45%, var(--border-strong));
 }
-.msg-row .bubble.has-monologue::before { width: 12px; height: 12px; top: 50%; transform: translateY(-50%); }
-.msg-row .bubble.has-monologue::after  { width: 7px;  height: 7px;  top: 50%; transform: translateY(-50%); }
-.msg-row.them .bubble.has-monologue::before { left: -9px; }
-.msg-row.them .bubble.has-monologue::after  { left: -18px; }
-.msg-row.me   .bubble.has-monologue::before { right: -9px; }
-.msg-row.me   .bubble.has-monologue::after  { right: -18px; }
 
 /* ---------- Reply / quote + reactions ---------- */
 .bubble { position: relative; }
