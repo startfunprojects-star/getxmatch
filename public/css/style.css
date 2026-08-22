@@ -203,31 +203,63 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
    profile picture (which rotates through their picture buffer every 20s).
    The bubble grows a little tail on the picture side, so each message reads
    as coming out of that picture. */
-.msg-row { display: flex; align-items: flex-end; gap: 8px; max-width: 84%; }
+.msg-row { display: flex; align-items: flex-end; gap: 4px; max-width: 90%; }
 .msg-row.them { align-self: flex-start; }
 .msg-row.me { align-self: flex-end; flex-direction: row-reverse; }
 .msg-row .bubble { align-self: flex-end; max-width: none; }
-.msg-row.them .bubble { margin-left: 6px; }
-.msg-row.me .bubble { margin-right: 6px; }
+/* The in-chat profile picture — deliberately large (a comic "character
+   portrait") so each balloon clearly speaks from it. Rotates every 20s. */
 .chat-av {
-  width: 30px; height: 30px; border-radius: 50%; object-fit: cover;
-  flex: none; background: var(--bg-3); box-shadow: 0 0 0 1px var(--border);
+  width: 88px; height: 88px; border-radius: 50%; object-fit: cover;
+  flex: none; background: var(--bg-3);
+  box-shadow: 0 0 0 2.5px #14171f, 0 4px 10px rgba(0, 0, 0, .4);
   transition: opacity .25s;
 }
 .msg-row.them .chat-av { cursor: pointer; }
 
-/* Speech tail: a small triangle from the bubble toward the picture. */
-.msg-row .bubble:not(.has-monologue)::before {
-  content: ''; position: absolute; bottom: 8px; width: 0; height: 0;
-  border: 6px solid transparent;
+/* ---------- Comic speech balloon (normal, non-thought messages) ----------
+   White balloon, heavy ink outline, comic hand, hard offset shadow, and a
+   pointed outlined tail (a bordered diamond) that reaches to the picture. */
+.msg-row .bubble:not(.has-monologue) {
+  --balloon: #fff;
+  background: var(--balloon);
+  color: #14171f;
+  border: 2.5px solid #14171f;
+  border-radius: 18px;
+  font-family: 'Comic Sans MS', 'Segoe Print', 'Bradley Hand', 'Chalkboard SE', cursive;
+  font-weight: 600;
+  box-shadow: 2px 3px 0 rgba(0, 0, 0, .30);
 }
-.msg-row.them .bubble:not(.has-monologue)::before {
-  left: -5px; border-right-color: var(--bg-3); border-left: 0;
+.msg-row.me .bubble:not(.has-monologue) { --balloon: #ffe3ee; }
+.msg-row .bubble:not(.has-monologue) .msg-link { color: #1a4fd0; }
+.msg-row .bubble:not(.has-monologue) .bubble-author { color: #c0246a; }
+.msg-row .bubble:not(.has-monologue) .time { color: rgba(20, 23, 31, .55); }
+
+/* Tail = an outer ink triangle with a slightly-inset fill triangle on top, so
+   it reads as an outlined comic tail whose tip reaches into the picture. */
+.msg-row .bubble:not(.has-monologue)::before,
+.msg-row .bubble:not(.has-monologue)::after {
+  content: ''; position: absolute; width: 0; height: 0; border-style: solid;
+  border-color: transparent;
 }
-.msg-row.me .bubble:not(.has-monologue)::before {
-  right: -5px; border-left-color: var(--accent-2); border-right: 0;
+.msg-row.them .bubble:not(.has-monologue)::before { /* ink */
+  left: -13px; bottom: 8px; border-width: 8px; border-right-width: 13px;
+  border-right-color: #14171f; border-left-width: 0;
 }
-.msg-row .bubble.gift::before { display: none; } /* pill-shaped, no tail */
+.msg-row.them .bubble:not(.has-monologue)::after {  /* fill */
+  left: -8px; bottom: 10px; border-width: 6px; border-right-width: 10px;
+  border-right-color: var(--balloon); border-left-width: 0;
+}
+.msg-row.me .bubble:not(.has-monologue)::before {   /* ink */
+  right: -13px; bottom: 8px; border-width: 8px; border-left-width: 13px;
+  border-left-color: #14171f; border-right-width: 0;
+}
+.msg-row.me .bubble:not(.has-monologue)::after {    /* fill */
+  right: -8px; bottom: 10px; border-width: 6px; border-left-width: 10px;
+  border-left-color: var(--balloon); border-right-width: 0;
+}
+.msg-row .bubble.gift::before,
+.msg-row .bubble.gift::after { display: none; } /* pill-shaped, no tail */
 
 /* ---------- Internal monologue ("/…" thought) ----------
    The caption is a normal rectangle. What marks it as a thought is a trail of
