@@ -64,6 +64,133 @@
     return new Date(ts).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
+  /* ---------- Image cropper ----------
+     Opens a modal that lets the user drag/resize a selection box over the
+     chosen image and keep only that part. Used before every profile-image
+     upload (display picture, buffer, gallery). Resolves with a File containing
+     the cropped JPEG, the original File if they keep the whole image, or null
+     if cancelled. Animated GIFs bypass the cropper so animation is preserved. */
+  function cropImage(file) {
+    return new Promise((resolve) => {
+      if (!file || /image\/gif/i.test(file.type)) return resolve(file || null);
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+      img.onload = () => {
+        const overlay = el(`
+          <div class="cropper-overlay">
+            <div class="cropper-modal">
+              <div class="cropper-hint">Drag the box to choose the part of the image to keep.</div>
+              <div class="cropper-stage">
+                <img class="cropper-img" alt="" />
+                <div class="crop-sel">
+                  <span class="crop-h nw"></span><span class="crop-h ne"></span>
+                  <span class="crop-h sw"></span><span class="crop-h se"></span>
+                </div>
+              </div>
+              <div class="cropper-actions">
+                <button class="ghost small" data-act="full" type="button">Use whole image</button>
+                <button class="ghost small" data-act="cancel" type="button">Cancel</button>
+                <button class="primary small" data-act="save" type="button">Save selection</button>
+              </div>
+            </div>
+          </div>`);
+        const stage = overlay.querySelector('.cropper-stage');
+        const shownImg = overlay.querySelector('.cropper-img');
+        const sel = overlay.querySelector('.crop-sel');
+        shownImg.src = url;
+        document.body.appendChild(overlay);
+
+        // Size the stage to the image's on-screen size (capped by CSS), then
+        // start with a centred selection covering ~70% of it.
+        const layout = () => {
+          const w = shownImg.clientWidth, h = shownImg.clientHeight;
+          stage.style.width = w + 'px';
+          stage.style.height = h + 'px';
+          const sw = Math.round(w * 0.7), sh = Math.round(h * 0.7);
+          box = { x: Math.round((w - sw) / 2), y: Math.round((h - sh) / 2), w: sw, h: sh };
+          paint();
+        };
+        let box = { x: 0, y: 0, w: 0, h: 0 };
+        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+        const paint = () => {
+          sel.style.left = box.x + 'px';
+          sel.style.top = box.y + 'px';
+          sel.style.width = box.w + 'px';
+          sel.style.height = box.h + 'px';
+        };
+
+        // Pointer drag: move the whole box, or resize from a corner handle.
+        let drag = null;
+        const onDown = (e, mode) => {
+          e.preventDefault();
+          drag = { mode, sx: e.clientX, sy: e.clientY, box: { ...box } };
+          sel.setPointerCapture && sel.setPointerCapture(e.pointerId);
+        };
+        const onMove = (e) => {
+          if (!drag) return;
+          const W = shownImg.clientWidth, H = shownImg.clientHeight;
+          const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+          const b = drag.box;
+          if (drag.mode === 'move') {
+            box.x = clamp(b.x + dx, 0, W - b.w);
+            box.y = clamp(b.y + dy, 0, H - b.h);
+          } else {
+            let x1 = b.x, y1 = b.y, x2 = b.x + b.w, y2 = b.y + b.h;
+            if (drag.mode.includes('w')) x1 = clamp(b.x + dx, 0, x2 - 20);
+            if (drag.mode.includes('e')) x2 = clamp(b.x + b.w + dx, x1 + 20, W);
+            if (drag.mode.includes('n')) y1 = clamp(b.y + dy, 0, y2 - 20);
+            if (drag.mode.includes('s')) y2 = clamp(b.y + b.h + dy, y1 + 20, H);
+            box = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+          }
+          paint();
+        };
+        const onUp = () => { drag = null; };
+        sel.addEventListener('pointerdown', (e) => {
+          if (e.target.classList.contains('crop-h')) return; // handled below
+          onDown(e, 'move');
+        });
+        sel.querySelectorAll('.crop-h').forEach((h) => {
+          const mode = h.classList.contains('nw') ? 'nw' : h.classList.contains('ne') ? 'ne'
+            : h.classList.contains('sw') ? 'sw' : 'se';
+          h.addEventListener('pointerdown', (e) => { e.stopPropagation(); onDown(e, mode); });
+        });
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+
+        const cleanup = (result) => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          overlay.remove();
+          URL.revokeObjectURL(url);
+          resolve(result);
+        };
+        overlay.querySelector('[data-act="cancel"]').addEventListener('click', () => cleanup(null));
+        overlay.querySelector('[data-act="full"]').addEventListener('click', () => cleanup(file));
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+        overlay.querySelector('[data-act="save"]').addEventListener('click', () => {
+          const scaleX = img.naturalWidth / shownImg.clientWidth;
+          const scaleY = img.naturalHeight / shownImg.clientHeight;
+          const sx = Math.round(box.x * scaleX), sy = Math.round(box.y * scaleY);
+          const sw = Math.max(1, Math.round(box.w * scaleX));
+          const sh = Math.max(1, Math.round(box.h * scaleY));
+          const canvas = document.createElement('canvas');
+          canvas.width = sw; canvas.height = sh;
+          canvas.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+          canvas.toBlob((blob) => {
+            if (!blob) return cleanup(file);
+            const name = (file.name || 'image').replace(/\.[^.]+$/, '') + '-crop.jpg';
+            cleanup(new File([blob], name, { type: 'image/jpeg' }));
+          }, 'image/jpeg', 0.92);
+        });
+
+        // Wait a frame so clientWidth/Height reflect the rendered image.
+        requestAnimationFrame(layout);
+      };
+      img.src = url;
+    });
+  }
+
   /* ================= Advertisements =================
      Ads are fetched once and rendered into named placement slots. Image ads are
      click-tracked via a redirect; script ads run inside a sandboxed same-origin
@@ -522,9 +649,14 @@
     let avatarFile = null;
     const avInput = wrap.querySelector('#avatarInput');
     wrap.querySelector('#pickAvatar').addEventListener('click', () => avInput.click());
-    avInput.addEventListener('change', () => {
-      avatarFile = avInput.files[0] || null;
-      if (avatarFile) wrap.querySelector('#avPreview').src = URL.createObjectURL(avatarFile);
+    avInput.addEventListener('change', async () => {
+      const picked = avInput.files[0] || null;
+      avInput.value = '';
+      if (!picked) return;
+      const cropped = await cropImage(picked); // let the user keep just part of it
+      if (!cropped) return; // cancelled
+      avatarFile = cropped;
+      wrap.querySelector('#avPreview').src = URL.createObjectURL(avatarFile);
     });
 
     // Toggle chip highlight with its checkbox.
@@ -1413,10 +1545,12 @@
   function scrollBody() { const b = chatBody(); if (b) b.scrollTop = b.scrollHeight; }
 
   /* ---------- in-chat profile pictures (rotating buffer) ----------
-     Each message row shows the sender's picture. That picture is drawn from the
-     user's "profile picture buffer" and rotates to a random one every 20s. The
-     registry maps a user id -> { list:[urls], idx }. refreshAvatars() repaints
-     every rendered <img.chat-av data-uid> for a user when the picture changes. */
+     Each message row shows the sender's picture at the moment it was rendered,
+     drawn from that user's "profile picture buffer". A timer re-rolls each
+     user's *current* picture to a random one every 20s, but that only affects
+     messages rendered afterwards — pictures already attached to earlier
+     messages are left untouched (a message keeps the face it was sent with).
+     Registry maps user id -> { list:[urls], idx }. */
   const chatAv = { map: new Map(), timer: null };
 
   function currentAv(uid) {
@@ -1424,37 +1558,44 @@
     return e && e.list.length ? e.list[e.idx % e.list.length] : null;
   }
 
-  function refreshAvatars(uid) {
+  // Fill in rows that were rendered before this user's buffer finished loading
+  // (they carry data-pending). One-time only — this never repaints a row that
+  // already has its picture, so history stays frozen once shown.
+  function fillPendingAvatars(uid) {
     const url = currentAv(uid);
     if (!url) return;
     document
-      .querySelectorAll(`.chat-av[data-uid="${uid}"]`)
-      .forEach((img) => { img.src = url; });
+      .querySelectorAll(`.chat-av[data-uid="${uid}"][data-pending]`)
+      .forEach((img) => { img.src = url; img.removeAttribute('data-pending'); });
   }
 
-  // Load a user's buffer pictures once, then repaint their rows. `fallback` is
-  // shown until the fetch resolves (and if they have no buffer/avatar at all).
+  // Load a user's buffer pictures once, then fill any rows still waiting.
+  // `fallback` (their single display picture) is shown until the fetch resolves.
+  // `loaded` stays false until then, so rows rendered in the meantime are marked
+  // pending and get upgraded to a buffer picture exactly once.
   function ensureAvatars(uid, fallback) {
     if (uid == null) return;
     if (chatAv.map.has(uid)) return;
-    chatAv.map.set(uid, { list: fallback ? [fallback] : [], idx: 0 });
+    chatAv.map.set(uid, { list: fallback ? [fallback] : [], idx: 0, loaded: false });
     api.get(`/api/users/${uid}/avatars`).then(({ avatars }) => {
       const e = chatAv.map.get(uid);
-      if (!e || !Array.isArray(avatars) || !avatars.length) return;
-      e.list = avatars;
-      e.idx = Math.floor(Math.random() * avatars.length);
-      refreshAvatars(uid);
+      if (!e) return;
+      e.loaded = true;
+      if (Array.isArray(avatars) && avatars.length) {
+        e.list = avatars;
+        e.idx = Math.floor(Math.random() * avatars.length);
+      }
+      fillPendingAvatars(uid);
     }).catch(() => {});
   }
 
   function startAvatarRotation() {
     if (chatAv.timer) return;
+    // Advance each user's current picture only; already-rendered rows are left
+    // as-is, so a picture change never rewrites past messages.
     chatAv.timer = setInterval(() => {
-      chatAv.map.forEach((e, uid) => {
-        if (e.list.length > 1) {
-          e.idx = Math.floor(Math.random() * e.list.length);
-          refreshAvatars(uid);
-        }
+      chatAv.map.forEach((e) => {
+        if (e.list.length > 1) e.idx = Math.floor(Math.random() * e.list.length);
       });
     }, 20000);
   }
@@ -1481,8 +1622,13 @@
       ? state.myAvatar
       : (m && m.fromAvatar) || (state.peer && state.peer.avatar) || null;
     const row = el(`<div class="msg-row ${mine ? 'me' : 'them'}"></div>`);
+    // Snapshot the current picture now. While the buffer is still loading, show
+    // the fallback and mark the row pending so it's upgraded once (and only
+    // once) to a buffer picture; after that the row's picture never changes.
+    const entry = uid != null ? chatAv.map.get(uid) : null;
+    const pending = !entry || !entry.loaded;
     const src = avatarUrl(currentAv(uid) || fallback);
-    const img = el(`<img class="chat-av" data-uid="${uid == null ? '' : uid}" src="${esc(src)}" alt="" />`);
+    const img = el(`<img class="chat-av" data-uid="${uid == null ? '' : uid}"${pending ? ' data-pending' : ''} src="${esc(src)}" alt="" />`);
     if (uid && !mine) img.addEventListener('click', () => { if (state.peer) showProfile(state.peer.username); });
     row.appendChild(img);
     row.appendChild(bubble);
@@ -2868,9 +3014,13 @@
       const fileIn = el('<input type="file" accept="image/*" class="hidden" />');
       addBtn.addEventListener('click', () => fileIn.click());
       fileIn.addEventListener('change', async () => {
-        if (!fileIn.files[0]) return;
+        const picked = fileIn.files[0];
+        fileIn.value = '';
+        if (!picked) return;
+        const cropped = await cropImage(picked);
+        if (!cropped) return;
         const fd = new FormData();
-        fd.append('photo', fileIn.files[0]);
+        fd.append('photo', cropped);
         try {
           const { photo } = await api.postForm('/api/profile/gallery', fd);
           const hint = gal.querySelector('.hint');
@@ -2921,9 +3071,13 @@
       const bufIn = el('<input type="file" accept="image/*" class="hidden" />');
       bufBtn.addEventListener('click', () => bufIn.click());
       bufIn.addEventListener('change', async () => {
-        if (!bufIn.files[0]) return;
+        const picked = bufIn.files[0];
+        bufIn.value = '';
+        if (!picked) return;
+        const cropped = await cropImage(picked);
+        if (!cropped) return;
         const fd = new FormData();
-        fd.append('photo', bufIn.files[0]);
+        fd.append('photo', cropped);
         try {
           const { photo } = await api.postForm('/api/profile/buffer', fd);
           const hint = buf.querySelector('.hint');
