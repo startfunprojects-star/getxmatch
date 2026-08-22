@@ -198,6 +198,76 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .ephemeral-note { font-size: 11px; opacity: .7; font-style: italic; }
 .typing { align-self: flex-start; color: var(--muted); font-size: 13px; padding: 4px 8px; }
 
+/* ---------- Internal monologue (comic thought bubble) ----------
+   A message typed as "/…" renders as a thought, not speech: a white
+   scalloped cloud with a trailing tail of shrinking puffs, drawn in a
+   comic hand. The dark "ink" outline follows the scalloped mask via
+   layered drop-shadows (a plain border can't hug a masked edge). */
+.bubble.has-monologue {
+  background: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  max-width: 74%;
+}
+.bubble.has-monologue .time { color: var(--muted); opacity: .8; padding: 2px 4px 0; }
+.bubble.has-monologue.me .time { text-align: right; }
+
+.monologue {
+  --ink: #14171f;
+  --puff: 14px;               /* scallop bump radius */
+  position: relative;
+  display: block;
+  /* room below the cloud for the trailing puffs */
+  padding-bottom: 26px;
+}
+.monologue .think {
+  position: relative;
+  display: block;
+  padding: calc(var(--puff) + 4px) calc(var(--puff) + 8px);
+  background: #fff;
+  color: var(--ink);
+  font-family: 'Comic Sans MS', 'Segoe Print', 'Bradley Hand', 'Chalkboard SE', cursive;
+  font-style: italic;
+  font-weight: 600;
+  line-height: 1.4;
+  /* Scalloped cloud edge carved on all four sides. */
+  -webkit-mask:
+    radial-gradient(var(--puff) at 50% 0, #0000 96%, #000) top    / calc(2 * var(--puff)) 51% repeat-x,
+    radial-gradient(var(--puff) at 50% 100%, #0000 96%, #000) bottom / calc(2 * var(--puff)) 51% repeat-x,
+    radial-gradient(var(--puff) at 0 50%, #0000 96%, #000) left   / 51% calc(2 * var(--puff)) repeat-y,
+    radial-gradient(var(--puff) at 100% 50%, #0000 96%, #000) right / 51% calc(2 * var(--puff)) repeat-y,
+    linear-gradient(#000 0 0) center / calc(100% - 2 * var(--puff)) calc(100% - 2 * var(--puff)) no-repeat;
+  mask:
+    radial-gradient(var(--puff) at 50% 0, #0000 96%, #000) top    / calc(2 * var(--puff)) 51% repeat-x,
+    radial-gradient(var(--puff) at 50% 100%, #0000 96%, #000) bottom / calc(2 * var(--puff)) 51% repeat-x,
+    radial-gradient(var(--puff) at 0 50%, #0000 96%, #000) left   / 51% calc(2 * var(--puff)) repeat-y,
+    radial-gradient(var(--puff) at 100% 50%, #0000 96%, #000) right / 51% calc(2 * var(--puff)) repeat-y,
+    linear-gradient(#000 0 0) center / calc(100% - 2 * var(--puff)) calc(100% - 2 * var(--puff)) no-repeat;
+  /* Ink outline that follows the scalloped mask. */
+  filter:
+    drop-shadow(1.4px 0 0 var(--ink)) drop-shadow(-1.4px 0 0 var(--ink))
+    drop-shadow(0 1.4px 0 var(--ink)) drop-shadow(0 -1.4px 0 var(--ink))
+    drop-shadow(0 3px 5px rgba(0, 0, 0, .45));
+}
+.monologue .think .msg-link { color: #1a4fd0; }
+.monologue .think .time { color: rgba(20, 23, 31, .55); }
+
+/* Trailing thought puffs, shrinking toward the speaker. */
+.monologue .puff {
+  position: absolute;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1.4px var(--ink);
+}
+.monologue .puff.p1 { width: 15px; height: 15px; bottom: 8px; }
+.monologue .puff.p2 { width: 8px;  height: 8px;  bottom: 0; }
+/* Others' thoughts trail toward the left; mine trail toward the right. */
+.monologue.them .puff.p1 { left: 20px; }
+.monologue.them .puff.p2 { left: 12px; }
+.monologue.me   .puff.p1 { right: 20px; }
+.monologue.me   .puff.p2 { right: 12px; }
+
 /* ---------- Reply / quote + reactions ---------- */
 .bubble { position: relative; }
 /* Hover cluster (reply ↩ + react 🙂) that sits just outside the bubble. */

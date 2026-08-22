@@ -1015,9 +1015,12 @@
   function appendGroupMessage(m) {
     const b = chatBody();
     if (!b) return;
-    const bubble = el(`<div class="bubble ${m.mine ? 'me' : 'them'}"></div>`);
+    const thought = monologueText(m.body);
+    const side = m.mine ? 'me' : 'them';
+    const bubble = el(`<div class="bubble ${side}${thought ? ' has-monologue' : ''}"></div>`);
     if (!m.mine) bubble.appendChild(el(`<div class="bubble-author">${esc(m.fromName)}</div>`));
-    appendRichText(bubble, m.body);
+    if (thought) bubble.appendChild(buildMonologue(thought, side));
+    else appendRichText(bubble, m.body);
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
     b.appendChild(bubble);
     scrollBody();
@@ -1459,14 +1462,42 @@
     if (hasMedia) container.appendChild(media);
   }
 
+  // Comic "internal monologue": a message whose body starts with "/" followed by
+  // a sentence renders as a thought bubble instead of a speech bubble. Returns
+  // the thought text (the part after the leading "/"), or null if not a
+  // monologue. The "/" is only a prefix, so URLs like "/foo" mid-message aren't
+  // affected — only when the whole message opens with "/".
+  function monologueText(body) {
+    const str = String(body == null ? '' : body);
+    if (str[0] !== '/') return null;
+    const rest = str.slice(1).trim();
+    return rest ? rest : null;
+  }
+
+  // Build the cloud thought bubble used for internal monologues. `side` is
+  // 'me' | 'them' so the trailing puffs drift toward the speaker.
+  function buildMonologue(text, side) {
+    const wrap = el(`<div class="monologue ${side}"></div>`);
+    const cloud = el('<div class="think"></div>');
+    appendRichText(cloud, text);
+    wrap.appendChild(cloud);
+    // Trailing thought circles (comic tail), largest nearest the cloud.
+    wrap.appendChild(el('<i class="puff p1"></i>'));
+    wrap.appendChild(el('<i class="puff p2"></i>'));
+    return wrap;
+  }
+
   // m: { body, mine, at, id?, reply? }
   function appendTextBubble(m) {
     const b = chatBody();
     if (!b) return;
-    const bubble = el(`<div class="bubble ${m.mine ? 'me' : 'them'}"></div>`);
+    const thought = monologueText(m.body);
+    const side = m.mine ? 'me' : 'them';
+    const bubble = el(`<div class="bubble ${side}${thought ? ' has-monologue' : ''}"></div>`);
     if (m.id) bubble.dataset.id = m.id;
     if (m.reply) bubble.appendChild(renderQuote(m.reply));
-    appendRichText(bubble, m.body);
+    if (thought) bubble.appendChild(buildMonologue(thought, side));
+    else appendRichText(bubble, m.body);
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
     attachBubbleActions(bubble, m);
     b.appendChild(bubble);
