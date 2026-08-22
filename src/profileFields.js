@@ -37,6 +37,7 @@ const INTERESTS = [
 ];
 
 const MAX_GALLERY_PHOTOS = 25;
+const MAX_BUFFER_PHOTOS = 10;
 const MIN_AGE = 18;
 
 // Compute an integer age (in whole years) from an ISO 'YYYY-MM-DD' date.
@@ -63,6 +64,7 @@ module.exports = {
   FRIENDS_VISIBILITY,
   INTERESTS,
   MAX_GALLERY_PHOTOS,
+  MAX_BUFFER_PHOTOS,
   MIN_AGE,
   ageFromDob,
 };

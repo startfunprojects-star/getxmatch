@@ -257,6 +257,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_reactions_msg ON message_reactions (message_id);
 `);
 
+// --- Profile picture buffer: a pool of up to 10 images per user, separate from
+// the single display picture (profiles.avatar) and the photo gallery. In chat,
+// the picture shown for a user is drawn at random from this buffer and rotates
+// every 20s (see public/js/app.js). Max is enforced at write time.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS profile_buffer_photos (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    filename   TEXT NOT NULL,           -- filename in uploads/
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_buffer_user ON profile_buffer_photos (user_id, created_at);
+`);
+
 // --- Content & engagement features: quizzes, polls, blogs, profile
 // and admin-authored events. Created idempotently so existing
 // databases pick them up on next boot.

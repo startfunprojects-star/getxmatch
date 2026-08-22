@@ -198,75 +198,71 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .ephemeral-note { font-size: 11px; opacity: .7; font-style: italic; }
 .typing { align-self: flex-start; color: var(--muted); font-size: 13px; padding: 4px 8px; }
 
-/* ---------- Internal monologue (comic thought bubble) ----------
-   A message typed as "/…" renders as a thought, not speech: a white
-   scalloped cloud with a trailing tail of shrinking puffs, drawn in a
-   comic hand. The dark "ink" outline follows the scalloped mask via
-   layered drop-shadows (a plain border can't hug a masked edge). */
+/* ---------- Message rows: a bubble beside its sender's picture ----------
+   Every speech / gift / file bubble is wrapped in a row with the sender's
+   profile picture (which rotates through their picture buffer every 20s).
+   The bubble grows a little tail on the picture side, so each message reads
+   as coming out of that picture. */
+.msg-row { display: flex; align-items: flex-end; gap: 8px; max-width: 84%; }
+.msg-row.them { align-self: flex-start; }
+.msg-row.me { align-self: flex-end; flex-direction: row-reverse; }
+.msg-row .bubble { align-self: flex-end; max-width: none; }
+.msg-row.them .bubble { margin-left: 6px; }
+.msg-row.me .bubble { margin-right: 6px; }
+.chat-av {
+  width: 30px; height: 30px; border-radius: 50%; object-fit: cover;
+  flex: none; background: var(--bg-3); box-shadow: 0 0 0 1px var(--border);
+  transition: opacity .25s;
+}
+.msg-row.them .chat-av { cursor: pointer; }
+
+/* Speech tail: a small triangle from the bubble toward the picture. */
+.msg-row .bubble:not(.has-monologue)::before {
+  content: ''; position: absolute; bottom: 8px; width: 0; height: 0;
+  border: 6px solid transparent;
+}
+.msg-row.them .bubble:not(.has-monologue)::before {
+  left: -5px; border-right-color: var(--bg-3); border-left: 0;
+}
+.msg-row.me .bubble:not(.has-monologue)::before {
+  right: -5px; border-left-color: var(--accent-2); border-right: 0;
+}
+.msg-row .bubble.gift::before { display: none; } /* pill-shaped, no tail */
+
+/* ---------- Internal monologue ("/…" thought) ----------
+   The caption is a normal rectangle. What marks it as a thought is a trail of
+   two comic puff-bubbles rising from the picture up to the caption (instead of
+   the pointed speech tail) plus a soft italic style. */
 .bubble.has-monologue {
-  background: none !important;
-  border: none !important;
-  box-shadow: none !important;
-  padding: 0 !important;
-  max-width: 74%;
-}
-.bubble.has-monologue .time { color: var(--muted); opacity: .8; padding: 2px 4px 0; }
-.bubble.has-monologue.me .time { text-align: right; }
-
-.monologue {
-  --ink: #14171f;
-  --puff: 14px;               /* scallop bump radius */
-  position: relative;
-  display: block;
-  /* room below the cloud for the trailing puffs */
-  padding-bottom: 26px;
-}
-.monologue .think {
-  position: relative;
-  display: block;
-  padding: calc(var(--puff) + 4px) calc(var(--puff) + 8px);
-  background: #fff;
-  color: var(--ink);
-  font-family: 'Comic Sans MS', 'Segoe Print', 'Bradley Hand', 'Chalkboard SE', cursive;
   font-style: italic;
-  font-weight: 600;
-  line-height: 1.4;
-  /* Scalloped cloud edge carved on all four sides. */
-  -webkit-mask:
-    radial-gradient(var(--puff) at 50% 0, #0000 96%, #000) top    / calc(2 * var(--puff)) 51% repeat-x,
-    radial-gradient(var(--puff) at 50% 100%, #0000 96%, #000) bottom / calc(2 * var(--puff)) 51% repeat-x,
-    radial-gradient(var(--puff) at 0 50%, #0000 96%, #000) left   / 51% calc(2 * var(--puff)) repeat-y,
-    radial-gradient(var(--puff) at 100% 50%, #0000 96%, #000) right / 51% calc(2 * var(--puff)) repeat-y,
-    linear-gradient(#000 0 0) center / calc(100% - 2 * var(--puff)) calc(100% - 2 * var(--puff)) no-repeat;
-  mask:
-    radial-gradient(var(--puff) at 50% 0, #0000 96%, #000) top    / calc(2 * var(--puff)) 51% repeat-x,
-    radial-gradient(var(--puff) at 50% 100%, #0000 96%, #000) bottom / calc(2 * var(--puff)) 51% repeat-x,
-    radial-gradient(var(--puff) at 0 50%, #0000 96%, #000) left   / 51% calc(2 * var(--puff)) repeat-y,
-    radial-gradient(var(--puff) at 100% 50%, #0000 96%, #000) right / 51% calc(2 * var(--puff)) repeat-y,
-    linear-gradient(#000 0 0) center / calc(100% - 2 * var(--puff)) calc(100% - 2 * var(--puff)) no-repeat;
-  /* Ink outline that follows the scalloped mask. */
-  filter:
-    drop-shadow(1.4px 0 0 var(--ink)) drop-shadow(-1.4px 0 0 var(--ink))
-    drop-shadow(0 1.4px 0 var(--ink)) drop-shadow(0 -1.4px 0 var(--ink))
-    drop-shadow(0 3px 5px rgba(0, 0, 0, .45));
+  background: var(--bg-2);
+  border: 1px dashed var(--border-strong);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
 }
-.monologue .think .msg-link { color: #1a4fd0; }
-.monologue .think .time { color: rgba(20, 23, 31, .55); }
-
-/* Trailing thought puffs, shrinking toward the speaker. */
-.monologue .puff {
-  position: absolute;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 0 0 1.4px var(--ink);
+.bubble.has-monologue.me {
+  /* keep it on-brand but clearly a "thought", not a spoken line */
+  background: color-mix(in srgb, var(--accent-2) 26%, var(--bg-2));
+  border-color: color-mix(in srgb, var(--accent-2) 55%, var(--border-strong));
+  color: #fff;
 }
-.monologue .puff.p1 { width: 15px; height: 15px; bottom: 8px; }
-.monologue .puff.p2 { width: 8px;  height: 8px;  bottom: 0; }
-/* Others' thoughts trail toward the left; mine trail toward the right. */
-.monologue.them .puff.p1 { left: 20px; }
-.monologue.them .puff.p2 { left: 12px; }
-.monologue.me   .puff.p1 { right: 20px; }
-.monologue.me   .puff.p2 { right: 12px; }
+/* Thought puffs: two shrinking circles between the picture and the caption. */
+.msg-row .bubble.has-monologue::before,
+.msg-row .bubble.has-monologue::after {
+  content: ''; position: absolute; border-radius: 50%;
+  background: var(--bg-2); box-shadow: 0 0 0 1px var(--border-strong);
+}
+.msg-row.me .bubble.has-monologue::before,
+.msg-row.me .bubble.has-monologue::after {
+  background: color-mix(in srgb, var(--accent-2) 26%, var(--bg-2));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-2) 55%, var(--border-strong));
+}
+.msg-row .bubble.has-monologue::before { width: 11px; height: 11px; bottom: -6px; }
+.msg-row .bubble.has-monologue::after  { width: 6px;  height: 6px;  bottom: -14px; }
+.msg-row.them .bubble.has-monologue::before { left: -8px; }
+.msg-row.them .bubble.has-monologue::after  { left: -14px; }
+.msg-row.me   .bubble.has-monologue::before { right: -8px; }
+.msg-row.me   .bubble.has-monologue::after  { right: -14px; }
 
 /* ---------- Reply / quote + reactions ---------- */
 .bubble { position: relative; }

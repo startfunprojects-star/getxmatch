@@ -119,6 +119,12 @@ function buildProfile(userId, viewerId) {
     .prepare('SELECT id, filename FROM gallery_photos WHERE user_id = ? ORDER BY created_at DESC')
     .all(userId);
 
+  // Profile picture buffer (up to 10). Separate from the gallery and the single
+  // display picture; the chat rotates through these.
+  const bufferPhotos = db
+    .prepare('SELECT id, filename FROM profile_buffer_photos WHERE user_id = ? ORDER BY created_at DESC')
+    .all(userId);
+
   // Relationship partner (if linked and still exists).
   let partner = null;
   if (row.partner_user_id) {
@@ -172,6 +178,7 @@ function buildProfile(userId, viewerId) {
     relationshipStatus: row.relationship_status || null,
     partner,
     gallery: photos.map((ph) => ({ id: ph.id, url: `/uploads/${ph.filename}` })),
+    buffer: bufferPhotos.map((ph) => ({ id: ph.id, url: `/uploads/${ph.filename}` })),
     rating: ratingSummary(row.id, viewerId),
     comments: commentsFor(row.id, viewerId),
     friends: {

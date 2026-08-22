@@ -180,6 +180,7 @@
       'Gaming', 'Cooking', 'Fitness', 'Art', 'Technology', 'Fashion', 'Nature', 'Dancing'],
   };
   const MAX_GALLERY = 25;
+  const MAX_BUFFER = 10;
 
   // Relationship-request kinds (mirror src/relationships.js). Order matches spec.
   const REL_TYPES = {
@@ -609,9 +610,12 @@
     `);
     root.appendChild(shell);
 
-    // Load my avatar into the topbar.
+    // Load my avatar into the topbar (and remember it for chat rows).
     api.get('/api/profile/me').then(({ profile }) => {
-      if (profile && profile.avatar) shell.querySelector('#myAvatar').src = profile.avatar;
+      if (profile && profile.avatar) {
+        state.myAvatar = profile.avatar;
+        shell.querySelector('#myAvatar').src = profile.avatar;
+      }
     }).catch(() => {});
 
     shell.querySelector('#logoutBtn').addEventListener('click', async () => {
@@ -981,6 +985,13 @@
     main.appendChild(view);
     renderChatTabs();
 
+    // Fresh profile-picture registry for this group; rotate every 20s. Seed each
+    // joined member so their pictures start cycling even before they speak.
+    resetAvatars();
+    startAvatarRotation();
+    ensureAvatars(state.me && state.me.id, state.myAvatar);
+    joined.forEach((mem) => ensureAvatars(mem.id, mem.avatar));
+
     view.querySelector('#backToList').addEventListener('click', () => {
       document.getElementById('shell').classList.remove('viewing-main');
       state.group = null;
@@ -1019,10 +1030,9 @@
     const side = m.mine ? 'me' : 'them';
     const bubble = el(`<div class="bubble ${side}${thought ? ' has-monologue' : ''}"></div>`);
     if (!m.mine) bubble.appendChild(el(`<div class="bubble-author">${esc(m.fromName)}</div>`));
-    if (thought) bubble.appendChild(buildMonologue(thought, side));
-    else appendRichText(bubble, m.body);
+    appendRichText(bubble, thought != null ? thought : m.body);
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
-    b.appendChild(bubble);
+    mountBubble(bubble, m);
     scrollBody();
   }
 
@@ -1048,6 +1058,7 @@
     stopWatching(); // leaving any inline broadcast we were watching
     state.peer = null;
     closeReactionPalette();
+    resetAvatars(); // stop the in-chat picture rotation
     if (focusMain) document.getElementById('shell').classList.add('viewing-main');
     document.querySelectorAll('.list-item').forEach((r) => r.classList.remove('active'));
     main.innerHTML = `
@@ -1299,6 +1310,12 @@
     main.appendChild(view);
     renderChatTabs();
 
+    // Fresh profile-picture registry for this conversation; rotate every 20s.
+    resetAvatars();
+    startAvatarRotation();
+    ensureAvatars(state.me && state.me.id, state.myAvatar);
+    ensureAvatars(peer.id, peer.avatar);
+
     view.querySelector('#backToList').addEventListener('click', () => {
       document.getElementById('shell').classList.remove('viewing-main');
       closeReactionPalette();
@@ -1395,6 +1412,85 @@
   function chatBody() { return document.getElementById('chatBody'); }
   function scrollBody() { const b = chatBody(); if (b) b.scrollTop = b.scrollHeight; }
 
+  /* ---------- in-chat profile pictures (rotating buffer) ----------
+     Each message row shows the sender's picture. That picture is drawn from the
+     user's "profile picture buffer" and rotates to a random one every 20s. The
+     registry maps a user id -> { list:[urls], idx }. refreshAvatars() repaints
+     every rendered <img.chat-av data-uid> for a user when the picture changes. */
+  const chatAv = { map: new Map(), timer: null };
+
+  function currentAv(uid) {
+    const e = chatAv.map.get(uid);
+    return e && e.list.length ? e.list[e.idx % e.list.length] : null;
+  }
+
+  function refreshAvatars(uid) {
+    const url = currentAv(uid);
+    if (!url) return;
+    document
+      .querySelectorAll(`.chat-av[data-uid="${uid}"]`)
+      .forEach((img) => { img.src = url; });
+  }
+
+  // Load a user's buffer pictures once, then repaint their rows. `fallback` is
+  // shown until the fetch resolves (and if they have no buffer/avatar at all).
+  function ensureAvatars(uid, fallback) {
+    if (uid == null) return;
+    if (chatAv.map.has(uid)) return;
+    chatAv.map.set(uid, { list: fallback ? [fallback] : [], idx: 0 });
+    api.get(`/api/users/${uid}/avatars`).then(({ avatars }) => {
+      const e = chatAv.map.get(uid);
+      if (!e || !Array.isArray(avatars) || !avatars.length) return;
+      e.list = avatars;
+      e.idx = Math.floor(Math.random() * avatars.length);
+      refreshAvatars(uid);
+    }).catch(() => {});
+  }
+
+  function startAvatarRotation() {
+    if (chatAv.timer) return;
+    chatAv.timer = setInterval(() => {
+      chatAv.map.forEach((e, uid) => {
+        if (e.list.length > 1) {
+          e.idx = Math.floor(Math.random() * e.list.length);
+          refreshAvatars(uid);
+        }
+      });
+    }, 20000);
+  }
+
+  // Reset the registry when opening a conversation (or leaving chat) so a new
+  // chat starts fresh and the old timer stops when nothing is open.
+  function resetAvatars() {
+    chatAv.map.clear();
+    if (chatAv.timer) { clearInterval(chatAv.timer); chatAv.timer = null; }
+  }
+
+  // Wrap a finished bubble in a row with the sender's rotating profile picture,
+  // append it to the chat body, and return the row. `m` is the message object
+  // (m.mine, m.from, m.fromAvatar). All speech/gift/file bubbles go through here
+  // so the chat visually "comes from" the picture on each side.
+  function mountBubble(bubble, m) {
+    const b = chatBody();
+    if (!b) return null;
+    const mine = !!(m && m.mine);
+    const uid = mine
+      ? (state.me && state.me.id)
+      : (m && m.from != null ? m.from : (state.peer && state.peer.id));
+    const fallback = mine
+      ? state.myAvatar
+      : (m && m.fromAvatar) || (state.peer && state.peer.avatar) || null;
+    const row = el(`<div class="msg-row ${mine ? 'me' : 'them'}"></div>`);
+    const src = avatarUrl(currentAv(uid) || fallback);
+    const img = el(`<img class="chat-av" data-uid="${uid == null ? '' : uid}" src="${esc(src)}" alt="" />`);
+    if (uid && !mine) img.addEventListener('click', () => { if (state.peer) showProfile(state.peer.username); });
+    row.appendChild(img);
+    row.appendChild(bubble);
+    b.appendChild(row);
+    ensureAvatars(uid, fallback);
+    return row;
+  }
+
   /* ---------- rich message bodies: clickable links + inline media ---------- */
   const URL_RE = /(https?:\/\/[^\s<]+)/gi;
 
@@ -1462,29 +1558,18 @@
     if (hasMedia) container.appendChild(media);
   }
 
-  // Comic "internal monologue": a message whose body starts with "/" followed by
-  // a sentence renders as a thought bubble instead of a speech bubble. Returns
-  // the thought text (the part after the leading "/"), or null if not a
-  // monologue. The "/" is only a prefix, so URLs like "/foo" mid-message aren't
-  // affected — only when the whole message opens with "/".
+  // "Internal monologue": a message whose body starts with "/" followed by a
+  // sentence is a thought, not speech. Returns the thought text (the part after
+  // the leading "/"), or null if not a monologue. The "/" is only a prefix, so
+  // URLs like "/foo" mid-message aren't affected — only when the whole message
+  // opens with "/". The caption itself stays a normal rectangle; what marks it
+  // as a thought is the trail of comic puff-bubbles rising from the picture
+  // (see the .has-monologue tail in the stylesheet).
   function monologueText(body) {
     const str = String(body == null ? '' : body);
     if (str[0] !== '/') return null;
     const rest = str.slice(1).trim();
     return rest ? rest : null;
-  }
-
-  // Build the cloud thought bubble used for internal monologues. `side` is
-  // 'me' | 'them' so the trailing puffs drift toward the speaker.
-  function buildMonologue(text, side) {
-    const wrap = el(`<div class="monologue ${side}"></div>`);
-    const cloud = el('<div class="think"></div>');
-    appendRichText(cloud, text);
-    wrap.appendChild(cloud);
-    // Trailing thought circles (comic tail), largest nearest the cloud.
-    wrap.appendChild(el('<i class="puff p1"></i>'));
-    wrap.appendChild(el('<i class="puff p2"></i>'));
-    return wrap;
   }
 
   // m: { body, mine, at, id?, reply? }
@@ -1496,13 +1581,13 @@
     const bubble = el(`<div class="bubble ${side}${thought ? ' has-monologue' : ''}"></div>`);
     if (m.id) bubble.dataset.id = m.id;
     if (m.reply) bubble.appendChild(renderQuote(m.reply));
-    if (thought) bubble.appendChild(buildMonologue(thought, side));
-    else appendRichText(bubble, m.body);
+    appendRichText(bubble, thought != null ? thought : m.body);
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
     attachBubbleActions(bubble, m);
-    b.appendChild(bubble);
+    const row = mountBubble(bubble, m);
     if (m.expiresAt) scheduleExpiry(bubble, m.expiresAt);
     scrollBody();
+    return row;
   }
 
   function appendFileBubble(meta, mine, objectUrl) {
@@ -1523,7 +1608,7 @@
     bubble.appendChild(el(`<span class="file">📄 ${esc(meta.name)} (${fmtSize(meta.size)})</span>`));
     bubble.appendChild(el(`<span class="ephemeral-note">Shared live · view-only · not stored</span>`));
     bubble.appendChild(el(`<span class="time">${fmtTime(meta.at || Date.now())}</span>`));
-    b.appendChild(bubble);
+    mountBubble(bubble, { mine });
     // Files aren't persisted, so honour disappearing purely on the client: drop
     // the bubble after the conversation's TTL (both sides run the same timer).
     if (state.disappearing > 0) scheduleExpiry(bubble, Date.now() + state.disappearing * 1000);
@@ -1654,7 +1739,7 @@
     emoji.addEventListener('click', () => replayPop(emoji));
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
     attachBubbleActions(bubble, m);
-    b.appendChild(bubble);
+    mountBubble(bubble, m);
     if (m.expiresAt) scheduleExpiry(bubble, m.expiresAt);
     scrollBody();
   }
@@ -2046,11 +2131,12 @@
     node.appendChild(pill);
     node.classList.add('disappearing');
     const tEl = pill.querySelector('.ep-t');
+    const target = node.closest('.msg-row') || node;
     const tick = () => {
       const left = expiresAt - Date.now();
       if (left <= 0) {
         node.classList.add('vanish');
-        setTimeout(() => node.remove(), 420);
+        setTimeout(() => target.remove(), 420);
         clearInterval(timer);
         return;
       }
@@ -2071,7 +2157,8 @@
       if (!node) return;
       if (node._expiryTimer) clearInterval(node._expiryTimer);
       node.classList.add('vanish');
-      setTimeout(() => node.remove(), 420);
+      const target = node.closest('.msg-row') || node;
+      setTimeout(() => target.remove(), 420);
     });
   }
 
@@ -2685,6 +2772,11 @@
               <h3 class="card-title">📷 Gallery <span class="hint" id="galCount"></span></h3>
               <div class="gallery" id="pvGallery"></div>
             </section>
+            ${isMe ? `<section class="card">
+              <h3 class="card-title">🎞️ Profile picture buffer <span class="hint" id="bufCount"></span></h3>
+              <p class="hint" style="margin:-4px 0 10px">Up to ${MAX_BUFFER} pictures. In chat, your picture is picked at random from these and changes every 20 seconds.</p>
+              <div class="gallery" id="pvBuffer"></div>
+            </section>` : ''}
             <section class="card">
               <h3 class="card-title">💬 Comments</h3>
               <div id="pvCommentForm"></div>
@@ -2792,6 +2884,59 @@
       view.appendChild(fileIn);
       gal.after(addBtn);
       refreshAddBtn();
+    }
+
+    /* ----- profile picture buffer (own profile only) ----- */
+    if (isMe) {
+      const buf = view.querySelector('#pvBuffer');
+      const bufCount = view.querySelector('#bufCount');
+      const updateBufCount = () => {
+        bufCount.textContent = `(${buf.querySelectorAll('.cell').length}/${MAX_BUFFER})`;
+      };
+      const makeBufCell = (ph) => {
+        const cell = el(`<div class="cell"><img src="${ph.url}" loading="lazy" /><span class="cell-zoom">⤢</span></div>`);
+        cell.querySelector('img').addEventListener('click', () => openLightbox(ph.url));
+        cell.querySelector('.cell-zoom').addEventListener('click', () => openLightbox(ph.url));
+        const del = el('<button class="del" title="Remove picture">✕</button>');
+        del.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          if (!confirm('Remove this picture from your buffer?')) return;
+          try { await api.del('/api/profile/buffer/' + ph.id); cell.remove(); updateBufCount(); refreshBufBtn(); }
+          catch (e) { alert(e.message); }
+        });
+        cell.appendChild(del);
+        return cell;
+      };
+      const bufList = profile.buffer || [];
+      if (!bufList.length) buf.appendChild(el('<div class="hint">No pictures yet.</div>'));
+      else bufList.forEach((ph) => buf.appendChild(makeBufCell(ph)));
+      updateBufCount();
+
+      const bufBtn = el('<button class="ghost small" style="margin-top:12px">＋ Add picture</button>');
+      function refreshBufBtn() {
+        const full = buf.querySelectorAll('.cell').length >= MAX_BUFFER;
+        bufBtn.disabled = full;
+        bufBtn.textContent = full ? `Buffer full (${MAX_BUFFER})` : '＋ Add picture';
+      }
+      const bufIn = el('<input type="file" accept="image/*" class="hidden" />');
+      bufBtn.addEventListener('click', () => bufIn.click());
+      bufIn.addEventListener('change', async () => {
+        if (!bufIn.files[0]) return;
+        const fd = new FormData();
+        fd.append('photo', bufIn.files[0]);
+        try {
+          const { photo } = await api.postForm('/api/profile/buffer', fd);
+          const hint = buf.querySelector('.hint');
+          if (hint) hint.remove();
+          buf.prepend(makeBufCell(photo));
+          updateBufCount();
+          refreshBufBtn();
+        } catch (e) { alert(e.message); }
+        bufIn.value = '';
+      });
+      view.appendChild(bufIn);
+      buf.after(bufBtn);
+      refreshBufBtn();
     }
 
     /* ----- friends list ----- */

@@ -47,6 +47,25 @@ router.get('/', requireAuth, (req, res) => {
   });
 });
 
+// GET /api/users/:id/avatars — the pictures to cycle through for this user in
+// chat: their profile picture buffer, or just their single display picture if
+// the buffer is empty. Returns absolute /uploads URLs.
+router.get('/:id/avatars', requireAuth, (req, res) => {
+  const uid = parseInt(req.params.id, 10);
+  if (!uid) return res.status(400).json({ error: 'Invalid user id.' });
+
+  const buffer = db
+    .prepare('SELECT filename FROM profile_buffer_photos WHERE user_id = ? ORDER BY created_at DESC')
+    .all(uid)
+    .map((r) => `/uploads/${r.filename}`);
+
+  if (buffer.length) return res.json({ avatars: buffer });
+
+  const prof = db.prepare('SELECT avatar FROM profiles WHERE user_id = ?').get(uid);
+  const avatar = prof && prof.avatar ? [`/uploads/${prof.avatar}`] : [];
+  res.json({ avatars: avatar });
+});
+
 // GET /api/users/:id/messages — text chat history with a given user
 router.get('/:id/messages', requireAuth, (req, res) => {
   const otherId = parseInt(req.params.id, 10);

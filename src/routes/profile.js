@@ -86,4 +86,47 @@ router.delete('/gallery/:id', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/profile/buffer — add an image to the profile picture buffer (max 10)
+router.post('/buffer', requireAuth, imageUpload.single('photo'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded.' });
+
+  const hasProfile = db.prepare('SELECT user_id FROM profiles WHERE user_id = ?').get(req.user.id);
+  if (!hasProfile) {
+    removeUpload(req.file.filename);
+    return res.status(400).json({ error: 'Create your profile before adding buffer pictures.' });
+  }
+
+  const { n } = db
+    .prepare('SELECT COUNT(*) AS n FROM profile_buffer_photos WHERE user_id = ?')
+    .get(req.user.id);
+  if (n >= F.MAX_BUFFER_PHOTOS) {
+    removeUpload(req.file.filename);
+    return res
+      .status(400)
+      .json({ error: `Your profile picture buffer is full (max ${F.MAX_BUFFER_PHOTOS} pictures).` });
+  }
+
+  const info = db
+    .prepare('INSERT INTO profile_buffer_photos (user_id, filename, created_at) VALUES (?, ?, ?)')
+    .run(req.user.id, req.file.filename, Date.now());
+
+  res.status(201).json({
+    photo: { id: info.lastInsertRowid, url: `/uploads/${req.file.filename}` },
+    count: n + 1,
+    max: F.MAX_BUFFER_PHOTOS,
+  });
+});
+
+// DELETE /api/profile/buffer/:id — remove a buffer picture
+router.delete('/buffer/:id', requireAuth, (req, res) => {
+  const photo = db
+    .prepare('SELECT id, filename FROM profile_buffer_photos WHERE id = ? AND user_id = ?')
+    .get(req.params.id, req.user.id);
+  if (!photo) return res.status(404).json({ error: 'Picture not found.' });
+
+  db.prepare('DELETE FROM profile_buffer_photos WHERE id = ?').run(photo.id);
+  removeUpload(photo.filename);
+  res.json({ ok: true });
+});
+
 module.exports = router;
