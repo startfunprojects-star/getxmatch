@@ -203,10 +203,10 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
    profile picture (which rotates through their picture buffer every 20s).
    The bubble grows a little tail on the picture side, so each message reads
    as coming out of that picture. */
-.msg-row { display: flex; align-items: flex-end; gap: 4px; max-width: 90%; }
+.msg-row { display: flex; align-items: center; gap: 2px; max-width: 90%; }
 .msg-row.them { align-self: flex-start; }
 .msg-row.me { align-self: flex-end; flex-direction: row-reverse; }
-.msg-row .bubble { align-self: flex-end; max-width: none; }
+.msg-row .bubble { align-self: center; max-width: none; }
 /* The in-chat profile picture — deliberately large (a comic "character
    portrait") so each balloon clearly speaks from it. Rotates every 20s. */
 .chat-av {
@@ -243,19 +243,23 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
   border-color: transparent;
 }
 .msg-row.them .bubble:not(.has-monologue)::before { /* ink */
-  left: -13px; bottom: 8px; border-width: 8px; border-right-width: 13px;
+  left: -13px; top: 50%; transform: translateY(-50%);
+  border-width: 9px; border-right-width: 14px;
   border-right-color: #14171f; border-left-width: 0;
 }
 .msg-row.them .bubble:not(.has-monologue)::after {  /* fill */
-  left: -8px; bottom: 10px; border-width: 6px; border-right-width: 10px;
+  left: -8px; top: 50%; transform: translateY(-50%);
+  border-width: 6px; border-right-width: 10px;
   border-right-color: var(--balloon); border-left-width: 0;
 }
 .msg-row.me .bubble:not(.has-monologue)::before {   /* ink */
-  right: -13px; bottom: 8px; border-width: 8px; border-left-width: 13px;
+  right: -13px; top: 50%; transform: translateY(-50%);
+  border-width: 9px; border-left-width: 14px;
   border-left-color: #14171f; border-right-width: 0;
 }
 .msg-row.me .bubble:not(.has-monologue)::after {    /* fill */
-  right: -8px; bottom: 10px; border-width: 6px; border-left-width: 10px;
+  right: -8px; top: 50%; transform: translateY(-50%);
+  border-width: 6px; border-left-width: 10px;
   border-left-color: var(--balloon); border-right-width: 0;
 }
 .msg-row .bubble.gift::before,
@@ -289,12 +293,12 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
   background: color-mix(in srgb, var(--accent-2) 26%, var(--bg-2));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-2) 55%, var(--border-strong));
 }
-.msg-row .bubble.has-monologue::before { width: 11px; height: 11px; bottom: -6px; }
-.msg-row .bubble.has-monologue::after  { width: 6px;  height: 6px;  bottom: -14px; }
-.msg-row.them .bubble.has-monologue::before { left: -8px; }
-.msg-row.them .bubble.has-monologue::after  { left: -14px; }
-.msg-row.me   .bubble.has-monologue::before { right: -8px; }
-.msg-row.me   .bubble.has-monologue::after  { right: -14px; }
+.msg-row .bubble.has-monologue::before { width: 12px; height: 12px; top: 50%; transform: translateY(-50%); }
+.msg-row .bubble.has-monologue::after  { width: 7px;  height: 7px;  top: 50%; transform: translateY(-50%); }
+.msg-row.them .bubble.has-monologue::before { left: -9px; }
+.msg-row.them .bubble.has-monologue::after  { left: -18px; }
+.msg-row.me   .bubble.has-monologue::before { right: -9px; }
+.msg-row.me   .bubble.has-monologue::after  { right: -18px; }
 
 /* ---------- Reply / quote + reactions ---------- */
 .bubble { position: relative; }
