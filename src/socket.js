@@ -130,6 +130,24 @@ function deliverOffer(io, from, to, payload) {
   return info.lastInsertRowid;
 }
 
+// Pick a female name and a male name from a set of chat participants, used to
+// fill the pronouns in a "wasted" sentence. Returns { female, male } (either may
+// be null if no participant of that gender is in the chat).
+function genderNamesFor(userIds) {
+  let female = null;
+  let male = null;
+  for (const uid of userIds) {
+    const r = db
+      .prepare('SELECT p.gender, p.display_name, u.username FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?')
+      .get(uid);
+    if (!r) continue;
+    const name = r.display_name || r.username;
+    if (!female && r.gender === 'Female') female = name;
+    if (!male && r.gender === 'Male') male = name;
+  }
+  return { female, male };
+}
+
 // Persist and deliver an admin "wasted" sentence as a permanent system message
 // visible to both users. expires_at is left NULL so it never disappears.
 function deliverWastedSentence(io, a, b, sentence) {
@@ -598,7 +616,10 @@ function initSocket(io) {
         // chat with a random admin "wasted" sentence (a permanent message).
         emitWastedScore(io, me.id, to, senderScore);
         const sentence = wasted.maybeSentence();
-        if (sentence) deliverWastedSentence(io, me.id, to, sentence);
+        if (sentence) {
+          const gn = genderNamesFor([me.id, to]);
+          deliverWastedSentence(io, me.id, to, wasted.fillGendered(sentence, gn.female, gn.male));
+        }
 
         ack && ack({ ok: true, message: { ...msg, mine: true } });
       } catch (e) {
@@ -983,9 +1004,13 @@ function initSocket(io) {
         deliverGroupMessage(io, groupId, me.id, 'text', outBody);
         emitGroupWastedScore(io, me.id, groupId, senderScore);
 
-        // Occasionally drop a random admin "wasted" sentence into the group.
+        // Occasionally drop a random admin "wasted" sentence into the group,
+        // with pronouns filled from the members' genders.
         const sentence = wasted.maybeSentence();
-        if (sentence) deliverGroupMessage(io, groupId, me.id, 'wasted', sentence);
+        if (sentence) {
+          const gn = genderNamesFor(groupJoinedIds(groupId));
+          deliverGroupMessage(io, groupId, me.id, 'wasted', wasted.fillGendered(sentence, gn.female, gn.male));
+        }
 
         ack && ack({ ok: true });
       } catch (e) {

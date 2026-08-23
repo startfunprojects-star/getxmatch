@@ -1557,7 +1557,7 @@
       </div>
       <div class="admin-card">
         <h2>Wasted sentences</h2>
-        <p class="count">Whole lines that drop into a chat at random as permanent system messages seen by both users (they never disappear).</p>
+        <p class="count">Whole lines that drop into a chat at random as permanent system messages seen by both users (they never disappear). Write with pronouns — <b>she/her</b> becomes the female chatter's name and <b>he/his/him</b> the male chatter's name. Example: <i>Her dress was dropping down, he was getting hard, his t-shirt was wet, she was smiling</i> → <i>Monika's dress was dropping down, Raj was getting hard, Raj's t-shirt was wet, Monika was smiling</i>.</p>
         <div class="fake-add">
           <input id="wSentence" placeholder="A sentence, e.g. Someone just spilled a drink…" maxlength="300" />
           <button type="button" class="primary small" id="wSentAdd">Add sentence</button>

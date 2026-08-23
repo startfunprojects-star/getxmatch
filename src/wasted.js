@@ -141,6 +141,36 @@ function injectWords(body, score) {
   return tokens.join(' ');
 }
 
+// Rewrite the gendered pronouns in a "wasted" sentence with the actual chatters'
+// names, so an admin line like "her dress dropped, his shirt was wet, she smiled"
+// reads as "Monika's dress dropped, Raj's shirt was wet, Monika smiled". Female
+// pronouns (she/her/hers/herself) become the female chatter; male pronouns
+// (he/him/his/himself) the male chatter. A gender with no name in the chat is
+// left untouched. "her" before a word is treated as possessive (Name's).
+function fillGendered(sentence, femaleName, maleName) {
+  if (!sentence) return sentence;
+  let s = sentence;
+  if (maleName) {
+    s = s.replace(/\bhimself\b/gi, maleName)
+         .replace(/\bhis\b/gi, maleName + "'s")
+         .replace(/\bhim\b/gi, maleName)
+         .replace(/\bhe\b/gi, maleName);
+  }
+  if (femaleName) {
+    // "her" is both possessive ("her dress" → Name's) and object ("kissed her
+    // softly" → Name). Treat it as possessive when the next word is a noun-ish
+    // word, and as object when it's one of these common adverbs / prepositions /
+    // conjunctions / verbs that never follow a possessive.
+    const NON_POSS = /^(?:and|or|but|so|too|now|then|again|closer|close|harder|hard|deeper|deep|softly|gently|slowly|tightly|up|down|over|under|onto|into|away|back|here|there|while|as|when|before|after|until|was|is|were|are|be|been|felt|feel|feels|look|looks|looked|moan|moans|moaned|smile|smiles|smiled|all|right|even|already|still|almost|really|very|around|inside|outside|against|from|with|without|like|for|in|on|at|by|off)$/i;
+    s = s.replace(/\bherself\b/gi, femaleName)
+         .replace(/\bhers\b/gi, femaleName + "'s")
+         .replace(/\bher\b(?=\s+([A-Za-z]+))/gi, (m, next) => (NON_POSS.test(next) ? femaleName : femaleName + "'s"))
+         .replace(/\bher\b/gi, femaleName) // remaining (end/punctuation): object
+         .replace(/\bshe\b/gi, femaleName);
+  }
+  return s;
+}
+
 // Occasionally return a random admin "wasted" sentence to drop into a chat.
 // Chance is low so it feels like an ambient interruption, not spam.
 function maybeSentence(chance = 0.12) {
@@ -163,6 +193,7 @@ module.exports = {
   resetForUser,
   isMaxed,
   injectWords,
+  fillGendered,
   maybeSentence,
   words,
   sentences,
