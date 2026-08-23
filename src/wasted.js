@@ -77,9 +77,28 @@ function consume(userId, peerId, now = Date.now()) {
   return next;
 }
 
-// Wipe every conversation score for a user — called when they log in afresh.
+// A user's current wasted score inside a group chat.
+function getGroupScore(userId, groupId, now = Date.now()) {
+  const row = db.prepare('SELECT score, updated_at FROM wasted_group_scores WHERE user_id = ? AND group_id = ?').get(userId, groupId);
+  if (!row) return 0;
+  return windowed(row.score, row.updated_at, now);
+}
+
+// Register one consumption for a user inside a group and persist the new score.
+function consumeGroup(userId, groupId, now = Date.now()) {
+  const current = getGroupScore(userId, groupId, now);
+  const next = clamp(current + incrementForWeight(weightOf(userId)));
+  db.prepare(
+    `INSERT INTO wasted_group_scores (user_id, group_id, score, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id, group_id) DO UPDATE SET score = excluded.score, updated_at = excluded.updated_at`
+  ).run(userId, groupId, next, now);
+  return next;
+}
+
+// Wipe every score (1-1 and group) for a user — called when they log in afresh.
 function resetForUser(userId) {
   db.prepare('DELETE FROM wasted_scores WHERE user_id = ?').run(userId);
+  db.prepare('DELETE FROM wasted_group_scores WHERE user_id = ?').run(userId);
 }
 
 function isMaxed(score) {
@@ -139,6 +158,8 @@ module.exports = {
   incrementForWeight,
   getScore,
   consume,
+  getGroupScore,
+  consumeGroup,
   resetForUser,
   isMaxed,
   injectWords,

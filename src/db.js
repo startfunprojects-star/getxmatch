@@ -633,7 +633,26 @@ db.exec(`
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, peer_id)
   );
+
+  -- Same, but keyed by group: a user's intoxication within one group chat.
+  CREATE TABLE IF NOT EXISTS wasted_group_scores (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    group_id   INTEGER NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
+    score      REAL NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, group_id)
+  );
 `);
+
+// group_messages gained a `kind` (text | wasted | offer) so the Wasted feature
+// — spliced words, the "Completely Wasted" narration, offers and system
+// sentences — works in group chats too. Added idempotently.
+{
+  const cols = db.prepare('PRAGMA table_info(group_messages)').all().map((c) => c.name);
+  if (!cols.includes('kind')) {
+    db.exec("ALTER TABLE group_messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'text'");
+  }
+}
 
 // Seed the single admin row (email from config). Never overwrites an existing
 // password; updates the target email if it changed in config.

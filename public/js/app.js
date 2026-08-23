@@ -1082,10 +1082,10 @@
 
   // Open (and render) a group chat.
   async function openGroup(gid) {
-    let group, messages = [];
+    let group, messages = [], groupWasted = null;
     try { group = (await api.get('/api/groups/' + gid)).group; }
     catch (e) { return notify(e.message); }
-    try { messages = (await api.get('/api/groups/' + gid + '/messages')).messages || []; } catch (_e) {}
+    try { const r = await api.get('/api/groups/' + gid + '/messages'); messages = r.messages || []; groupWasted = r.wasted || null; } catch (_e) {}
 
     stopWatching(); // leaving any inline broadcast we were watching
     state.peer = null;
@@ -1112,9 +1112,12 @@
           <button class="ghost small" id="groupAddBtn" title="Add someone">＋ Add</button>
           <button class="ghost small" id="groupLeaveBtn" title="Leave this group">Leave</button>
         </div>
+        <div class="wasted-bar hidden" id="wastedBar"></div>
         <div class="chat-body" id="chatBody"></div>
+        <div class="wasted-picker hidden" id="wastedPicker"></div>
         <div class="composer">
           <input type="text" id="msgInput" placeholder="Message the group…" autocomplete="off" />
+          <button class="icon-btn" id="wastedBtn" title="Offer a drink or substance — get Wasted">🥂</button>
           <button class="primary" id="sendBtn">Send</button>
         </div>
       </div>
@@ -1145,7 +1148,23 @@
     view.querySelector('#sendBtn').addEventListener('click', send);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 
+    // Wasted picker (offer to the group, or take one yourself).
+    const wastedPicker = view.querySelector('#wastedPicker');
+    const wastedBtn = view.querySelector('#wastedBtn');
+    wastedBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!wastedPicker.classList.contains('hidden')) { wastedPicker.classList.add('hidden'); return; }
+      buildWastedPicker(wastedPicker);
+      wastedPicker.classList.remove('hidden');
+    });
+    document.addEventListener('click', function onGWDocClick(ev) {
+      if (!document.body.contains(wastedPicker)) { document.removeEventListener('click', onGWDocClick); return; }
+      if (!wastedPicker.contains(ev.target) && ev.target !== wastedBtn) wastedPicker.classList.add('hidden');
+    });
+
+    state.wasted = groupWasted || null;
     messages.forEach(appendGroupMessage);
+    updateWastedBar();
     scrollBody();
   }
 
@@ -1163,6 +1182,9 @@
   function appendGroupMessage(m) {
     const b = chatBody();
     if (!b) return;
+    // Wasted narrations render centered for everyone, not as a user's bubble.
+    if (m.kind === 'wasted') return appendWastedSentence(m);
+    if (m.kind === 'offer') return appendGroupOfferBubble(m);
     const thought = monologueText(m.body);
     const side = m.mine ? 'me' : 'them';
     const bubble = el(`<div class="bubble ${side}${thought ? ' has-monologue' : ''}"></div>`);
@@ -1964,18 +1986,32 @@
   }
 
   function offerWasted(item) {
-    if (!state.peer || !state.socket) return;
+    if (!state.socket) return;
+    if (state.group) {
+      state.socket.emit('wasted:groupOffer', { groupId: state.group.gid, item }, (res) => {
+        if (res && res.error) notify(res.error);
+      });
+      return;
+    }
+    if (!state.peer) return;
     state.socket.emit('wasted:offer', { to: state.peer.id, item }, (res) => {
       if (res && res.error) notify(res.error);
-      // The offer bubble arrives (to both of us) over the socket.
+      // The offer narration arrives (to everyone) over the socket.
     });
   }
 
   function takeWasted(item) {
-    if (!state.peer || !state.socket) return;
+    if (!state.socket) return;
+    if (state.group) {
+      state.socket.emit('wasted:groupSelf', { groupId: state.group.gid, item }, (res) => {
+        if (res && res.error) notify(res.error);
+      });
+      return;
+    }
+    if (!state.peer) return;
     state.socket.emit('wasted:self', { to: state.peer.id, item }, (res) => {
       if (res && res.error) notify(res.error);
-      // The bubble and the updated score arrive over the socket.
+      // The narration and the updated score arrive over the socket.
     });
   }
 
@@ -1998,7 +2034,8 @@
     card._offer = data;
     card._mine = !!m.mine;
     card._at = m.at;
-    renderOfferInner(card);
+    card._render = () => renderOfferInner(card);
+    card._render();
     b.appendChild(card);
     scrollBody();
   }
@@ -2035,14 +2072,83 @@
     if (rej) rej.addEventListener('click', () => respondOffer(Number(card.dataset.offerId), false));
   }
 
-  // A pending offer was answered — update its narration in place.
-  function updateOffer(id, status) {
+  // A pending offer was answered — update its narration in place. `extra` may
+  // carry { who, whoName } for group offers (who answered).
+  function updateOffer(id, status, extra) {
     const b = chatBody();
     if (!b) return;
     const card = b.querySelector(`.wasted-offer[data-offer-id="${id}"]`);
     if (!card || !card._offer) return;
     card._offer.status = status;
-    renderOfferInner(card);
+    if (extra && extra.who != null) card._offer.who = extra.who;
+    if (extra && extra.whoName) card._offer.whoName = extra.whoName;
+    (card._render || (() => renderOfferInner(card)))();
+  }
+
+  /* ---------- group-chat offers (centered narration, delivered to all) ---------- */
+
+  // Display name for a group member id ("You" for me).
+  function groupMemberName(id) {
+    if (state.me && id === state.me.id) return 'You';
+    const m = state.group && (state.group.members || []).find((x) => x.id === id);
+    return m ? m.displayName : 'Someone';
+  }
+
+  function offerGroupText(data) {
+    const myId = state.me && state.me.id;
+    const it = wastedItem(data.item);
+    const item = `${it.emoji} ${esc(it.label)}`;
+    const iAmOfferer = data.by === myId;
+    const by = esc(groupMemberName(data.by));
+    const whoName = data.who != null ? esc(data.whoName || groupMemberName(data.who)) : '';
+    const byPossessive = iAmOfferer ? 'your' : `${by}'s`;
+    switch (data.status) {
+      case 'self':
+        return iAmOfferer ? `You poured yourself a ${item}` : `${by} poured themselves a ${item}`;
+      case 'accepted':
+        return `${whoName} accepted ${byPossessive} ${item}`;
+      case 'rejected':
+        return `${whoName} turned down ${byPossessive} ${item}`;
+      case 'pending':
+      default:
+        return `${by} ${iAmOfferer ? 'offer' : 'offers'} the group a ${item}`;
+    }
+  }
+
+  function appendGroupOfferBubble(m) {
+    const b = chatBody();
+    if (!b) return;
+    let data = {};
+    try { data = typeof m.body === 'string' ? JSON.parse(m.body) : (m.body || {}); } catch (_e) { data = {}; }
+    const card = el('<div class="wasted-offer"></div>');
+    if (m.id) card.dataset.offerId = m.id;
+    card._offer = data;
+    card._at = m.at;
+    card._render = () => renderGroupOfferInner(card);
+    card._render();
+    b.appendChild(card);
+    scrollBody();
+  }
+
+  function renderGroupOfferInner(card) {
+    const data = card._offer || {};
+    // Anyone but the offerer can answer a still-pending group offer.
+    const canAnswer = data.status === 'pending' && data.by !== (state.me && state.me.id);
+    const actions = canAnswer
+      ? '<div class="offer-actions"><button class="primary small" data-accept>Accept</button><button class="ghost small" data-reject>Reject</button></div>'
+      : '';
+    card.innerHTML = `<span class="wasted-offer-text">🥂 ${offerGroupText(data)}</span>${actions}<span class="wasted-offer-time">${fmtTime(card._at)}</span>`;
+    const acc = card.querySelector('[data-accept]');
+    const rej = card.querySelector('[data-reject]');
+    if (acc) acc.addEventListener('click', () => respondGroupOffer(Number(card.dataset.offerId), true));
+    if (rej) rej.addEventListener('click', () => respondGroupOffer(Number(card.dataset.offerId), false));
+  }
+
+  function respondGroupOffer(messageId, accept) {
+    if (!state.socket) return;
+    state.socket.emit('wasted:groupRespond', { messageId, accept }, (res) => {
+      if (res && res.error) notify(res.error);
+    });
   }
 
   // A random admin "wasted" sentence — a permanent centered system message.
@@ -2891,15 +2997,19 @@
     // the meter so the gauge and the "Completely Wasted" state stay current.
     s.on('wasted:score', (e) => {
       if (!e) return;
-      const peerId = state.peer && state.peer.id;
-      // Scores are per-conversation now — only update the meter for the open chat.
-      if (e.peerId != null && peerId !== e.peerId) return;
+      // Scores are per-conversation (1-1 by peerId, group by groupId): only
+      // update the meter when the event is for the chat currently open.
+      if (e.groupId != null) {
+        if (!(state.group && state.group.gid === e.groupId)) return;
+      } else if (e.peerId != null) {
+        if (!(state.peer && state.peer.id === e.peerId)) return;
+      }
       state.wasted = { score: e.score, max: e.max, maxed: e.maxed };
       updateWastedBar();
     });
 
-    // A pending offer was accepted/rejected — flip its bubble.
-    s.on('wasted:update', (e) => { if (e && e.id != null) updateOffer(e.id, e.status); });
+    // A pending offer was accepted/rejected — flip its narration in place.
+    s.on('wasted:update', (e) => { if (e && e.id != null) updateOffer(e.id, e.status, e); });
 
     // Disappearing-messages setting changed for a conversation of mine.
     s.on('chat:disappearing', (e) => {

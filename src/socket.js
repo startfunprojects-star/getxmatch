@@ -144,6 +144,52 @@ function deliverWastedSentence(io, a, b, sentence) {
 }
 
 /* --------------------------------------------------------------------------
+   Group-chat "Wasted" helpers
+-------------------------------------------------------------------------- */
+
+// The joined members of a group (the audience for any group message).
+function groupJoinedIds(groupId) {
+  return db
+    .prepare("SELECT user_id FROM chat_group_members WHERE group_id = ? AND status = 'joined'")
+    .all(groupId)
+    .map((r) => r.user_id);
+}
+
+// Persist a group message of any kind (text | wasted | offer) and deliver it to
+// every joined member (mine flag per recipient). Returns the new row id.
+function deliverGroupMessage(io, groupId, senderId, kind, body) {
+  const now = Date.now();
+  const info = db
+    .prepare('INSERT INTO group_messages (group_id, sender_id, body, kind, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(groupId, senderId, body, kind, now);
+  const prof = db.prepare('SELECT display_name, avatar FROM profiles WHERE user_id = ?').get(senderId);
+  const base = {
+    id: info.lastInsertRowid,
+    groupId,
+    from: senderId,
+    fromName: (prof && prof.display_name) || nameOf(senderId),
+    fromAvatar: prof && prof.avatar ? `/uploads/${prof.avatar}` : null,
+    body,
+    kind,
+    at: now,
+  };
+  groupJoinedIds(groupId).forEach((uid) =>
+    io.to(`user:${uid}`).emit('group:message', { ...base, mine: uid === senderId }));
+  return info.lastInsertRowid;
+}
+
+// Tell a user their current wasted score inside a group, for the meter + gating.
+function emitGroupWastedScore(io, userId, groupId, score) {
+  io.to(`user:${userId}`).emit('wasted:score', {
+    userId,
+    groupId,
+    score: Math.round(score * 100) / 100,
+    max: wasted.MAX_SCORE,
+    maxed: wasted.isMaxed(score),
+  });
+}
+
+/* --------------------------------------------------------------------------
    Reply helpers
 -------------------------------------------------------------------------- */
 
@@ -750,6 +796,80 @@ function initSocket(io) {
       }
     });
 
+    /* -------------------- "Wasted" offers in group chat -------------------- */
+
+    // Helper: is `uid` a joined member of `groupId`?
+    const isGroupMember = (groupId, uid) =>
+      !!db.prepare("SELECT 1 FROM chat_group_members WHERE group_id = ? AND user_id = ? AND status = 'joined'").get(groupId, uid);
+
+    // Offer a drink/substance to the whole group. Any other member can accept
+    // (first response resolves it).
+    socket.on('wasted:groupOffer', (payload, ack) => {
+      try {
+        const groupId = parseInt(payload && payload.groupId, 10);
+        const item = wasted.getItem(payload && payload.item);
+        if (!groupId || !item) return ack && ack({ error: 'Invalid offer.' });
+        if (!isGroupMember(groupId, me.id)) return ack && ack({ error: 'You are not a member of this group.' });
+        const id = deliverGroupMessage(io, groupId, me.id, 'offer', JSON.stringify({ item: item.id, status: 'pending', by: me.id }));
+        ack && ack({ ok: true, id });
+      } catch (_e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // Take a drink/substance yourself in a group — consumes immediately.
+    socket.on('wasted:groupSelf', (payload, ack) => {
+      try {
+        const groupId = parseInt(payload && payload.groupId, 10);
+        const item = wasted.getItem(payload && payload.item);
+        if (!groupId || !item) return ack && ack({ error: 'Invalid request.' });
+        if (!isGroupMember(groupId, me.id)) return ack && ack({ error: 'You are not a member of this group.' });
+        deliverGroupMessage(io, groupId, me.id, 'offer', JSON.stringify({ item: item.id, status: 'self', by: me.id }));
+        const score = wasted.consumeGroup(me.id, groupId);
+        emitGroupWastedScore(io, me.id, groupId, score);
+        ack && ack({ ok: true, score });
+      } catch (_e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // Respond to a group offer (accept/reject). Anyone in the group except the
+    // offerer may respond; the first response resolves it. Accepting consumes.
+    socket.on('wasted:groupRespond', (payload, ack) => {
+      try {
+        const messageId = parseInt(payload && payload.messageId, 10);
+        const accept = !!(payload && payload.accept);
+        if (!messageId) return ack && ack({ error: 'Invalid response.' });
+
+        const row = db
+          .prepare("SELECT id, group_id, sender_id, body FROM group_messages WHERE id = ? AND kind = 'offer'")
+          .get(messageId);
+        if (!row) return ack && ack({ error: 'Offer not found.' });
+        if (!isGroupMember(row.group_id, me.id)) return ack && ack({ error: 'You are not a member of this group.' });
+        if (row.sender_id === me.id) return ack && ack({ error: 'You cannot answer your own offer.' });
+
+        let data;
+        try { data = JSON.parse(row.body); } catch (_e) { data = {}; }
+        if (data.status !== 'pending') return ack && ack({ error: 'This offer was already answered.' });
+
+        data.status = accept ? 'accepted' : 'rejected';
+        data.who = me.id; // who answered (a group offer can be answered by anyone)
+        db.prepare('UPDATE group_messages SET body = ? WHERE id = ?').run(JSON.stringify(data), row.id);
+
+        const evt = { id: row.id, groupId: row.group_id, status: data.status, who: me.id, whoName: nameOf(me.id) };
+        groupJoinedIds(row.group_id).forEach((uid) => io.to(`user:${uid}`).emit('wasted:update', evt));
+
+        if (accept) {
+          const score = wasted.consumeGroup(me.id, row.group_id);
+          emitGroupWastedScore(io, me.id, row.group_id, score);
+          return ack && ack({ ok: true, score });
+        }
+        ack && ack({ ok: true });
+      } catch (_e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
     // Emoji reaction on a message (text/gift). Toggling: same emoji again
     // clears it, a different emoji replaces it. Broadcast to both users so all
     // tabs stay in sync.
@@ -849,28 +969,23 @@ function initSocket(io) {
           .get(groupId, me.id);
         if (!mine) return ack && ack({ error: 'You are not a member of this group.' });
 
-        const now = Date.now();
-        const info = db
-          .prepare('INSERT INTO group_messages (group_id, sender_id, body, created_at) VALUES (?, ?, ?, ?)')
-          .run(groupId, me.id, body, now);
+        // "Wasted" in group chat: at the cap the message becomes a centered
+        // system narration seen by everyone; below it, random words get spliced
+        // into what they say. Score is per-group.
+        const senderScore = wasted.getGroupScore(me.id, groupId);
+        if (wasted.isMaxed(senderScore)) {
+          deliverGroupMessage(io, groupId, me.id, 'wasted', wasted.WASTED_MESSAGE);
+          emitGroupWastedScore(io, me.id, groupId, senderScore);
+          return ack && ack({ ok: true, wasted: true });
+        }
 
-        const prof = db.prepare('SELECT display_name, avatar FROM profiles WHERE user_id = ?').get(me.id);
-        const base = {
-          id: info.lastInsertRowid,
-          groupId,
-          from: me.id,
-          fromName: (prof && prof.display_name) || me.username,
-          fromAvatar: prof && prof.avatar ? `/uploads/${prof.avatar}` : null,
-          body,
-          at: now,
-        };
+        const outBody = wasted.injectWords(body, senderScore);
+        deliverGroupMessage(io, groupId, me.id, 'text', outBody);
+        emitGroupWastedScore(io, me.id, groupId, senderScore);
 
-        const members = db
-          .prepare("SELECT user_id FROM chat_group_members WHERE group_id = ? AND status = 'joined'")
-          .all(groupId);
-        members.forEach((m) => {
-          io.to(`user:${m.user_id}`).emit('group:message', { ...base, mine: m.user_id === me.id });
-        });
+        // Occasionally drop a random admin "wasted" sentence into the group.
+        const sentence = wasted.maybeSentence();
+        if (sentence) deliverGroupMessage(io, groupId, me.id, 'wasted', sentence);
 
         ack && ack({ ok: true });
       } catch (e) {

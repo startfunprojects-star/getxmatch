@@ -10,6 +10,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../auth');
 const { notifyGroup } = require('../socket');
+const wasted = require('../wasted');
 
 const router = express.Router();
 
@@ -151,7 +152,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
   if (myStatus(gid, req.user.id) !== 'joined') return res.status(403).json({ error: 'You are not in this group.' });
   const rows = db
     .prepare(
-      `SELECT gm.id, gm.sender_id, gm.body, gm.created_at, u.username, p.display_name, p.avatar
+      `SELECT gm.id, gm.sender_id, gm.body, gm.kind, gm.created_at, u.username, p.display_name, p.avatar
        FROM group_messages gm
        JOIN users u ON u.id = gm.sender_id
        LEFT JOIN profiles p ON p.user_id = gm.sender_id
@@ -160,7 +161,9 @@ router.get('/:id/messages', requireAuth, (req, res) => {
        LIMIT 200`
     )
     .all(gid);
+  const score = wasted.getGroupScore(req.user.id, gid);
   res.json({
+    wasted: { score: Math.round(score * 100) / 100, max: wasted.MAX_SCORE, maxed: wasted.isMaxed(score) },
     messages: rows.map((r) => ({
       id: r.id,
       groupId: gid,
@@ -168,6 +171,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       fromName: r.display_name || r.username,
       fromAvatar: r.avatar ? `/uploads/${r.avatar}` : null,
       body: r.body,
+      kind: r.kind || 'text',
       at: r.created_at,
       mine: r.sender_id === req.user.id,
     })),
