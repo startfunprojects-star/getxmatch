@@ -58,6 +58,12 @@ function saveProfile(userId, body, file) {
   const country = (b.country || '').trim();
   if (!country || country.length > 60) return fail('Please select a country.');
 
+  // --- Mandatory: body weight (kg). Drives the "Wasted" score in chat.
+  const weight = Math.round(Number(b.weight));
+  if (!Number.isFinite(weight) || weight < F.MIN_WEIGHT || weight > F.MAX_WEIGHT) {
+    return fail(`Please enter a valid weight between ${F.MIN_WEIGHT} and ${F.MAX_WEIGHT} kg.`);
+  }
+
   // --- Optional enum fields.
   const smokes = optionalEnum(b.smokes, F.YES_NO, 'smoking');
   if (smokes.error) return fail(smokes.error);
@@ -124,14 +130,14 @@ function saveProfile(userId, body, file) {
     db.prepare(
       `UPDATE profiles SET
          display_name = ?, bio = ?, avatar = ?,
-         gender = ?, date_of_birth = ?, country = ?, smokes = ?, drinks = ?,
+         gender = ?, date_of_birth = ?, country = ?, weight = ?, smokes = ?, drinks = ?,
          diet = ?, sexuality = ?, interests = ?, persona = ?, likes_in_bed = ?,
          bed_role = ?, relationship_status = ?, partner_user_id = ?,
          friends_visibility = ?, updated_at = ?
        WHERE user_id = ?`
     ).run(
       displayName, about, avatar,
-      gender, dob, country, smokes.value, drinks.value,
+      gender, dob, country, weight, smokes.value, drinks.value,
       diet.value, sexuality.value, interestsJson, persona, likesInBed,
       bedRole.value, relStatus.value, partnerId,
       friendsVisibility, now, userId
@@ -139,12 +145,12 @@ function saveProfile(userId, body, file) {
   } else {
     db.prepare(
       `INSERT INTO profiles
-         (user_id, display_name, bio, avatar, gender, date_of_birth, country,
+         (user_id, display_name, bio, avatar, gender, date_of_birth, country, weight,
           smokes, drinks, diet, sexuality, interests, persona, likes_in_bed,
           bed_role, relationship_status, partner_user_id, friends_visibility, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
-      userId, displayName, about, avatar, gender, dob, country,
+      userId, displayName, about, avatar, gender, dob, country, weight,
       smokes.value, drinks.value, diet.value, sexuality.value, interestsJson,
       persona, likesInBed, bedRole.value, relStatus.value, partnerId,
       friendsVisibility, now

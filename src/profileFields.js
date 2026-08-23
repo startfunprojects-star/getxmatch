@@ -40,6 +40,10 @@ const MAX_GALLERY_PHOTOS = 25;
 const MAX_BUFFER_PHOTOS = 10;
 const MIN_AGE = 18;
 
+// Body weight (kg) bounds. Mandatory on the profile; drives the "Wasted" score.
+const MIN_WEIGHT = 30;
+const MAX_WEIGHT = 400;
+
 // Compute an integer age (in whole years) from an ISO 'YYYY-MM-DD' date.
 // Returns null if the string is not a valid past date.
 function ageFromDob(dob) {
@@ -66,5 +70,7 @@ module.exports = {
   MAX_GALLERY_PHOTOS,
   MAX_BUFFER_PHOTOS,
   MIN_AGE,
+  MIN_WEIGHT,
+  MAX_WEIGHT,
   ageFromDob,
 };

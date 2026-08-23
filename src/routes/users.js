@@ -4,6 +4,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../auth');
 const { getGift } = require('../gifts');
+const wasted = require('../wasted');
 
 // Build the compact quoted-message preview attached to a reply. Mirrors
 // replyPreview() in src/socket.js so live and historical replies render alike.
@@ -110,8 +111,11 @@ router.get('/:id/messages', requireAuth, (req, res) => {
     reactionsByMsg.get(r.message_id).push({ userId: r.user_id, emoji: r.emoji });
   }
 
+  const score = wasted.getScore(req.user.id, now);
+
   res.json({
     disappearing,
+    wasted: { score: Math.round(score * 100) / 100, max: wasted.MAX_SCORE, maxed: wasted.isMaxed(score) },
     messages: rows.map((m) => ({
       id: m.id,
       from: m.sender_id,

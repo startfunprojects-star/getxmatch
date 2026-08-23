@@ -176,6 +176,8 @@ db.exec(`
     ['gender', 'TEXT'],
     ['date_of_birth', 'TEXT'],
     ['country', 'TEXT'],
+    ['weight', 'REAL'], // body weight in kg — drives the "Wasted" score increment
+
     ['smokes', 'TEXT'],
     ['drinks', 'TEXT'],
     ['diet', 'TEXT'],
@@ -592,7 +594,34 @@ db.exec(`
     db.exec('ALTER TABLE users ADD COLUMN last_digest_at INTEGER NOT NULL DEFAULT 0');
     db.prepare('UPDATE users SET last_digest_at = ?').run(Date.now());
   }
+  // "Wasted" score bookkeeping. wasted_score is the current intoxication level
+  // (0..15); it climbs when a user consumes a drink/substance and decays over
+  // time (they sober up). wasted_updated_at is when it was last changed, so the
+  // decay can be computed lazily on read (see src/wasted.js).
+  if (!cols.includes('wasted_score')) {
+    db.exec('ALTER TABLE users ADD COLUMN wasted_score REAL NOT NULL DEFAULT 0');
+  }
+  if (!cols.includes('wasted_updated_at')) {
+    db.exec('ALTER TABLE users ADD COLUMN wasted_updated_at INTEGER NOT NULL DEFAULT 0');
+  }
 }
+
+// --- "Wasted" feature admin content.
+// wasted_words: a pool of words the system randomly splices into the messages of
+// tipsy users (the drunker they are, the more often). wasted_sentences: whole
+// lines that randomly appear as permanent system messages inside a chat.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wasted_words (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    word       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS wasted_sentences (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    sentence   TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+`);
 
 // Seed the single admin row (email from config). Never overwrites an existing
 // password; updates the target email if it changed in config.

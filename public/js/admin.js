@@ -345,6 +345,7 @@
     ['roleplays', 'Roleplays'],
     ['events', 'Recent Events'],
     ['fake', 'Fake Activity'],
+    ['wasted', 'Wasted'],
     ['ads', 'Ads'],
     ['highway', 'Highway'],
     ['leaderboard', 'Leaderboard'],
@@ -394,6 +395,7 @@
     if (tab === 'roleplays') return renderRoleplaysTab();
     if (tab === 'events') return renderEventsTab();
     if (tab === 'fake') return renderFakeActivityTab();
+    if (tab === 'wasted') return renderWastedTab();
     if (tab === 'ads') return renderAdsTab();
     if (tab === 'highway') return renderHighwayTab();
     if (tab === 'leaderboard') return renderLeaderboardTab();
@@ -534,6 +536,7 @@
           <div><label>Gender <span class="req">*</span></label>${selectHtml('pfGender', OPT.gender, e.gender, 'Select gender')}</div>
           <div><label>Date of birth <span class="req">*</span></label><input type="date" id="pfDob" value="${esc(e.dateOfBirth || '')}" max="9999-12-31" /></div>
           <div><label>Country <span class="req">*</span></label>${selectHtml('pfCountry', COUNTRIES, e.country, 'Select country')}</div>
+          <div><label>Weight (kg) <span class="req">*</span></label><input type="number" id="pfWeight" min="30" max="400" step="1" value="${esc(e.weight || '')}" placeholder="e.g. 70" /></div>
           <div><label>Sexuality</label>${selectHtml('pfSexuality', OPT.sexuality, e.sexuality, 'Select…')}</div>
           <div><label>Smokes?</label>${selectHtml('pfSmokes', OPT.yesNo, e.smokes, 'Select…')}</div>
           <div><label>Alcohol?</label>${selectHtml('pfDrinks', OPT.yesNo, e.drinks, 'Select…')}</div>
@@ -598,6 +601,7 @@
       fd.append('gender', val('pfGender'));
       fd.append('dateOfBirth', val('pfDob'));
       fd.append('country', val('pfCountry'));
+      fd.append('weight', val('pfWeight'));
       fd.append('sexuality', val('pfSexuality'));
       fd.append('smokes', val('pfSmokes'));
       fd.append('drinks', val('pfDrinks'));
@@ -1531,6 +1535,122 @@
 
     renderView();
     return row;
+  }
+
+  /* ==================================================================
+     "Wasted" tab — word-injection pool + random chat sentences
+  ================================================================== */
+  let wastedCache = { words: [], sentences: [] };
+
+  async function renderWastedTab() {
+    const host = tabHost();
+    host.innerHTML = `
+      <div class="admin-card">
+        <h2>Wasted words</h2>
+        <p class="count">Words spliced at random into an intoxicated user's messages — the drunker they are, the more often. Example: <i>I love you</i> → <i>I love <b>fuck</b> you</i>.</p>
+        <div class="fake-add">
+          <input id="wWord" placeholder="A word, e.g. fuck" maxlength="60" />
+          <button type="button" class="primary small" id="wWordAdd">Add word</button>
+        </div>
+        <div class="msg" id="wWordMsg"></div>
+        <div id="wWordList" class="count">Loading…</div>
+      </div>
+      <div class="admin-card">
+        <h2>Wasted sentences</h2>
+        <p class="count">Whole lines that drop into a chat at random as permanent system messages seen by both users (they never disappear).</p>
+        <div class="fake-add">
+          <input id="wSentence" placeholder="A sentence, e.g. Someone just spilled a drink…" maxlength="300" />
+          <button type="button" class="primary small" id="wSentAdd">Add sentence</button>
+        </div>
+        <div class="msg" id="wSentMsg"></div>
+        <div id="wSentList" class="count">Loading…</div>
+      </div>
+    `;
+
+    const addWord = async () => {
+      const msg = host.querySelector('#wWordMsg'); msg.className = 'msg';
+      const input = host.querySelector('#wWord');
+      const word = input.value.trim();
+      if (!word) { msg.className = 'msg error'; msg.textContent = 'Enter a word first.'; return; }
+      try {
+        await api.post('/api/admin/wasted/words', { word });
+        input.value = ''; input.focus();
+        loadWasted();
+      } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
+    };
+    const addSentence = async () => {
+      const msg = host.querySelector('#wSentMsg'); msg.className = 'msg';
+      const input = host.querySelector('#wSentence');
+      const sentence = input.value.trim();
+      if (!sentence) { msg.className = 'msg error'; msg.textContent = 'Enter a sentence first.'; return; }
+      try {
+        await api.post('/api/admin/wasted/sentences', { sentence });
+        input.value = ''; input.focus();
+        loadWasted();
+      } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
+    };
+
+    host.querySelector('#wWordAdd').addEventListener('click', addWord);
+    host.querySelector('#wWord').addEventListener('keydown', (e) => { if (e.key === 'Enter') addWord(); });
+    host.querySelector('#wSentAdd').addEventListener('click', addSentence);
+    host.querySelector('#wSentence').addEventListener('keydown', (e) => { if (e.key === 'Enter') addSentence(); });
+
+    await loadWasted();
+  }
+
+  async function loadWasted() {
+    const wl = document.getElementById('wWordList');
+    if (!wl) return;
+    let data;
+    try { data = await api.get('/api/admin/wasted'); }
+    catch (e) { if (e.status === 401) return renderLogin(true); wl.textContent = e.message; return; }
+    wastedCache = data;
+    paintWasted();
+  }
+
+  function paintWasted() {
+    const wl = document.getElementById('wWordList');
+    const sl = document.getElementById('wSentList');
+    if (!wl || !sl) return;
+
+    // Words as removable chips.
+    wl.innerHTML = '';
+    if (!wastedCache.words.length) {
+      wl.innerHTML = '<div class="count">No words yet. Add a few above.</div>';
+    } else {
+      const grid = el('<div class="wasted-chips"></div>');
+      wastedCache.words.forEach((w) => {
+        const chip = el(`<span class="wasted-chip">${esc(w.word)} <button class="wasted-x" title="Delete">✕</button></span>`);
+        chip.querySelector('.wasted-x').addEventListener('click', async () => {
+          try { await api.del('/api/admin/wasted/words/' + w.id); loadWasted(); } catch (e) { alert(e.message); }
+        });
+        grid.appendChild(chip);
+      });
+      wl.appendChild(grid);
+    }
+
+    // Sentences as a list of rows.
+    sl.innerHTML = '';
+    if (!wastedCache.sentences.length) {
+      sl.innerHTML = '<div class="count">No sentences yet. Add a few above.</div>';
+      return;
+    }
+    const { slice, pager } = pageFor('wastedSentences', wastedCache.sentences, paintWasted);
+    const list = el('<div class="fake-table"></div>');
+    slice.forEach((s) => {
+      const row = el(`
+        <div class="fake-row">
+          <span class="fake-act" style="grid-column:1/4">${esc(s.sentence)}</span>
+          <div class="fake-actions"><button class="danger small" title="Delete">✕</button></div>
+        </div>`);
+      row.querySelector('button').addEventListener('click', async () => {
+        if (!confirm('Delete this sentence?')) return;
+        try { await api.del('/api/admin/wasted/sentences/' + s.id); loadWasted(); } catch (e) { alert(e.message); }
+      });
+      list.appendChild(row);
+    });
+    sl.appendChild(list);
+    if (pager) sl.appendChild(pager);
   }
 
   /* ==================================================================

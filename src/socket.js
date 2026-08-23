@@ -6,6 +6,7 @@ const config = require('./config');
 const { userFromToken } = require('./auth');
 const { areBlocked } = require('./relations');
 const { getGift } = require('./gifts');
+const wasted = require('./wasted');
 const roleplay = require('./roleplay');
 const broadcast = require('./broadcast');
 
@@ -98,6 +99,50 @@ function applyRoleplayOutcome(io, senderId, otherId, outcome) {
 }
 
 /* --------------------------------------------------------------------------
+   "Wasted" helpers
+-------------------------------------------------------------------------- */
+
+// Tell a user (all their tabs) their current wasted score, so the UI can show
+// the meter and gate sending once they hit the cap.
+function emitWastedScore(io, userId, score) {
+  io.to(`user:${userId}`).emit('wasted:score', {
+    userId,
+    score: Math.round(score * 100) / 100,
+    max: wasted.MAX_SCORE,
+    maxed: wasted.isMaxed(score),
+  });
+}
+
+// Persist and deliver an offer/self-take as a kind='offer' message. The body is
+// a JSON payload { item, status, by }: status is 'pending' (awaiting the
+// recipient), 'accepted', 'rejected', or 'self' (the sender took it alone).
+function deliverOffer(io, from, to, payload) {
+  const now = Date.now();
+  const body = JSON.stringify(payload);
+  const info = db
+    .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'offer', ?, NULL)")
+    .run(from, to, body, now);
+  const msg = { id: info.lastInsertRowid, from, to, body, kind: 'offer', at: now };
+  io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
+  io.to(`user:${from}`).emit('chat:message', { ...msg, mine: true });
+  mirrorLiveMessage(io, from, to, 'offer', body, now);
+  return info.lastInsertRowid;
+}
+
+// Persist and deliver an admin "wasted" sentence as a permanent system message
+// visible to both users. expires_at is left NULL so it never disappears.
+function deliverWastedSentence(io, a, b, sentence) {
+  const now = Date.now();
+  const info = db
+    .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'wasted', ?, NULL)")
+    .run(a, b, sentence, now);
+  const msg = { id: info.lastInsertRowid, from: a, to: b, body: sentence, kind: 'wasted', at: now };
+  io.to(`user:${a}`).emit('chat:message', { ...msg, mine: false });
+  io.to(`user:${b}`).emit('chat:message', { ...msg, mine: false });
+  mirrorLiveMessage(io, a, b, 'wasted', sentence, now);
+}
+
+/* --------------------------------------------------------------------------
    Reply helpers
 -------------------------------------------------------------------------- */
 
@@ -124,6 +169,8 @@ function replyPreview(replyToId) {
     text = g ? `${g.emoji} ${g.name}` : 'a gift';
   } else if (row.kind === 'narration') {
     text = '🎭 Roleplay';
+  } else if (row.kind === 'offer') {
+    text = '🥂 Wasted';
   }
   return { id: row.id, from: row.sender_id, kind: row.kind || 'text', text: String(text).slice(0, 140) };
 }
@@ -195,6 +242,12 @@ function broadcastMessageView(row) {
       const p = JSON.parse(row.body);
       text = p.final ? '🎬 The End' : `🎭 ${p.title || 'Roleplay'}`;
     } catch (_e) { text = '🎭 Roleplay'; }
+  } else if (kind === 'offer') {
+    try {
+      const o = JSON.parse(row.body);
+      const it = wasted.getItem(o.item);
+      text = it ? `🥂 ${it.emoji} ${it.label}` : '🥂 Wasted';
+    } catch (_e) { text = '🥂 Wasted'; }
   }
   return { from: row.sender_id, fromName: nameOf(row.sender_id), kind, text, at: row.created_at };
 }
@@ -237,6 +290,12 @@ function mirrorLiveMessage(io, from, to, kind, body, at) {
       const p = JSON.parse(body);
       text = p.final ? '🎬 The End' : `🎭 ${p.title || 'Roleplay'}`;
     } catch (_e) { text = '🎭 Roleplay'; }
+  } else if (kind === 'offer') {
+    try {
+      const o = JSON.parse(body);
+      const it = wasted.getItem(o.item);
+      text = it ? `🥂 ${it.emoji} ${it.label}` : '🥂 Wasted';
+    } catch (_e) { text = '🥂 Wasted'; }
   }
   io.to(broadcastRoom(b.token)).emit('broadcast:message', {
     from, fromName: nameOf(from), kind, text, at,
@@ -457,23 +516,36 @@ function initSocket(io) {
 
         const now = Date.now();
         const expiresAt = expiryFor(me.id, to);
+
+        // "Wasted": at the cap the message becomes "Completely Wasted"; below it
+        // random words may be spliced in. The stored/delivered body is the
+        // transformed one, so both users (and the sender's echo) see the same.
+        const senderScore = wasted.getScore(me.id, now);
+        const outBody = wasted.transformOutgoing(body, senderScore);
+
         const info = db
           .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at, expires_at) VALUES (?, ?, ?, 'text', ?, ?, ?)")
-          .run(me.id, to, body, replyTo, now, expiresAt);
+          .run(me.id, to, outBody, replyTo, now, expiresAt);
 
         const reply = replyPreview(replyTo);
-        const msg = { id: info.lastInsertRowid, from: me.id, to, body, kind: 'text', at: now, replyTo, reply, expiresAt };
+        const msg = { id: info.lastInsertRowid, from: me.id, to, body: outBody, kind: 'text', at: now, replyTo, reply, expiresAt };
 
         // Deliver to recipient's sockets and echo to sender's other tabs.
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
         socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
 
         // If this conversation is being broadcast, mirror it to watchers.
-        mirrorLiveMessage(io, me.id, to, 'text', body, now);
+        mirrorLiveMessage(io, me.id, to, 'text', outBody, now);
 
         // Count the message toward any active roleplay; reveal the next stage
         // when both players have hit the threshold.
         applyRoleplayOutcome(io, me.id, to, roleplay.recordMessage(me.id, to));
+
+        // Keep the sender's wasted meter fresh, and occasionally interrupt the
+        // chat with a random admin "wasted" sentence (a permanent message).
+        emitWastedScore(io, me.id, senderScore);
+        const sentence = wasted.maybeSentence();
+        if (sentence) deliverWastedSentence(io, me.id, to, sentence);
 
         ack && ack({ ok: true, message: { ...msg, mine: true } });
       } catch (e) {
@@ -590,6 +662,81 @@ function initSocket(io) {
 
         ack && ack({ ok: true, message: { ...msg, mine: true } });
       } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    /* -------------------- "Wasted" offers -------------------- */
+
+    // Offer a drink/substance to the other user. They can accept or reject.
+    socket.on('wasted:offer', (payload, ack) => {
+      try {
+        const to = parseInt(payload && payload.to, 10);
+        const item = wasted.getItem(payload && payload.item);
+        if (!to || !item) return ack && ack({ error: 'Invalid offer.' });
+        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
+        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
+        if (areBlocked(me.id, to)) {
+          return ack && ack({ error: 'You cannot offer this user anything — a block is in place.' });
+        }
+        const id = deliverOffer(io, me.id, to, { item: item.id, status: 'pending', by: me.id });
+        ack && ack({ ok: true, id });
+      } catch (_e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // Take a drink/substance yourself. Consumes immediately (no acceptance) and
+    // raises your own wasted score.
+    socket.on('wasted:self', (payload, ack) => {
+      try {
+        const to = parseInt(payload && payload.to, 10);
+        const item = wasted.getItem(payload && payload.item);
+        if (!to || !item) return ack && ack({ error: 'Invalid request.' });
+        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
+        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
+
+        deliverOffer(io, me.id, to, { item: item.id, status: 'self', by: me.id });
+        const score = wasted.consume(me.id);
+        emitWastedScore(io, me.id, score);
+        ack && ack({ ok: true, score });
+      } catch (_e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // Respond to a pending offer aimed at me: accept (consume + raise my score)
+    // or reject. Only the recipient of the offer may respond.
+    socket.on('wasted:respond', (payload, ack) => {
+      try {
+        const messageId = parseInt(payload && payload.messageId, 10);
+        const accept = !!(payload && payload.accept);
+        if (!messageId) return ack && ack({ error: 'Invalid response.' });
+
+        const row = db
+          .prepare("SELECT id, sender_id, recipient_id, body FROM messages WHERE id = ? AND kind = 'offer'")
+          .get(messageId);
+        if (!row) return ack && ack({ error: 'Offer not found.' });
+        if (row.recipient_id !== me.id) return ack && ack({ error: 'This offer is not for you.' });
+
+        let data;
+        try { data = JSON.parse(row.body); } catch (_e) { data = {}; }
+        if (data.status !== 'pending') return ack && ack({ error: 'This offer was already answered.' });
+
+        data.status = accept ? 'accepted' : 'rejected';
+        db.prepare('UPDATE messages SET body = ? WHERE id = ?').run(JSON.stringify(data), row.id);
+
+        const evt = { id: row.id, status: data.status };
+        io.to(`user:${row.sender_id}`).emit('wasted:update', evt);
+        io.to(`user:${row.recipient_id}`).emit('wasted:update', evt);
+
+        if (accept) {
+          const score = wasted.consume(me.id);
+          emitWastedScore(io, me.id, score);
+          return ack && ack({ ok: true, score });
+        }
+        ack && ack({ ok: true });
+      } catch (_e) {
         ack && ack({ error: 'Server error.' });
       }
     });

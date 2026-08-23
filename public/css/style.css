@@ -801,6 +801,71 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .gift-cell:hover .gift-emoji { animation: giftWiggle .5s ease-in-out infinite; }
 .gift-cell .gift-cell-name { font-size: 11px; color: var(--muted); }
 
+/* ---------- Wasted (offers, meter, sentences) ---------- */
+.wasted-picker {
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 12px 16px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.wasted-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.wasted-cell {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: var(--bg-3); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 6px; cursor: pointer; transition: border-color .12s, transform .12s;
+}
+.wasted-cell:hover { border-color: var(--accent); transform: translateY(-2px); }
+.wasted-cell.self:hover { border-color: var(--warn, #e0a800); }
+.wasted-cell .wasted-emoji { font-size: 26px; line-height: 1; }
+.wasted-cell .wasted-cell-name { font-size: 11px; color: var(--muted); }
+
+/* The intoxication meter under the chat header. */
+.wasted-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 16px; font-size: 12px;
+  background: var(--bg-2); border-bottom: 1px solid var(--border);
+}
+.wasted-bar .wasted-label { color: var(--muted); white-space: nowrap; }
+.wasted-bar .wasted-track {
+  flex: 1; height: 8px; border-radius: 999px; overflow: hidden;
+  background: var(--bg-3); border: 1px solid var(--border);
+}
+.wasted-bar .wasted-fill {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, #6ac06a, #e0a800 60%, #d9534f);
+  transition: width .3s ease;
+}
+.wasted-bar .wasted-num { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wasted-bar.maxed .wasted-label { color: var(--danger, #d9534f); font-weight: 600; }
+
+/* Offer bubbles. */
+.bubble.offer { display: flex; flex-direction: column; gap: 6px; }
+.bubble.offer .offer-head { line-height: 1.35; }
+.bubble.offer .offer-actions { display: flex; gap: 6px; }
+
+/* Random admin "wasted" sentence — a permanent centered system line. */
+.wasted-sentence {
+  align-self: center; text-align: center; max-width: 80%;
+  margin: 8px auto; padding: 6px 14px;
+  font-size: 13px; font-style: italic; color: var(--muted);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-2));
+  border: 1px dashed var(--border); border-radius: 12px;
+}
+
+/* Admin: removable word chips. */
+.wasted-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.wasted-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--bg-3); border: 1px solid var(--border);
+  border-radius: 999px; padding: 4px 6px 4px 12px; font-size: 13px;
+}
+.wasted-chip .wasted-x {
+  border: none; background: transparent; color: var(--muted);
+  cursor: pointer; font-size: 13px; line-height: 1; padding: 2px 4px; border-radius: 999px;
+}
+.wasted-chip .wasted-x:hover { color: var(--danger, #d9534f); }
+
 /* ---------- Roleplay ---------- */
 /* Progress banner above the composer. */
 .roleplay-bar {

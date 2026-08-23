@@ -592,6 +592,10 @@
             ${selectHtml('country', COUNTRIES, e.country, 'Select country')}
           </div>
           <div>
+            <label>Weight (kg) <span class="req">*</span></label>
+            <input type="number" id="weight" min="30" max="400" step="1" value="${esc(e.weight || '')}" placeholder="e.g. 70" />
+          </div>
+          <div>
             <label>Sexuality</label>
             ${selectHtml('sexuality', OPT.sexuality, e.sexuality, 'Select…')}
           </div>
@@ -679,6 +683,7 @@
       fd.append('gender', val('gender'));
       fd.append('dateOfBirth', val('dateOfBirth'));
       fd.append('country', val('country'));
+      fd.append('weight', val('weight'));
       fd.append('sexuality', val('sexuality'));
       fd.append('smokes', val('smokes'));
       fd.append('drinks', val('drinks'));
@@ -1409,6 +1414,7 @@
           <button class="ghost small" id="makeGroupBtn" title="Start a group chat with this person and others">👥 Group</button>
         </div>
         <div class="disappear-banner hidden" id="disappearBanner"></div>
+        <div class="wasted-bar hidden" id="wastedBar"></div>
         <div class="live-banner hidden" id="liveBanner"></div>
         <div class="chat-activity-bar hidden" id="activityBar">
           <div class="activity-status" id="activityStatus"></div>
@@ -1428,12 +1434,14 @@
         <div class="roleplay-bar hidden" id="roleplayBar"></div>
         <div class="gift-picker hidden" id="giftPicker"></div>
         <div class="rp-picker hidden" id="rpPicker"></div>
+        <div class="wasted-picker hidden" id="wastedPicker"></div>
         <div class="reply-banner hidden" id="replyBanner"></div>
         <div class="composer">
           <input type="file" id="fileInput" class="hidden" />
           <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
           <button class="icon-btn" id="giftBtn" title="Send a naughty gift">🎁</button>
           <button class="icon-btn" id="rpBtn" title="Start a roleplay story">🎭</button>
+          <button class="icon-btn" id="wastedBtn" title="Offer a drink or substance — get Wasted">🥂</button>
           <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" />
           <button class="primary" id="sendBtn">Send</button>
         </div>
@@ -1523,15 +1531,33 @@
       if (!rpPicker.contains(ev.target) && ev.target !== rpBtn) rpPicker.classList.add('hidden');
     });
 
+    // Wasted picker (offer a drink / substance, or take one yourself).
+    const wastedPicker = view.querySelector('#wastedPicker');
+    const wastedBtn = view.querySelector('#wastedBtn');
+    wastedBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!wastedPicker.classList.contains('hidden')) { wastedPicker.classList.add('hidden'); return; }
+      giftPicker.classList.add('hidden');
+      rpPicker.classList.add('hidden');
+      buildWastedPicker(wastedPicker);
+      wastedPicker.classList.remove('hidden');
+    });
+    document.addEventListener('click', function onWDocClick(ev) {
+      if (!document.body.contains(wastedPicker)) { document.removeEventListener('click', onWDocClick); return; }
+      if (!wastedPicker.contains(ev.target) && ev.target !== wastedBtn) wastedPicker.classList.add('hidden');
+    });
+
     // Load persisted history (text + gifts + roleplay narration).
     adState.counters.chat = 0; // restart the every-20-messages ad cadence per chat
     state.disappearing = 0;
     try {
-      const { messages, disappearing } = await api.get(`/api/users/${peer.id}/messages`);
+      const { messages, disappearing, wasted } = await api.get(`/api/users/${peer.id}/messages`);
       state.disappearing = disappearing || 0;
+      if (wasted) state.wasted = wasted;
       messages.forEach((m) => appendMessage(m));
     } catch (_e) {}
     updateDisappearBanner();
+    updateWastedBar();
     scrollBody();
 
     // Restore any active roleplay progress banner for this conversation.
@@ -1770,10 +1796,12 @@
   function appendMessage(m) {
     if (m.kind === 'gift') appendGiftBubble(m);
     else if (m.kind === 'narration') appendNarrationBubble(m.body, m.at);
+    else if (m.kind === 'offer') appendOfferBubble(m);
+    else if (m.kind === 'wasted') appendWastedSentence(m);
     else if (m.kind === 'voice') return; // legacy voice notes (feature removed)
     else appendTextBubble(m);
     // Advertisement after every 20 exchanged messages (text + gifts).
-    if (m.kind !== 'narration' && m.kind !== 'voice') {
+    if (m.kind !== 'narration' && m.kind !== 'voice' && m.kind !== 'offer' && m.kind !== 'wasted') {
       maybeInsertStreamAd(chatBody(), 'chat_inline', 'chat', 20);
     }
   }
@@ -1901,6 +1929,137 @@
     emoji.style.animation = 'none';
     void emoji.offsetWidth;
     emoji.style.animation = '';
+  }
+
+  /* ---------- "Wasted": offers, self-takes & the intoxication meter ---------- */
+
+  // Mirror of src/wasted.js ITEMS (drink + the three substances).
+  var WASTED_ITEMS = [
+    { id: 'drink', label: 'Drink', emoji: '🍺' },
+    { id: 'smoke', label: 'Smoke', emoji: '🚬' },
+    { id: 'powder', label: 'Powder', emoji: '❄️' },
+    { id: 'pills', label: 'Pills', emoji: '💊' },
+  ];
+  function wastedItem(id) { return WASTED_ITEMS.find((i) => i.id === id) || { id, label: 'Something', emoji: '🥂' }; }
+
+  // Build the picker: offer an item to the peer, or take one yourself.
+  function buildWastedPicker(picker) {
+    picker.innerHTML = '';
+    picker.appendChild(el('<div class="gift-picker-title">Offer a drink or substance</div>'));
+    const offerGrid = el('<div class="wasted-grid"></div>');
+    WASTED_ITEMS.forEach((it) => {
+      const cell = el(`<button class="wasted-cell" title="Offer ${esc(it.label)}"><span class="wasted-emoji">${esc(it.emoji)}</span><span class="wasted-cell-name">${esc(it.label)}</span></button>`);
+      cell.addEventListener('click', () => { offerWasted(it.id); picker.classList.add('hidden'); });
+      offerGrid.appendChild(cell);
+    });
+    picker.appendChild(offerGrid);
+    picker.appendChild(el('<div class="gift-picker-title" style="margin-top:8px">…or take one yourself</div>'));
+    const selfGrid = el('<div class="wasted-grid"></div>');
+    WASTED_ITEMS.forEach((it) => {
+      const cell = el(`<button class="wasted-cell self" title="Take ${esc(it.label)} yourself"><span class="wasted-emoji">${esc(it.emoji)}</span><span class="wasted-cell-name">${esc(it.label)}</span></button>`);
+      cell.addEventListener('click', () => { takeWasted(it.id); picker.classList.add('hidden'); });
+      selfGrid.appendChild(cell);
+    });
+    picker.appendChild(selfGrid);
+  }
+
+  function offerWasted(item) {
+    if (!state.peer || !state.socket) return;
+    state.socket.emit('wasted:offer', { to: state.peer.id, item }, (res) => {
+      if (res && res.error) notify(res.error);
+      // The offer bubble arrives (to both of us) over the socket.
+    });
+  }
+
+  function takeWasted(item) {
+    if (!state.peer || !state.socket) return;
+    state.socket.emit('wasted:self', { to: state.peer.id, item }, (res) => {
+      if (res && res.error) notify(res.error);
+      // The bubble and the updated score arrive over the socket.
+    });
+  }
+
+  function respondOffer(messageId, accept) {
+    if (!state.socket) return;
+    state.socket.emit('wasted:respond', { messageId, accept }, (res) => {
+      if (res && res.error) notify(res.error);
+    });
+  }
+
+  // Render an offer / self-take bubble. `m.body` is the JSON offer payload.
+  function appendOfferBubble(m) {
+    const b = chatBody();
+    if (!b) return;
+    let data = {};
+    try { data = typeof m.body === 'string' ? JSON.parse(m.body) : (m.body || {}); } catch (_e) { data = {}; }
+    const bubble = el(`<div class="bubble offer ${m.mine ? 'me' : 'them'}"></div>`);
+    if (m.id) bubble.dataset.offerId = m.id;
+    bubble._offer = data;
+    renderOfferInner(bubble, m.mine, m.at);
+    mountBubble(bubble, m);
+    scrollBody();
+  }
+
+  function renderOfferInner(bubble, mine, at) {
+    const data = bubble._offer || {};
+    const it = wastedItem(data.item);
+    const who = peerLabel();
+    let head; let actions = '';
+    if (data.status === 'self') {
+      head = mine ? `You took a ${it.emoji} ${esc(it.label)}` : `${esc(who)} took a ${it.emoji} ${esc(it.label)}`;
+    } else if (data.status === 'accepted') {
+      head = `${it.emoji} ${esc(it.label)} · accepted 🥂`;
+    } else if (data.status === 'rejected') {
+      head = `${it.emoji} ${esc(it.label)} · declined`;
+    } else if (mine) {
+      head = `You offered a ${it.emoji} ${esc(it.label)} — waiting…`;
+    } else {
+      head = `${esc(who)} offers you a ${it.emoji} ${esc(it.label)}`;
+      actions = '<div class="offer-actions"><button class="primary small" data-accept>Accept</button><button class="ghost small" data-reject>Reject</button></div>';
+    }
+    bubble.innerHTML = `<span class="offer-head">${head}</span>${actions}<span class="time">${fmtTime(at)}</span>`;
+    const acc = bubble.querySelector('[data-accept]');
+    const rej = bubble.querySelector('[data-reject]');
+    if (acc) acc.addEventListener('click', () => respondOffer(Number(bubble.dataset.offerId), true));
+    if (rej) rej.addEventListener('click', () => respondOffer(Number(bubble.dataset.offerId), false));
+  }
+
+  // A pending offer was answered — flip its bubble to accepted/rejected.
+  function updateOffer(id, status) {
+    const b = chatBody();
+    if (!b) return;
+    const bubble = b.querySelector(`.bubble.offer[data-offer-id="${id}"]`);
+    if (!bubble || !bubble._offer) return;
+    bubble._offer.status = status;
+    const mine = bubble.classList.contains('me');
+    // Preserve the original timestamp shown in the bubble.
+    const t = bubble.querySelector('.time');
+    renderOfferInner(bubble, mine, t ? t.textContent : Date.now());
+  }
+
+  // A random admin "wasted" sentence — a permanent centered system message.
+  function appendWastedSentence(m) {
+    const b = chatBody();
+    if (!b) return;
+    b.appendChild(el(`<div class="wasted-sentence">🥴 ${esc(m.body)}</div>`));
+    scrollBody();
+  }
+
+  // Paint the intoxication meter for the current viewer from state.wasted.
+  function updateWastedBar() {
+    const bar = document.getElementById('wastedBar');
+    if (!bar) return;
+    const w = state.wasted;
+    if (!w || !w.score) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
+    const max = w.max || 15;
+    const pct = Math.min(100, (w.score / max) * 100);
+    const maxed = w.maxed || w.score >= max;
+    bar.classList.remove('hidden');
+    bar.classList.toggle('maxed', maxed);
+    bar.innerHTML = `
+      <span class="wasted-label">${maxed ? '🥴 Completely Wasted' : '🥂 Wasted'}</span>
+      <span class="wasted-track"><span class="wasted-fill" style="width:${pct}%"></span></span>
+      <span class="wasted-num">${Math.round(w.score * 10) / 10}/${max}</span>`;
   }
 
   /* ---------- reply / quote ---------- */
@@ -2105,9 +2264,10 @@
     cancelReply();
     state.socket.emit('chat:message', { to: state.peer.id, body, replyTo }, (res) => {
       if (res && res.error) return notify(res.error);
-      // Echo is handled here for the sending tab.
+      // Echo is handled here for the sending tab. Use the server's returned body
+      // so "Wasted" transforms (spliced words / "Completely Wasted") show here too.
       const m = (res && res.message) || {};
-      appendTextBubble({ body, mine: true, at: m.at || Date.now(), id: m.id, reply: m.reply || replySnapshot, expiresAt: m.expiresAt });
+      appendTextBubble({ body: m.body != null ? m.body : body, mine: true, at: m.at || Date.now(), id: m.id, reply: m.reply || replySnapshot, expiresAt: m.expiresAt });
     });
   }
 
@@ -2716,6 +2876,17 @@
       if (e && e.messageId != null) updateReaction(e.messageId, e.userId, e.emoji);
     });
 
+    // My "Wasted" score changed (I consumed something / it decayed) — refresh
+    // the meter so the gauge and the "Completely Wasted" state stay current.
+    s.on('wasted:score', (e) => {
+      if (!e) return;
+      state.wasted = { score: e.score, max: e.max, maxed: e.maxed };
+      updateWastedBar();
+    });
+
+    // A pending offer was accepted/rejected — flip its bubble.
+    s.on('wasted:update', (e) => { if (e && e.id != null) updateOffer(e.id, e.status); });
+
     // Disappearing-messages setting changed for a conversation of mine.
     s.on('chat:disappearing', (e) => {
       const peerId = state.peer && state.peer.id;
@@ -2873,6 +3044,7 @@
 
     const detailsHtml = [
       detail('Sexuality', profile.sexuality, '🌈'),
+      detail('Weight', profile.weight ? `${profile.weight} kg` : null, '⚖️'),
       detail('Smokes', profile.smokes, '🚬'),
       detail('Drinks', profile.drinks, '🍷'),
       detail('Diet', profile.diet, '🥗'),

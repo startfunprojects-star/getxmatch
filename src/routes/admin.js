@@ -596,6 +596,51 @@ router.delete('/fake-activities/:id', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+/* ---------------- "Wasted" words & sentences ----------------
+   `words` are spliced at random into the messages of intoxicated users; the
+   drunker they are, the more often. `sentences` are whole lines that randomly
+   drop into a chat as permanent system messages seen by both users. */
+
+// GET /api/admin/wasted — both lists.
+router.get('/wasted', requireAdmin, (req, res) => {
+  const words = db.prepare('SELECT id, word, created_at FROM wasted_words ORDER BY created_at DESC').all();
+  const sentences = db.prepare('SELECT id, sentence, created_at FROM wasted_sentences ORDER BY created_at DESC').all();
+  res.json({
+    words: words.map((r) => ({ id: r.id, word: r.word, createdAt: r.created_at })),
+    sentences: sentences.map((r) => ({ id: r.id, sentence: r.sentence, createdAt: r.created_at })),
+  });
+});
+
+// POST /api/admin/wasted/words  { word }
+router.post('/wasted/words', requireAdmin, (req, res) => {
+  const word = ((req.body && req.body.word) || '').trim().slice(0, 60);
+  if (!word) return res.status(400).json({ error: 'A word is required.' });
+  const info = db.prepare('INSERT INTO wasted_words (word, created_at) VALUES (?, ?)').run(word, Date.now());
+  res.status(201).json({ id: info.lastInsertRowid });
+});
+
+// DELETE /api/admin/wasted/words/:id
+router.delete('/wasted/words/:id', requireAdmin, (req, res) => {
+  const info = db.prepare('DELETE FROM wasted_words WHERE id = ?').run(req.params.id);
+  if (!info.changes) return res.status(404).json({ error: 'Word not found.' });
+  res.json({ ok: true });
+});
+
+// POST /api/admin/wasted/sentences  { sentence }
+router.post('/wasted/sentences', requireAdmin, (req, res) => {
+  const sentence = ((req.body && req.body.sentence) || '').trim().slice(0, 300);
+  if (!sentence) return res.status(400).json({ error: 'A sentence is required.' });
+  const info = db.prepare('INSERT INTO wasted_sentences (sentence, created_at) VALUES (?, ?)').run(sentence, Date.now());
+  res.status(201).json({ id: info.lastInsertRowid });
+});
+
+// DELETE /api/admin/wasted/sentences/:id
+router.delete('/wasted/sentences/:id', requireAdmin, (req, res) => {
+  const info = db.prepare('DELETE FROM wasted_sentences WHERE id = ?').run(req.params.id);
+  if (!info.changes) return res.status(404).json({ error: 'Sentence not found.' });
+  res.json({ ok: true });
+});
+
 /* ---------------- Roleplay stories ----------------
    Interactive stories users play out in chat. Each roleplay has ordered stages
    (narration + optional image/gif). Stage images arrive as multipart fields
