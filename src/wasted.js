@@ -122,13 +122,6 @@ function injectWords(body, score) {
   return tokens.join(' ');
 }
 
-// Transform an outgoing message body for a sender at the given score: a maxed
-// user's message becomes "Completely Wasted"; otherwise words may be spliced in.
-function transformOutgoing(body, score) {
-  if (isMaxed(score)) return WASTED_MESSAGE;
-  return injectWords(body, score);
-}
-
 // Occasionally return a random admin "wasted" sentence to drop into a chat.
 // Chance is low so it feels like an ambient interruption, not spam.
 function maybeSentence(chance = 0.12) {
@@ -149,7 +142,6 @@ module.exports = {
   resetForUser,
   isMaxed,
   injectWords,
-  transformOutgoing,
   maybeSentence,
   words,
   sentences,

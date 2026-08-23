@@ -2272,8 +2272,11 @@
     cancelReply();
     state.socket.emit('chat:message', { to: state.peer.id, body, replyTo }, (res) => {
       if (res && res.error) return notify(res.error);
+      // Too wasted to speak: the server turned this into a centered narration
+      // that arrives over the socket — don't also append a text bubble here.
+      if (res && res.wasted) return;
       // Echo is handled here for the sending tab. Use the server's returned body
-      // so "Wasted" transforms (spliced words / "Completely Wasted") show here too.
+      // so spliced "Wasted" words show here too.
       const m = (res && res.message) || {};
       appendTextBubble({ body: m.body != null ? m.body : body, mine: true, at: m.at || Date.now(), id: m.id, reply: m.reply || replySnapshot, expiresAt: m.expiresAt });
     });

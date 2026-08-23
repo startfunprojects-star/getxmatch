@@ -518,11 +518,17 @@ function initSocket(io) {
         const now = Date.now();
         const expiresAt = expiryFor(me.id, to);
 
-        // "Wasted": at the cap the message becomes "Completely Wasted"; below it
-        // random words may be spliced in. The stored/delivered body is the
-        // transformed one, so both users (and the sender's echo) see the same.
+        // "Wasted": at the cap the user is too gone to speak — their message
+        // becomes a centered system narration ("Completely Wasted") instead of a
+        // chat bubble. Below the cap, random words may be spliced into what they
+        // actually say.
         const senderScore = wasted.getScore(me.id, to, now);
-        const outBody = wasted.transformOutgoing(body, senderScore);
+        if (wasted.isMaxed(senderScore)) {
+          deliverWastedSentence(io, me.id, to, wasted.WASTED_MESSAGE);
+          emitWastedScore(io, me.id, to, senderScore);
+          return ack && ack({ ok: true, wasted: true });
+        }
+        const outBody = wasted.injectWords(body, senderScore);
 
         const info = db
           .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at, expires_at) VALUES (?, ?, ?, 'text', ?, ?, ?)")
