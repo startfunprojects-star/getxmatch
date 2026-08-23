@@ -111,7 +111,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
     reactionsByMsg.get(r.message_id).push({ userId: r.user_id, emoji: r.emoji });
   }
 
-  const score = wasted.getScore(req.user.id, now);
+  const score = wasted.getScore(req.user.id, otherId, now);
 
   res.json({
     disappearing,

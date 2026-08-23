@@ -839,10 +839,18 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .wasted-bar .wasted-num { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .wasted-bar.maxed .wasted-label { color: var(--danger, #d9534f); font-weight: 600; }
 
-/* Offer bubbles. */
-.bubble.offer { display: flex; flex-direction: column; gap: 6px; }
-.bubble.offer .offer-head { line-height: 1.35; }
-.bubble.offer .offer-actions { display: flex; gap: 6px; }
+/* Offers & consumption — centered system narration (stays in the chat). */
+.wasted-offer {
+  align-self: center; text-align: center; max-width: 82%;
+  margin: 8px auto; padding: 8px 16px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 14px;
+}
+.wasted-offer .wasted-offer-text { line-height: 1.35; font-size: 13.5px; }
+.wasted-offer .offer-actions { display: flex; gap: 8px; }
+.wasted-offer .wasted-offer-time { font-size: 10px; color: var(--muted); }
 
 /* Random admin "wasted" sentence — a permanent centered system line. */
 .wasted-sentence {

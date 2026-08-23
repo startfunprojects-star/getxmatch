@@ -11,14 +11,8 @@ const db = require('./db');
 
 const MAX_SCORE = 15;
 
-// At/above this the user is "completely wasted" (messages become the fixed
-// phrase). It sits just under the cap so that reaching 15 counts as wasted for
-// a meaningful window even as the score immediately begins to decay — otherwise
-// the state would be unreachable (a freshly-capped score reads a hair under 15).
-const WASTED_THRESHOLD = MAX_SCORE - 0.5;
-
-// How fast a maxed-out user sobers up: 1 point every 30 minutes.
-const DECAY_PER_MS = 1 / (30 * 60 * 1000);
+// A conversation's score fully resets to 0 this long after the last consumption.
+const RESET_MS = 15 * 60 * 1000;
 
 // The text a fully-wasted user's messages are replaced with.
 const WASTED_MESSAGE = 'Completely Wasted';
@@ -51,20 +45,19 @@ function incrementForWeight(weight) {
   return 0.25;
 }
 
-// Apply time-decay to a stored score. Read-only: the decayed value is what the
-// rest of the app should treat as "current"; it's persisted on the next write.
-function decayed(score, updatedAt, now) {
-  if (!score || score <= 0) return 0;
-  if (!updatedAt) return clamp(score);
-  const elapsed = Math.max(0, now - updatedAt);
-  return clamp(score - elapsed * DECAY_PER_MS);
+// The stored score is valid only within the reset window; once RESET_MS has
+// elapsed since the last consumption it counts as 0 (the user has sobered up).
+function windowed(score, updatedAt, now) {
+  if (!score || score <= 0 || !updatedAt) return 0;
+  if (now - updatedAt >= RESET_MS) return 0;
+  return clamp(score);
 }
 
-// The user's current (decayed) wasted score.
-function getScore(userId, now = Date.now()) {
-  const row = db.prepare('SELECT wasted_score, wasted_updated_at FROM users WHERE id = ?').get(userId);
+// A user's current wasted score in the conversation with `peerId`.
+function getScore(userId, peerId, now = Date.now()) {
+  const row = db.prepare('SELECT score, updated_at FROM wasted_scores WHERE user_id = ? AND peer_id = ?').get(userId, peerId);
   if (!row) return 0;
-  return decayed(row.wasted_score, row.wasted_updated_at, now);
+  return windowed(row.score, row.updated_at, now);
 }
 
 function weightOf(userId) {
@@ -72,17 +65,25 @@ function weightOf(userId) {
   return p ? p.weight : null;
 }
 
-// Register one consumption for a user and persist the new score. Returns the
-// new (clamped) score.
-function consume(userId, now = Date.now()) {
-  const current = getScore(userId, now);
+// Register one consumption for a user in a specific conversation and persist the
+// new score. Returns the new (clamped) score.
+function consume(userId, peerId, now = Date.now()) {
+  const current = getScore(userId, peerId, now);
   const next = clamp(current + incrementForWeight(weightOf(userId)));
-  db.prepare('UPDATE users SET wasted_score = ?, wasted_updated_at = ? WHERE id = ?').run(next, now, userId);
+  db.prepare(
+    `INSERT INTO wasted_scores (user_id, peer_id, score, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id, peer_id) DO UPDATE SET score = excluded.score, updated_at = excluded.updated_at`
+  ).run(userId, peerId, next, now);
   return next;
 }
 
+// Wipe every conversation score for a user — called when they log in afresh.
+function resetForUser(userId) {
+  db.prepare('DELETE FROM wasted_scores WHERE user_id = ?').run(userId);
+}
+
 function isMaxed(score) {
-  return score >= WASTED_THRESHOLD;
+  return score >= MAX_SCORE;
 }
 
 /* -------------------------------------------------------------------------
@@ -145,6 +146,7 @@ module.exports = {
   incrementForWeight,
   getScore,
   consume,
+  resetForUser,
   isMaxed,
   injectWords,
   transformOutgoing,

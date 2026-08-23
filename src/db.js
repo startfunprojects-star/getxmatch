@@ -621,6 +621,18 @@ db.exec(`
     sentence   TEXT NOT NULL,
     created_at INTEGER NOT NULL
   );
+
+  -- Per-conversation intoxication score. Directional: user_id's "wasted" level
+  -- in their chat with peer_id (so the same person can be sober in one chat and
+  -- hammered in another). Resets to 0 after 15 minutes (see src/wasted.js) and
+  -- is wiped for a user when they log in again.
+  CREATE TABLE IF NOT EXISTS wasted_scores (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    peer_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    score      REAL NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, peer_id)
+  );
 `);
 
 // Seed the single admin row (email from config). Never overwrites an existing

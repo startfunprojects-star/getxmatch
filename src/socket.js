@@ -102,11 +102,12 @@ function applyRoleplayOutcome(io, senderId, otherId, outcome) {
    "Wasted" helpers
 -------------------------------------------------------------------------- */
 
-// Tell a user (all their tabs) their current wasted score, so the UI can show
-// the meter and gate sending once they hit the cap.
-function emitWastedScore(io, userId, score) {
+// Tell a user (all their tabs) their current wasted score for a specific
+// conversation, so the UI can show the meter and gate sending at the cap.
+function emitWastedScore(io, userId, peerId, score) {
   io.to(`user:${userId}`).emit('wasted:score', {
     userId,
+    peerId,
     score: Math.round(score * 100) / 100,
     max: wasted.MAX_SCORE,
     maxed: wasted.isMaxed(score),
@@ -520,7 +521,7 @@ function initSocket(io) {
         // "Wasted": at the cap the message becomes "Completely Wasted"; below it
         // random words may be spliced in. The stored/delivered body is the
         // transformed one, so both users (and the sender's echo) see the same.
-        const senderScore = wasted.getScore(me.id, now);
+        const senderScore = wasted.getScore(me.id, to, now);
         const outBody = wasted.transformOutgoing(body, senderScore);
 
         const info = db
@@ -543,7 +544,7 @@ function initSocket(io) {
 
         // Keep the sender's wasted meter fresh, and occasionally interrupt the
         // chat with a random admin "wasted" sentence (a permanent message).
-        emitWastedScore(io, me.id, senderScore);
+        emitWastedScore(io, me.id, to, senderScore);
         const sentence = wasted.maybeSentence();
         if (sentence) deliverWastedSentence(io, me.id, to, sentence);
 
@@ -697,8 +698,8 @@ function initSocket(io) {
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
 
         deliverOffer(io, me.id, to, { item: item.id, status: 'self', by: me.id });
-        const score = wasted.consume(me.id);
-        emitWastedScore(io, me.id, score);
+        const score = wasted.consume(me.id, to);
+        emitWastedScore(io, me.id, to, score);
         ack && ack({ ok: true, score });
       } catch (_e) {
         ack && ack({ error: 'Server error.' });
@@ -731,8 +732,10 @@ function initSocket(io) {
         io.to(`user:${row.recipient_id}`).emit('wasted:update', evt);
 
         if (accept) {
-          const score = wasted.consume(me.id);
-          emitWastedScore(io, me.id, score);
+          // The recipient (me) consumes; the score applies to this conversation
+          // (with the offerer).
+          const score = wasted.consume(me.id, row.sender_id);
+          emitWastedScore(io, me.id, row.sender_id, score);
           return ack && ack({ ok: true, score });
         }
         ack && ack({ ok: true });

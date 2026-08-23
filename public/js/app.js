@@ -1986,55 +1986,63 @@
     });
   }
 
-  // Render an offer / self-take bubble. `m.body` is the JSON offer payload.
+  // Render an offer / self-take / consumption as a CENTERED system narration
+  // (like a roleplay card), not a chat bubble from a user. It stays in the chat.
   function appendOfferBubble(m) {
     const b = chatBody();
     if (!b) return;
     let data = {};
     try { data = typeof m.body === 'string' ? JSON.parse(m.body) : (m.body || {}); } catch (_e) { data = {}; }
-    const bubble = el(`<div class="bubble offer ${m.mine ? 'me' : 'them'}"></div>`);
-    if (m.id) bubble.dataset.offerId = m.id;
-    bubble._offer = data;
-    renderOfferInner(bubble, m.mine, m.at);
-    mountBubble(bubble, m);
+    const card = el('<div class="wasted-offer"></div>');
+    if (m.id) card.dataset.offerId = m.id;
+    card._offer = data;
+    card._mine = !!m.mine;
+    card._at = m.at;
+    renderOfferInner(card);
+    b.appendChild(card);
     scrollBody();
   }
 
-  function renderOfferInner(bubble, mine, at) {
-    const data = bubble._offer || {};
+  // The third-person system narration line for an offer / consumption.
+  function offerNarrationText(data, mine) {
     const it = wastedItem(data.item);
-    const who = peerLabel();
-    let head; let actions = '';
-    if (data.status === 'self') {
-      head = mine ? `You took a ${it.emoji} ${esc(it.label)}` : `${esc(who)} took a ${it.emoji} ${esc(it.label)}`;
-    } else if (data.status === 'accepted') {
-      head = `${it.emoji} ${esc(it.label)} · accepted 🥂`;
-    } else if (data.status === 'rejected') {
-      head = `${it.emoji} ${esc(it.label)} · declined`;
-    } else if (mine) {
-      head = `You offered a ${it.emoji} ${esc(it.label)} — waiting…`;
-    } else {
-      head = `${esc(who)} offers you a ${it.emoji} ${esc(it.label)}`;
-      actions = '<div class="offer-actions"><button class="primary small" data-accept>Accept</button><button class="ghost small" data-reject>Reject</button></div>';
+    const who = esc(peerLabel());
+    const item = `${it.emoji} ${esc(it.label)}`;
+    switch (data.status) {
+      case 'self':
+        return mine ? `You poured yourself a ${item}` : `${who} poured themselves a ${item}`;
+      case 'accepted':
+        return mine ? `${who} accepted your ${item}` : `You accepted ${who}'s ${item}`;
+      case 'rejected':
+        return mine ? `${who} turned down your ${item}` : `You turned down ${who}'s ${item}`;
+      case 'pending':
+      default:
+        return mine ? `You offered ${who} a ${item}…` : `${who} offers you a ${item}`;
     }
-    bubble.innerHTML = `<span class="offer-head">${head}</span>${actions}<span class="time">${fmtTime(at)}</span>`;
-    const acc = bubble.querySelector('[data-accept]');
-    const rej = bubble.querySelector('[data-reject]');
-    if (acc) acc.addEventListener('click', () => respondOffer(Number(bubble.dataset.offerId), true));
-    if (rej) rej.addEventListener('click', () => respondOffer(Number(bubble.dataset.offerId), false));
   }
 
-  // A pending offer was answered — flip its bubble to accepted/rejected.
+  function renderOfferInner(card) {
+    const data = card._offer || {};
+    const mine = card._mine;
+    const pending = data.status === 'pending' && !mine;
+    const actions = pending
+      ? '<div class="offer-actions"><button class="primary small" data-accept>Accept</button><button class="ghost small" data-reject>Reject</button></div>'
+      : '';
+    card.innerHTML = `<span class="wasted-offer-text">🥂 ${offerNarrationText(data, mine)}</span>${actions}<span class="wasted-offer-time">${fmtTime(card._at)}</span>`;
+    const acc = card.querySelector('[data-accept]');
+    const rej = card.querySelector('[data-reject]');
+    if (acc) acc.addEventListener('click', () => respondOffer(Number(card.dataset.offerId), true));
+    if (rej) rej.addEventListener('click', () => respondOffer(Number(card.dataset.offerId), false));
+  }
+
+  // A pending offer was answered — update its narration in place.
   function updateOffer(id, status) {
     const b = chatBody();
     if (!b) return;
-    const bubble = b.querySelector(`.bubble.offer[data-offer-id="${id}"]`);
-    if (!bubble || !bubble._offer) return;
-    bubble._offer.status = status;
-    const mine = bubble.classList.contains('me');
-    // Preserve the original timestamp shown in the bubble.
-    const t = bubble.querySelector('.time');
-    renderOfferInner(bubble, mine, t ? t.textContent : Date.now());
+    const card = b.querySelector(`.wasted-offer[data-offer-id="${id}"]`);
+    if (!card || !card._offer) return;
+    card._offer.status = status;
+    renderOfferInner(card);
   }
 
   // A random admin "wasted" sentence — a permanent centered system message.
@@ -2880,6 +2888,9 @@
     // the meter so the gauge and the "Completely Wasted" state stay current.
     s.on('wasted:score', (e) => {
       if (!e) return;
+      const peerId = state.peer && state.peer.id;
+      // Scores are per-conversation now — only update the meter for the open chat.
+      if (e.peerId != null && peerId !== e.peerId) return;
       state.wasted = { score: e.score, max: e.max, maxed: e.maxed };
       updateWastedBar();
     });
