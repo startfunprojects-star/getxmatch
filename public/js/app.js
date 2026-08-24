@@ -1115,6 +1115,7 @@
         <div class="wasted-bar hidden" id="wastedBar"></div>
         <div class="chat-body" id="chatBody"></div>
         <div class="wasted-picker hidden" id="wastedPicker"></div>
+        <div class="composer-preview hidden" id="composerPreview"></div>
         <div class="composer">
           <input type="text" id="msgInput" placeholder="Message the group…" autocomplete="off" />
           <button class="icon-btn" id="wastedBtn" title="Offer a drink or substance — get Wasted">🥂</button>
@@ -1147,6 +1148,7 @@
     const send = () => sendGroupMessage(input);
     view.querySelector('#sendBtn').addEventListener('click', send);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+    input.addEventListener('input', () => updateComposerPreview(input.value));
 
     // Wasted picker (offer to the group, or take one yourself).
     const wastedPicker = view.querySelector('#wastedPicker');
@@ -1173,8 +1175,9 @@
     if (!body || !state.socket || !state.group) return;
     const gid = state.group.gid;
     input.value = '';
+    clearComposerPreview();
     state.socket.emit('group:message', { groupId: gid, body }, (res) => {
-      if (res && res.error) { notify(res.error); input.value = body; }
+      if (res && res.error) { notify(res.error); input.value = body; updateComposerPreview(body); }
     });
   }
 
@@ -1458,6 +1461,7 @@
         <div class="rp-picker hidden" id="rpPicker"></div>
         <div class="wasted-picker hidden" id="wastedPicker"></div>
         <div class="reply-banner hidden" id="replyBanner"></div>
+        <div class="composer-preview hidden" id="composerPreview"></div>
         <div class="composer">
           <input type="file" id="fileInput" class="hidden" />
           <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
@@ -1505,6 +1509,7 @@
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
     input.addEventListener('input', () => {
       if (state.socket) state.socket.emit('chat:typing', { to: peer.id });
+      updateComposerPreview(input.value);
     });
 
     const fileInput = view.querySelector('#fileInput');
@@ -1709,8 +1714,48 @@
   const isImageUrl = (url) => /\.(jpe?g|png|gif|webp|bmp|svg)(\?|#|$)/i.test(url);
   const isVideoUrl = (url) => /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url);
 
-  // Append `text` to `container`, turning URLs into links and embedding any
-  // image / video / YouTube links as playable media below the text.
+  // True when a URL points at something we can render inline (a YouTube video,
+  // an image file, or a direct video file).
+  function isMediaUrl(url) {
+    return !!youtubeId(url) || isImageUrl(url) || isVideoUrl(url);
+  }
+
+  // Build a playable/viewable DOM node for a media URL (YouTube embed, image, or
+  // video), or null if the URL isn't media. `opts.onImgError` is called if an
+  // image fails to load, so callers can fall back to a plain link.
+  function createMediaNode(url, opts) {
+    opts = opts || {};
+    const yt = youtubeId(url);
+    if (yt) {
+      const f = document.createElement('iframe');
+      f.className = 'msg-embed';
+      f.src = 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(yt);
+      f.setAttribute('allow', 'accelerometer; encrypted-media; picture-in-picture');
+      f.setAttribute('allowfullscreen', '');
+      f.loading = 'lazy';
+      return f;
+    }
+    if (isImageUrl(url)) {
+      const link = document.createElement('a');
+      link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      const img = document.createElement('img');
+      img.className = 'msg-img'; img.loading = 'lazy'; img.src = url;
+      if (opts.onImgError) img.addEventListener('error', opts.onImgError);
+      link.appendChild(img);
+      return link;
+    }
+    if (isVideoUrl(url)) {
+      const v = document.createElement('video');
+      v.className = 'msg-video'; v.controls = true; v.preload = 'metadata'; v.src = url;
+      return v;
+    }
+    return null;
+  }
+
+  // Append `text` to `container`. Image / video / YouTube links are shown ONLY as
+  // the inline thumbnail/player — the raw URL text is hidden. Any other URL stays
+  // a normal clickable link. If an image link fails to load, its URL is restored
+  // as a visible link so nothing is silently lost.
   function appendRichText(container, text) {
     const str = String(text == null ? '' : text);
     const textWrap = document.createElement('span');
@@ -1724,37 +1769,85 @@
     while ((m = re.exec(str)) !== null) {
       const url = m[0];
       if (m.index > last) textWrap.appendChild(document.createTextNode(str.slice(last, m.index)));
+      last = m.index + url.length;
+
+      if (isMediaUrl(url)) {
+        let node;
+        node = createMediaNode(url, {
+          onImgError: () => {
+            // Image didn't load — drop the broken thumbnail and show the URL as a
+            // link instead, so the shared link is never lost.
+            if (node && node.parentNode) node.remove();
+            const a = document.createElement('a');
+            a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+            a.className = 'msg-link'; a.textContent = url;
+            textWrap.appendChild(document.createTextNode(' '));
+            textWrap.appendChild(a);
+          },
+        });
+        if (node) {
+          media.appendChild(node); hasMedia = true;
+          // URL text intentionally omitted — the media stands in for the link.
+          continue;
+        }
+      }
+      // Non-media URL: keep it visible as a clickable link.
       const a = document.createElement('a');
       a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
       a.className = 'msg-link'; a.textContent = url;
       textWrap.appendChild(a);
-      last = m.index + url.length;
-
-      const yt = youtubeId(url);
-      if (yt) {
-        const f = document.createElement('iframe');
-        f.className = 'msg-embed';
-        f.src = 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(yt);
-        f.setAttribute('allow', 'accelerometer; encrypted-media; picture-in-picture');
-        f.setAttribute('allowfullscreen', '');
-        f.loading = 'lazy';
-        media.appendChild(f); hasMedia = true;
-      } else if (isImageUrl(url)) {
-        const link = document.createElement('a');
-        link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer';
-        const img = document.createElement('img');
-        img.className = 'msg-img'; img.loading = 'lazy'; img.src = url;
-        img.addEventListener('error', () => link.remove());
-        link.appendChild(img); media.appendChild(link); hasMedia = true;
-      } else if (isVideoUrl(url)) {
-        const v = document.createElement('video');
-        v.className = 'msg-video'; v.controls = true; v.preload = 'metadata'; v.src = url;
-        media.appendChild(v); hasMedia = true;
-      }
     }
     if (last < str.length) textWrap.appendChild(document.createTextNode(str.slice(last)));
     container.appendChild(textWrap);
     if (hasMedia) container.appendChild(media);
+  }
+
+  // ---- Composer live preview -------------------------------------------------
+  // While the user is typing, any image / video / YouTube link they've entered is
+  // previewed below the input as a thumbnail/player, shown ALONGSIDE the link
+  // text (the URL stays in the input and is labelled in the preview). Cleared on
+  // send. Both the 1:1 and group composers share one #composerPreview element.
+
+  function extractMediaUrls(text) {
+    const out = [];
+    const re = new RegExp(URL_RE.source, 'gi');
+    let m;
+    while ((m = re.exec(String(text == null ? '' : text))) !== null) {
+      if (isMediaUrl(m[0])) out.push(m[0]);
+    }
+    return out;
+  }
+
+  function updateComposerPreview(text) {
+    const box = document.getElementById('composerPreview');
+    if (!box) return;
+    const urls = extractMediaUrls(text);
+    const sig = urls.join('\n');
+    // Rebuild only when the set of media links changes, so embeds don't reload on
+    // every keystroke.
+    if (box.dataset.sig === sig) return;
+    box.dataset.sig = sig;
+    box.innerHTML = '';
+    if (!urls.length) { box.classList.add('hidden'); return; }
+    urls.forEach((url) => {
+      const item = el('<div class="cp-item"></div>');
+      const a = document.createElement('a');
+      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.className = 'cp-link'; a.textContent = url;
+      item.appendChild(a);
+      const node = createMediaNode(url);
+      if (node) item.appendChild(node);
+      box.appendChild(item);
+    });
+    box.classList.remove('hidden');
+  }
+
+  function clearComposerPreview() {
+    const box = document.getElementById('composerPreview');
+    if (!box) return;
+    box.dataset.sig = '';
+    box.innerHTML = '';
+    box.classList.add('hidden');
   }
 
   // "Internal monologue": a message whose body starts with "/" followed by a
@@ -2370,6 +2463,7 @@
     const body = input.value.trim();
     if (!body || !state.peer || !state.socket) return;
     input.value = '';
+    clearComposerPreview();
     // Capture and clear the reply target before the round-trip.
     const replyTo = state.replyTo ? state.replyTo.id : null;
     const replySnapshot = state.replyTo
