@@ -7,10 +7,15 @@
 // here, with sensible fallbacks derived from the content itself.
 
 const config = require('./config');
+const settings = require('./settings');
 
 const SITE_NAME = 'getxmatch';
 const SITE_TAGLINE = 'A lightweight social space for adults — profiles, galleries, quizzes, polls and real-time chat.';
 const DEFAULT_OG_TYPE = 'website';
+
+// The home page's default <title>, used when the admin hasn't set a site-wide
+// meta title. Mirrors the static title baked into public/index.html.
+const DEFAULT_HOME_TITLE = 'getxmatch — profiles, quizzes, polls & real-time chat';
 
 // Brand assets (served from /public). The OG cover is the fallback social-share
 // image used whenever a page has no image of its own; the logo feeds the
@@ -19,13 +24,36 @@ const SITE_LOGO = '/assets/logo.svg';
 const SITE_OG_IMAGE = '/assets/og-cover.svg';
 
 // Optional social presence for the Organization `sameAs` and the Twitter card
-// `site` handle. Configured via env so they can be set per-deployment without a
-// code change; empty by default so nothing bogus is emitted.
-const TWITTER_HANDLE = (process.env.TWITTER_HANDLE || '').trim();
-const SOCIAL_LINKS = (process.env.SOCIAL_LINKS || '')
+// `site` handle. Configured via env as a per-deployment fallback; the admin's
+// site-wide SEO settings (below) take precedence when set.
+const ENV_TWITTER_HANDLE = (process.env.TWITTER_HANDLE || '').trim();
+const ENV_SOCIAL_LINKS = (process.env.SOCIAL_LINKS || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+
+// Live, admin-editable site-wide SEO defaults, merged over the brand constants
+// above. Every page (home + content + informational) draws its site name,
+// tagline, social-share image, Twitter handle and Organization profile links
+// from here, so the admin's "On-page SEO" settings apply application-wide.
+function siteConfig() {
+  const s = settings.getSiteSeo() || {};
+  const socialLinks = Array.isArray(s.socialLinks) && s.socialLinks.length
+    ? s.socialLinks
+    : ENV_SOCIAL_LINKS;
+  return {
+    settings: s,
+    name: (s.siteName || '').trim() || SITE_NAME,
+    tagline: (s.metaDescription || '').trim() || SITE_TAGLINE,
+    ogImage: (s.ogImage || '').trim() || SITE_OG_IMAGE,
+    ogType: (s.ogType || '').trim() || DEFAULT_OG_TYPE,
+    twitterSite: (s.twitterSite || '').trim() || ENV_TWITTER_HANDLE,
+    twitterCreator: (s.twitterCreator || '').trim(),
+    facebookAppId: (s.facebookAppId || '').trim(),
+    themeColor: (s.themeColor || '').trim() || '#0f1117',
+    socialLinks,
+  };
+}
 
 // HTML-escape text for safe interpolation into markup.
 function esc(s) {
@@ -83,16 +111,19 @@ function summarize(text, n = 160) {
 //   type           OG type (website / article)
 function resolveSeo(seo, { canonicalPath, title, description, image, type }) {
   seo = seo || {};
-  const metaTitle = (seo.metaTitle || title || SITE_NAME).slice(0, 70);
-  const fullTitle = metaTitle === SITE_NAME ? SITE_NAME : `${metaTitle} · ${SITE_NAME}`;
-  const metaDescription = (seo.metaDescription || description || SITE_TAGLINE).slice(0, 320);
+  const cfg = siteConfig();
+  const siteName = cfg.name;
+  const metaTitle = (seo.metaTitle || title || siteName).slice(0, 70);
+  const fullTitle = metaTitle === siteName ? siteName : `${metaTitle} · ${siteName}`;
+  const metaDescription = (seo.metaDescription || description || cfg.tagline).slice(0, 320);
   const canonical = absUrl(seo.canonicalUrl || canonicalPath);
   // Fall back to the site-wide social cover so every page shares a rich preview.
-  const rawImage = seo.ogImage || seo.twitterImage || image || SITE_OG_IMAGE;
+  const rawImage = seo.ogImage || seo.twitterImage || image || cfg.ogImage;
   const ogImage = rawImage;
   return {
     title: fullTitle,
     metaTitle,
+    siteName,
     description: metaDescription,
     keywords: seo.metaKeywords || '',
     canonical,
@@ -100,9 +131,12 @@ function resolveSeo(seo, { canonicalPath, title, description, image, type }) {
     nofollow: !!seo.nofollow,
     ogTitle: seo.ogTitle || metaTitle,
     ogDescription: seo.ogDescription || metaDescription,
-    ogType: seo.ogType || type || DEFAULT_OG_TYPE,
+    ogType: seo.ogType || type || cfg.ogType,
     ogImage: ogImage ? absUrl(ogImage) : '',
     twitterCard: seo.twitterCard || (ogImage ? 'summary_large_image' : 'summary'),
+    twitterSite: cfg.twitterSite,
+    twitterCreator: cfg.twitterCreator,
+    facebookAppId: cfg.facebookAppId,
     twitterTitle: seo.twitterTitle || seo.ogTitle || metaTitle,
     twitterDescription: seo.twitterDescription || seo.ogDescription || metaDescription,
     twitterImage: (seo.twitterImage || ogImage) ? absUrl(seo.twitterImage || ogImage) : '',
@@ -112,14 +146,15 @@ function resolveSeo(seo, { canonicalPath, title, description, image, type }) {
 // Build the <head> meta block from a resolved SEO descriptor.
 function headTags(s) {
   const robots = [s.noindex ? 'noindex' : 'index', s.nofollow ? 'nofollow' : 'follow'].join(', ');
+  const siteName = s.siteName || SITE_NAME;
   const tags = [
     `<title>${esc(s.title)}</title>`,
     `<meta name="description" content="${escAttr(s.description)}" />`,
     s.keywords ? `<meta name="keywords" content="${escAttr(s.keywords)}" />` : '',
     `<meta name="robots" content="${robots}" />`,
     `<link rel="canonical" href="${escAttr(s.canonical)}" />`,
-    // Open Graph
-    `<meta property="og:site_name" content="${escAttr(SITE_NAME)}" />`,
+    // Open Graph — Facebook, Instagram, Reddit, WhatsApp, LinkedIn, Slack, …
+    `<meta property="og:site_name" content="${escAttr(siteName)}" />`,
     `<meta property="og:title" content="${escAttr(s.ogTitle)}" />`,
     `<meta property="og:description" content="${escAttr(s.ogDescription)}" />`,
     `<meta property="og:type" content="${escAttr(s.ogType)}" />`,
@@ -129,12 +164,15 @@ function headTags(s) {
     s.ogImage ? `<meta property="og:image:width" content="1200" />` : '',
     s.ogImage ? `<meta property="og:image:height" content="630" />` : '',
     `<meta property="og:locale" content="en_US" />`,
-    // Twitter
+    s.facebookAppId ? `<meta property="fb:app_id" content="${escAttr(s.facebookAppId)}" />` : '',
+    // Twitter / X
     `<meta name="twitter:card" content="${escAttr(s.twitterCard)}" />`,
-    TWITTER_HANDLE ? `<meta name="twitter:site" content="${escAttr(TWITTER_HANDLE)}" />` : '',
+    s.twitterSite ? `<meta name="twitter:site" content="${escAttr(s.twitterSite)}" />` : '',
+    s.twitterCreator ? `<meta name="twitter:creator" content="${escAttr(s.twitterCreator)}" />` : '',
     `<meta name="twitter:title" content="${escAttr(s.twitterTitle)}" />`,
     `<meta name="twitter:description" content="${escAttr(s.twitterDescription)}" />`,
     s.twitterImage ? `<meta name="twitter:image" content="${escAttr(s.twitterImage)}" />` : '',
+    s.twitterImage ? `<meta name="twitter:image:alt" content="${escAttr(s.twitterTitle)}" />` : '',
   ];
   return tags.filter(Boolean).join('\n  ');
 }
@@ -166,27 +204,29 @@ function breadcrumbLd(crumbs) {
 // Organization structured data — logo + optional social profiles. Emitted on
 // the home page so Google can build a Knowledge-Graph entry for the brand.
 function organizationLd() {
+  const cfg = siteConfig();
   const org = {
     '@context': 'https://schema.org',
     '@type': 'Organization',
-    name: SITE_NAME,
+    name: cfg.name,
     url: absUrl('/'),
     logo: absUrl(SITE_LOGO),
-    description: SITE_TAGLINE,
+    description: cfg.tagline,
   };
-  if (SOCIAL_LINKS.length) org.sameAs = SOCIAL_LINKS;
+  if (cfg.socialLinks.length) org.sameAs = cfg.socialLinks;
   return org;
 }
 
 // WebSite structured data with a Sitelinks Search Box action, so Google can
 // surface an in-site search field under the brand result.
 function websiteLd() {
+  const cfg = siteConfig();
   return {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
-    name: SITE_NAME,
+    name: cfg.name,
     url: absUrl('/'),
-    description: SITE_TAGLINE,
+    description: cfg.tagline,
     potentialAction: {
       '@type': 'SearchAction',
       target: { '@type': 'EntryPoint', urlTemplate: absUrl('/search?q={search_term_string}') },
@@ -399,6 +439,8 @@ module.exports = {
   SITE_TAGLINE,
   SITE_LOGO,
   SITE_OG_IMAGE,
+  DEFAULT_HOME_TITLE,
+  siteConfig,
   esc,
   escAttr,
   absUrl,
@@ -406,6 +448,7 @@ module.exports = {
   itemPath,
   summarize,
   resolveSeo,
+  headTags,
   jsonLdTag,
   breadcrumbLd,
   breadcrumbHtml,

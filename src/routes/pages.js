@@ -14,6 +14,7 @@ const express = require('express');
 const db = require('../db');
 const config = require('../config');
 const seo = require('../seo');
+const settings = require('../settings');
 const ads = require('../ads');
 const hw = require('../highway');
 
@@ -78,30 +79,55 @@ function parseJson(raw, fallback) {
   }
 }
 
-const { esc, escAttr, itemPath, slugify, summarize, resolveSeo, jsonLdTag, breadcrumbLd, breadcrumbHtml, organizationLd, websiteLd, renderUserText, renderDocument, absUrl, SITE_NAME, SITE_TAGLINE, SITE_OG_IMAGE } = seo;
+const { esc, escAttr, itemPath, slugify, summarize, resolveSeo, headTags, jsonLdTag, breadcrumbLd, breadcrumbHtml, organizationLd, websiteLd, renderUserText, renderDocument, absUrl, SITE_NAME, SITE_TAGLINE, SITE_OG_IMAGE, DEFAULT_HOME_TITLE, siteConfig } = seo;
 
-// Landing page: serve the SPA shell, but inject the absolute canonical / OG URLs
-// and the default social-share image (all domain-dependent, so done here rather
-// than in the static file) plus WebSite + Organization structured data. The app
-// markup and scripts are untouched.
-let homeHtmlCache = null;
+// The static SEO tags baked into public/index.html — the ones the admin's
+// site-wide settings replace on the landing page. Stripped before the injected,
+// admin-controlled set is added, so nothing is duplicated.
+function stripStaticSeoTags(html) {
+  return html
+    .replace(/\s*<title>[\s\S]*?<\/title>/i, '')
+    .replace(/\s*<meta\s+name="description"[^>]*>/i, '')
+    .replace(/\s*<meta\s+name="keywords"[^>]*>/i, '')
+    .replace(/\s*<meta\s+name="theme-color"[^>]*>/i, '')
+    .replace(/\s*<meta\s+property="og:[^"]*"[^>]*>/gi, '')
+    .replace(/\s*<meta\s+name="twitter:[^"]*"[^>]*>/gi, '');
+}
+
+// The raw SPA shell is read once; the SEO injection is rebuilt per request so
+// the admin's changes take effect immediately (no restart, no cache to bust).
+let rawIndexCache = null;
+function rawIndexHtml() {
+  if (rawIndexCache == null) {
+    rawIndexCache = fs.readFileSync(path.join(config.root, 'public', 'index.html'), 'utf8');
+  }
+  return rawIndexCache;
+}
+
+// Landing page: serve the SPA shell with the site-wide, admin-controlled on-page
+// SEO injected — the crawlable <title>/description, canonical, and the Open
+// Graph + Twitter/X card tags that Google, Facebook, Instagram, Reddit, WhatsApp
+// and Twitter read when a getxmatch.com link is shared — plus WebSite +
+// Organization structured data. Admin settings fall back to the brand defaults.
 function homeHtml() {
-  if (homeHtmlCache) return homeHtmlCache;
-  let html = fs.readFileSync(path.join(config.root, 'public', 'index.html'), 'utf8');
-  const canonical = absUrl('/');
-  const ogImage = absUrl(SITE_OG_IMAGE);
+  const s = settings.getSiteSeo();
+  const homeTitle = (s.metaTitle || '').trim() || DEFAULT_HOME_TITLE;
+  const d = resolveSeo(s, { canonicalPath: '/', title: homeTitle, description: SITE_TAGLINE, type: 'website' });
+  // The root page uses its title verbatim — no " · getxmatch" suffix.
+  d.title = homeTitle;
+  d.ogTitle = (s.ogTitle || '').trim() || homeTitle;
+  // Match content-page + admin-preview fallback order: Twitter → OG → home title.
+  d.twitterTitle = (s.twitterTitle || '').trim() || d.ogTitle;
+
+  const cfg = siteConfig();
   const inject = [
-    `<link rel="canonical" href="${escAttr(canonical)}" />`,
-    `<meta property="og:url" content="${escAttr(canonical)}" />`,
-    `<meta property="og:image" content="${escAttr(ogImage)}" />`,
-    `<meta property="og:image:width" content="1200" />`,
-    `<meta property="og:image:height" content="630" />`,
-    `<meta name="twitter:image" content="${escAttr(ogImage)}" />`,
+    headTags(d),
+    `<meta name="theme-color" content="${escAttr(cfg.themeColor)}" />`,
     jsonLdTag([organizationLd(), websiteLd()]),
   ].join('\n  ');
-  html = html.replace('</head>', `  ${inject}\n</head>`);
-  homeHtmlCache = html;
-  return homeHtmlCache;
+
+  const html = stripStaticSeoTags(rawIndexHtml());
+  return html.replace('</head>', `  ${inject}\n</head>`);
 }
 
 router.get('/', (req, res) => res.type('html').send(homeHtml()));

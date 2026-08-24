@@ -1028,6 +1028,31 @@ a.share-link:hover { text-decoration: underline; }
 .seo-check input { width: auto; }
 @media (max-width: 560px) { .seo-grid { grid-template-columns: 1fr; } }
 
+/* Section headers on the Site SEO tab (outside a .seo-block details). */
+.admin-card > .seo-h { margin: 22px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 16px; }
+.admin-card > .seo-h:first-of-type { border-top: none; padding-top: 0; }
+
+/* Live social-share preview (Site SEO tab). */
+.seo-preview { display: flex; flex-direction: column; gap: 8px; }
+.seo-pv-label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-top: 8px; }
+.seo-pv-google { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.seo-pv-url { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seo-pv-gtitle { color: #8ab4f8; font-size: 17px; line-height: 1.3; margin: 3px 0 2px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.seo-pv-gdesc { font-size: 12.5px; color: var(--text); opacity: .82; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.seo-pv-card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg); }
+.seo-pv-img { width: 100%; aspect-ratio: 1200 / 630; background-size: cover; background-position: center; background-color: var(--bg-3); display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; }
+.seo-pv-img.empty { color: var(--muted); }
+.seo-pv-body { padding: 10px 12px; }
+.seo-pv-domain { font-size: 11px; text-transform: uppercase; letter-spacing: .3px; color: var(--muted); }
+.seo-pv-title { font-size: 14px; font-weight: 700; line-height: 1.3; margin: 2px 0; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.seo-pv-desc { font-size: 12.5px; color: var(--text); opacity: .8; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.seo-pv-tw { border-radius: 16px; }
+.seo-pv-tw .seo-pv-title { font-weight: 600; }
+/* Twitter "summary" (small) card: image sits to the left as a square. */
+.seo-pv-card.small { display: flex; align-items: stretch; }
+.seo-pv-card.small .seo-pv-img { width: 90px; flex: none; aspect-ratio: 1 / 1; }
+.seo-pv-card.small .seo-pv-body { flex: 1; min-width: 0; }
+
 /* ===========================================================================
    Recent-activity feed (compact sidebar variant) + multi-chat tabs
 =========================================================================== */

@@ -348,6 +348,7 @@
     ['wasted', 'Wasted'],
     ['ads', 'Ads'],
     ['highway', 'Highway'],
+    ['seo', 'Site SEO'],
     ['leaderboard', 'Leaderboard'],
   ];
 
@@ -398,6 +399,7 @@
     if (tab === 'wasted') return renderWastedTab();
     if (tab === 'ads') return renderAdsTab();
     if (tab === 'highway') return renderHighwayTab();
+    if (tab === 'seo') return renderSeoTab();
     if (tab === 'leaderboard') return renderLeaderboardTab();
   }
 
@@ -1098,6 +1100,272 @@
       <p class="count" style="margin-top:12px">Total clicks — all locations, all time: <strong>${s.total || 0}</strong></p>
       <p class="hint">Clicks are tracked for image ads via a redirect. Script / ad-network ads report their own clicks in the network's dashboard.</p>
     `;
+  }
+
+  /* ==================================================================
+     Site SEO tab — control the site-wide on-page SEO: what Google,
+     Facebook, Instagram, Reddit, WhatsApp and Twitter/X show when a
+     getxmatch.com link is shared. All these platforms read three standard
+     tag families — page title + description (Google), Open Graph (Facebook,
+     Instagram, Reddit, WhatsApp, LinkedIn) and Twitter Cards (Twitter/X) —
+     so this one form drives every share preview, with a live preview panel.
+  ================================================================== */
+  let seoOgFile = null;        // pending OG image upload (File), or null
+  let seoOgFilePreview = null; // object URL for the pending upload
+
+  async function renderSeoTab() {
+    const host = tabHost();
+    host.innerHTML = '<div class="admin-card"><div class="count">Loading…</div></div>';
+    seoOgFile = null; seoOgFilePreview = null;
+    let data;
+    try { data = await api.get('/api/admin/site-seo'); }
+    catch (e) { if (e.status === 401) return renderLogin(true); host.innerHTML = `<div class="admin-card"><div class="msg error" style="display:block">${esc(e.message)}</div></div>`; return; }
+
+    const s = data.seo || {};
+    const defaults = data.defaults || {};
+    const publicUrl = (data.publicUrl || '').replace(/\/+$/, '');
+    const v = (k) => esc(s[k] || '');
+    const twCard = s.twitterCard || 'summary_large_image';
+    const socialText = Array.isArray(s.socialLinks) ? s.socialLinks.join('\n') : '';
+
+    host.innerHTML = `
+      <div class="admin-split">
+        <div class="admin-main">
+          <div class="admin-card">
+            <h2>Site-wide on-page SEO</h2>
+            <p class="count">Control what appears when a <b>getxmatch.com</b> link is shared. Google, Facebook, Instagram, Reddit, WhatsApp and LinkedIn read the same <b>Open Graph</b> tags; Twitter/X reads its own <b>card</b>. Fill these once and every share preview updates. Blank fields fall back to the brand defaults shown as placeholders.</p>
+
+            <h4 class="seo-h">Search result — Google</h4>
+            <label>Site name</label>
+            <input id="ss_siteName" maxlength="60" value="${v('siteName')}" placeholder="${esc(defaults.siteName || 'getxmatch')}" />
+            <label>Meta title <span class="seo-count" data-for="ss_metaTitle"></span></label>
+            <input id="ss_metaTitle" maxlength="70" value="${v('metaTitle')}" placeholder="${esc(defaults.metaTitle || '')}" />
+            <label>Meta description <span class="seo-count" data-for="ss_metaDescription"></span></label>
+            <textarea id="ss_metaDescription" maxlength="320" placeholder="${esc(defaults.metaDescription || '')}">${v('metaDescription')}</textarea>
+            <label>Meta keywords (comma-separated)</label>
+            <input id="ss_metaKeywords" maxlength="300" value="${v('metaKeywords')}" placeholder="dating, compatibility quiz, social chat" />
+
+            <h4 class="seo-h">Social card — Facebook · Instagram · Reddit · WhatsApp · LinkedIn</h4>
+            <p class="hint" style="margin-top:0">These Open Graph tags drive the rich preview on every one of these platforms.</p>
+            <label>OG title</label>
+            <input id="ss_ogTitle" maxlength="100" value="${v('ogTitle')}" placeholder="Defaults to the meta title" />
+            <label>OG description</label>
+            <textarea id="ss_ogDescription" maxlength="320" placeholder="Defaults to the meta description">${v('ogDescription')}</textarea>
+            <div class="seo-grid">
+              <div>
+                <label>Share image URL</label>
+                <input id="ss_ogImage" maxlength="500" value="${v('ogImage')}" placeholder="${esc(defaults.ogImage || 'https://…/share.jpg')}" />
+              </div>
+              <div>
+                <label>OG type</label>
+                <input id="ss_ogType" maxlength="40" value="${v('ogType')}" placeholder="${esc(defaults.ogType || 'website')}" />
+              </div>
+            </div>
+            <label>…or upload a share image <span class="count">(1200×630 recommended — JPG or PNG; SVG isn't supported by most platforms)</span></label>
+            <input type="file" id="ss_ogImageFile" accept="image/png,image/jpeg,image/webp,image/gif" />
+
+            <h4 class="seo-h">Card — Twitter / X</h4>
+            <div class="seo-grid">
+              <div>
+                <label>Card type</label>
+                <select id="ss_twitterCard">
+                  <option value="summary_large_image"${twCard === 'summary_large_image' ? ' selected' : ''}>summary_large_image (big image)</option>
+                  <option value="summary"${twCard === 'summary' ? ' selected' : ''}>summary (small image)</option>
+                </select>
+              </div>
+              <div>
+                <label>Twitter image URL</label>
+                <input id="ss_twitterImage" maxlength="500" value="${v('twitterImage')}" placeholder="Defaults to the share image" />
+              </div>
+            </div>
+            <div class="seo-grid">
+              <div>
+                <label>Site @handle</label>
+                <input id="ss_twitterSite" maxlength="40" value="${v('twitterSite')}" placeholder="@getxmatch" />
+              </div>
+              <div>
+                <label>Creator @handle</label>
+                <input id="ss_twitterCreator" maxlength="40" value="${v('twitterCreator')}" placeholder="@getxmatch" />
+              </div>
+            </div>
+            <label>Twitter title</label>
+            <input id="ss_twitterTitle" maxlength="100" value="${v('twitterTitle')}" placeholder="Defaults to the OG / meta title" />
+            <label>Twitter description</label>
+            <textarea id="ss_twitterDescription" maxlength="320" placeholder="Defaults to the OG / meta description">${v('twitterDescription')}</textarea>
+
+            <details class="seo-block" style="margin-top:18px">
+              <summary>Advanced <span class="count">— canonical, indexing, brand colour & social profiles</span></summary>
+              <label>Canonical base URL</label>
+              <input id="ss_canonicalUrl" maxlength="500" value="${v('canonicalUrl')}" placeholder="${esc(publicUrl || 'https://getxmatch.com')}" />
+              <div class="seo-grid">
+                <div>
+                  <label>Facebook App ID (optional)</label>
+                  <input id="ss_facebookAppId" maxlength="40" value="${v('facebookAppId')}" placeholder="numeric fb:app_id" />
+                </div>
+                <div>
+                  <label>Theme / brand colour</label>
+                  <input id="ss_themeColor" maxlength="24" value="${v('themeColor')}" placeholder="${esc(defaults.themeColor || '#0f1117')}" />
+                </div>
+              </div>
+              <label>Social profile links <span class="count">(one per line — Facebook, Instagram, Twitter, Reddit… used for the Organization knowledge panel)</span></label>
+              <textarea id="ss_socialLinks" placeholder="https://facebook.com/getxmatch&#10;https://instagram.com/getxmatch&#10;https://twitter.com/getxmatch">${esc(socialText)}</textarea>
+              <div class="seo-row seo-robots">
+                <label class="seo-check"><input type="checkbox" id="ss_noindex"${s.noindex ? ' checked' : ''}/> noindex — hide the whole site from search engines</label>
+                <label class="seo-check"><input type="checkbox" id="ss_nofollow"${s.nofollow ? ' checked' : ''}/> nofollow</label>
+              </div>
+              <p class="hint">⚠️ noindex removes getxmatch from Google. Leave unchecked in production.</p>
+            </details>
+
+            <div class="admin-item-actions" style="margin-top:16px">
+              <button type="button" class="primary" id="ss_save">Save SEO settings</button>
+            </div>
+            <div class="msg" id="ss_msg"></div>
+          </div>
+        </div>
+        <aside class="admin-side">
+          <div class="admin-card">
+            <h2>Live share preview</h2>
+            <p class="count">How your link looks when shared.</p>
+            <div class="seo-preview">
+              <div class="seo-pv-label">Google</div>
+              <div class="seo-pv-google">
+                <div class="seo-pv-url" id="pv_g_url"></div>
+                <div class="seo-pv-gtitle" id="pv_g_title"></div>
+                <div class="seo-pv-gdesc" id="pv_g_desc"></div>
+              </div>
+
+              <div class="seo-pv-label">Facebook · WhatsApp · Reddit · LinkedIn</div>
+              <div class="seo-pv-card">
+                <div class="seo-pv-img" id="pv_og_img"></div>
+                <div class="seo-pv-body">
+                  <div class="seo-pv-domain" id="pv_og_domain"></div>
+                  <div class="seo-pv-title" id="pv_og_title"></div>
+                  <div class="seo-pv-desc" id="pv_og_desc"></div>
+                </div>
+              </div>
+
+              <div class="seo-pv-label">Twitter / X</div>
+              <div class="seo-pv-card seo-pv-tw" id="pv_tw_card">
+                <div class="seo-pv-img" id="pv_tw_img"></div>
+                <div class="seo-pv-body">
+                  <div class="seo-pv-title" id="pv_tw_title"></div>
+                  <div class="seo-pv-desc" id="pv_tw_desc"></div>
+                  <div class="seo-pv-domain" id="pv_tw_domain"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    `;
+
+    // Live character counters (reuse the shared .seo-count wiring).
+    host.querySelectorAll('.seo-count').forEach((span) => {
+      const input = host.querySelector('#' + span.dataset.for);
+      if (!input) return;
+      const rec = input.id === 'ss_metaTitle' ? 60 : 160;
+      const update = () => {
+        const n = input.value.length;
+        span.textContent = `${n} chars` + (n > rec ? ` (over ${rec})` : '');
+        span.classList.toggle('over', n > rec);
+      };
+      input.addEventListener('input', update); update();
+    });
+
+    // Build an absolute URL for a share image value (URL, /uploads path, or blank).
+    const absImg = (val) => {
+      const t = String(val || '').trim();
+      if (!t) return '';
+      if (/^https?:\/\//i.test(t) || t.startsWith('data:') || t.startsWith('blob:')) return t;
+      if (t.startsWith('/')) return publicUrl + t;
+      return publicUrl + '/' + t;
+    };
+    const domainOf = (url) => {
+      try { return new URL(url).hostname.replace(/^www\./, ''); }
+      catch (_e) { return (url || '').replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]; }
+    };
+    const val = (id) => host.querySelector('#' + id).value.trim();
+
+    function refreshPreview() {
+      const siteName = val('ss_siteName') || defaults.siteName || 'getxmatch';
+      const gTitle = val('ss_metaTitle') || defaults.metaTitle || siteName;
+      const gDesc = val('ss_metaDescription') || defaults.metaDescription || '';
+      const ogTitle = val('ss_ogTitle') || gTitle;
+      const ogDesc = val('ss_ogDescription') || gDesc;
+      const ogImg = seoOgFilePreview || absImg(val('ss_ogImage')) || absImg(defaults.ogImage);
+      const twTitle = val('ss_twitterTitle') || ogTitle;
+      const twDesc = val('ss_twitterDescription') || ogDesc;
+      const twImg = absImg(val('ss_twitterImage')) || ogImg;
+      const twCardType = host.querySelector('#ss_twitterCard').value;
+      const base = val('ss_canonicalUrl') || publicUrl || 'https://getxmatch.com';
+      const domain = domainOf(base) || 'getxmatch.com';
+
+      host.querySelector('#pv_g_url').textContent = base.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+      host.querySelector('#pv_g_title').textContent = gTitle;
+      host.querySelector('#pv_g_desc').textContent = gDesc;
+
+      const setImg = (node, url) => {
+        node.style.backgroundImage = url ? `url("${url.replace(/"/g, '\\"')}")` : '';
+        node.classList.toggle('empty', !url);
+        node.textContent = url ? '' : 'No image';
+      };
+      setImg(host.querySelector('#pv_og_img'), ogImg);
+      host.querySelector('#pv_og_domain').textContent = domain.toUpperCase();
+      host.querySelector('#pv_og_title').textContent = ogTitle;
+      host.querySelector('#pv_og_desc').textContent = ogDesc;
+
+      const twCardEl = host.querySelector('#pv_tw_card');
+      twCardEl.classList.toggle('small', twCardType === 'summary');
+      setImg(host.querySelector('#pv_tw_img'), twImg);
+      host.querySelector('#pv_tw_title').textContent = twTitle;
+      host.querySelector('#pv_tw_desc').textContent = twDesc;
+      host.querySelector('#pv_tw_domain').textContent = domain;
+    }
+
+    host.querySelectorAll('input, textarea, select').forEach((node) => {
+      if (node.type === 'file') return;
+      node.addEventListener('input', refreshPreview);
+      node.addEventListener('change', refreshPreview);
+    });
+
+    const fileInput = host.querySelector('#ss_ogImageFile');
+    fileInput.addEventListener('change', () => {
+      seoOgFile = fileInput.files[0] || null;
+      if (seoOgFilePreview) { URL.revokeObjectURL(seoOgFilePreview); seoOgFilePreview = null; }
+      if (seoOgFile) seoOgFilePreview = URL.createObjectURL(seoOgFile);
+      refreshPreview();
+    });
+
+    refreshPreview();
+
+    host.querySelector('#ss_save').addEventListener('click', async () => {
+      const msg = host.querySelector('#ss_msg');
+      msg.className = 'msg';
+      const payload = {};
+      [
+        'siteName', 'metaTitle', 'metaDescription', 'metaKeywords', 'canonicalUrl',
+        'themeColor', 'ogTitle', 'ogDescription', 'ogImage', 'ogType',
+        'twitterCard', 'twitterSite', 'twitterCreator', 'twitterTitle',
+        'twitterDescription', 'twitterImage', 'facebookAppId',
+      ].forEach((k) => { payload[k] = val('ss_' + k); });
+      payload.noindex = host.querySelector('#ss_noindex').checked;
+      payload.nofollow = host.querySelector('#ss_nofollow').checked;
+      payload.socialLinks = val('ss_socialLinks').split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
+
+      const fd = new FormData();
+      fd.append('seo', JSON.stringify(payload));
+      if (seoOgFile) fd.append('ogImageFile', seoOgFile);
+      try {
+        const r = await api.putForm('/api/admin/site-seo', fd);
+        msg.className = 'msg ok'; msg.textContent = 'Saved. Share previews across getxmatch will use these settings.';
+        // Reflect a freshly-uploaded image as the saved URL and clear the pending file.
+        if (r && r.seo && r.seo.ogImage) host.querySelector('#ss_ogImage').value = r.seo.ogImage;
+        seoOgFile = null;
+        if (seoOgFilePreview) { URL.revokeObjectURL(seoOgFilePreview); seoOgFilePreview = null; }
+        fileInput.value = '';
+        refreshPreview();
+      } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
+    });
   }
 
   /* ==================================================================

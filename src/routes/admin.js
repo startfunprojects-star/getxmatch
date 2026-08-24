@@ -15,7 +15,8 @@ const { isOnline } = require('../socket');
 const { imageUpload } = require('../upload');
 const { buildProfile } = require('../profileData');
 const { saveProfile } = require('../profileWrite');
-const { isFakeActivityEnabled, setFakeActivityEnabled } = require('../settings');
+const { isFakeActivityEnabled, setFakeActivityEnabled, getSiteSeo, setSiteSeo } = require('../settings');
+const seo = require('../seo');
 const ads = require('../ads');
 const hw = require('../highway');
 const {
@@ -821,6 +822,108 @@ router.get('/leaderboard', requireAdmin, (req, res) => {
   scored.sort((a, b) => b.score - a.score || b.ratingAvg - a.ratingAvg);
   scored.forEach((row, i) => { row.rank = i + 1; });
   res.json({ leaderboard: scored });
+});
+
+/* ===========================================================================
+   Site-wide on-page SEO (admin only).
+
+   Controls the title, description and social-share cards for the WHOLE app —
+   i.e. what Google, Facebook, Instagram, Reddit, WhatsApp and Twitter/X show
+   when a getxmatch.com link is shared. These platforms read three standard tag
+   families: the page title + meta description (Google), Open Graph (Facebook,
+   Instagram, Reddit, WhatsApp, LinkedIn, Slack) and Twitter Cards (Twitter/X) —
+   so this one settings blob drives all of them. Applied on the landing page and
+   as the site-wide default for every crawlable page (see src/seo.js).
+=========================================================================== */
+
+// Field set + per-field length caps for the site-wide SEO blob.
+const SITE_SEO_FIELDS = {
+  siteName: 60,
+  metaTitle: 70,
+  metaDescription: 320,
+  metaKeywords: 300,
+  canonicalUrl: 500,
+  themeColor: 24,
+  ogTitle: 100,
+  ogDescription: 320,
+  ogImage: 500,
+  ogType: 40,
+  twitterCard: 40,
+  twitterSite: 40,
+  twitterCreator: 40,
+  twitterTitle: 100,
+  twitterDescription: 320,
+  twitterImage: 500,
+  facebookAppId: 40,
+};
+
+// Clean the Organization/social-profile links (Facebook, Instagram, Twitter,
+// Reddit, …) into an array of absolute http(s) URLs. Accepts a JSON array or a
+// comma/newline-separated string.
+function normalizeSocialLinks(raw) {
+  let arr = raw;
+  if (typeof raw === 'string') {
+    arr = parseJson(raw, null);
+    if (!Array.isArray(arr)) arr = raw.split(/[\n,]+/);
+  }
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const item of arr) {
+    const u = String(item == null ? '' : item).trim().slice(0, 300);
+    if (/^https?:\/\/\S+$/i.test(u)) out.push(u);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
+// Validate + normalise the posted site-wide SEO object. The payload arrives as a
+// JSON string in the `seo` field (multipart, so an OG image can ride along).
+function normalizeSiteSeo(body) {
+  const o = parseJson(body && body.seo, null) || {};
+  const out = {};
+  for (const [key, max] of Object.entries(SITE_SEO_FIELDS)) {
+    out[key] = (o[key] == null ? '' : String(o[key])).trim().slice(0, max);
+  }
+  out.noindex = truthy(o.noindex);
+  out.nofollow = truthy(o.nofollow);
+  out.socialLinks = normalizeSocialLinks(o.socialLinks);
+  return out;
+}
+
+// GET /api/admin/site-seo — current settings, the brand defaults each field
+// falls back to, and the public base URL (for building the live share preview).
+router.get('/site-seo', requireAdmin, (req, res) => {
+  res.json({
+    seo: getSiteSeo(),
+    defaults: {
+      siteName: seo.SITE_NAME,
+      metaTitle: seo.DEFAULT_HOME_TITLE,
+      metaDescription: seo.SITE_TAGLINE,
+      ogImage: seo.SITE_OG_IMAGE,
+      ogType: 'website',
+      twitterCard: 'summary_large_image',
+      themeColor: '#0f1117',
+    },
+    publicUrl: config.publicUrl,
+  });
+});
+
+// PUT /api/admin/site-seo — save settings. An optional OG/share image can be
+// uploaded (field `ogImageFile`); it replaces the ogImage URL and any previously
+// uploaded share image is cleaned up.
+router.put('/site-seo', requireAdmin, imageUpload.single('ogImageFile'), (req, res) => {
+  const prev = getSiteSeo();
+  const out = normalizeSiteSeo(req.body);
+  if (req.file) out.ogImage = '/uploads/' + req.file.filename;
+
+  // If the share image changed and the old one was an uploaded file, remove it.
+  const oldImg = String(prev.ogImage || '');
+  if (oldImg !== out.ogImage && /^\/uploads\//.test(oldImg)) {
+    removeUpload(oldImg.slice('/uploads/'.length));
+  }
+
+  setSiteSeo(out);
+  res.json({ ok: true, seo: out });
 });
 
 /* ===========================================================================
