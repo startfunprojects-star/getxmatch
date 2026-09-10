@@ -44,7 +44,9 @@ app.use(
         mediaSrc: ["'self'", 'blob:', 'data:', 'https:'],
         // Allow YouTube links shared in chat to embed as players.
         frameSrc: ["'self'", 'https://www.youtube-nocookie.com', 'https://www.youtube.com'],
-        connectSrc: ["'self'", 'ws:', 'wss:'],
+        // ws/wss for socket.io; stun/turn so WebRTC screen sharing can reach
+        // ICE servers (Chrome checks ICE URLs against connect-src).
+        connectSrc: ["'self'", 'ws:', 'wss:', 'stun:', 'turn:', 'turns:'],
         objectSrc: ["'none'"],
       },
     },

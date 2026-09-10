@@ -1435,6 +1435,7 @@
             <div class="status">@${esc(peer.username)}</div>
           </div>
           <button class="ghost small" id="disappearBtn" title="Disappearing messages">⏳ Vanish</button>
+          <button class="ghost small" id="screenShareBtn" title="Share a browser tab with this person">🖥️ Share screen</button>
           <button class="ghost small" id="broadcastBtn" title="Broadcast this chat live — anyone can watch and comment">🔴 Broadcast</button>
           <button class="ghost small" id="makeGroupBtn" title="Start a group chat with this person and others">👥 Group</button>
         </div>
@@ -1493,6 +1494,8 @@
     view.querySelector('#makeGroupBtn').addEventListener('click', () => openGroupCreator(peer));
     view.querySelector('#broadcastBtn').addEventListener('click', () => toggleBroadcast(peer));
     view.querySelector('#disappearBtn').addEventListener('click', () => promptDisappearing(peer));
+    view.querySelector('#screenShareBtn').addEventListener('click', () => toggleScreenShare(peer));
+    reflectScreenShare(peer.id);
 
     // Best-effort protection: block copy / context-menu / drag inside the chat
     // so messages, images and files can't be trivially saved.
@@ -2977,6 +2980,180 @@
     if (state.socket) state.socket.emit('broadcast:unwatch', { token });
   }
 
+  /* ---------- screen sharing (browser-tab only) ----------
+     One-directional WebRTC: the sharer captures a single browser TAB and
+     streams it peer-to-peer to the chat partner. The server only relays the
+     offer/answer/ICE (see socket.js). The tab-only rule is enforced on the
+     sharer's side: any non-tab surface the user picks is stopped and refused,
+     so a window or a whole screen can never be shared. */
+  const ICE_CONFIG = {
+    iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }],
+  };
+  state.screen = state.screen || null; // { pc, stream, role, peerId } while active
+
+  function reflectScreenShare(peerId) {
+    const btn = document.getElementById('screenShareBtn');
+    if (!btn) return;
+    const s = state.screen;
+    const here = s && s.peerId === peerId;
+    btn.classList.toggle('on', !!here);
+    btn.textContent = here
+      ? (s.role === 'sharer' ? '🖥️ Stop sharing' : '🖥️ Stop viewing')
+      : '🖥️ Share screen';
+  }
+
+  // Floating panel that hosts the <video>, reused for sharer and viewer.
+  function screenPanel() {
+    let panel = document.getElementById('screenPanel');
+    if (panel) return panel;
+    panel = el(`
+      <div id="screenPanel" class="screen-panel hidden">
+        <div class="screen-panel-head">
+          <span class="screen-dot"></span>
+          <span class="screen-title" id="screenTitle">Screen share</span>
+          <div class="screen-actions">
+            <button class="icon-btn small" id="screenFsBtn" title="Fullscreen">⛶</button>
+            <button class="icon-btn small" id="screenCloseBtn" title="Stop">✕</button>
+          </div>
+        </div>
+        <video id="screenVideo" autoplay playsinline></video>
+      </div>`);
+    document.body.appendChild(panel);
+    panel.querySelector('#screenCloseBtn').addEventListener('click', () => stopScreenShare());
+    panel.querySelector('#screenFsBtn').addEventListener('click', () => {
+      const v = panel.querySelector('#screenVideo');
+      if (v && v.requestFullscreen) v.requestFullscreen().catch(() => {});
+    });
+    return panel;
+  }
+
+  function showScreenPanel(title) {
+    const panel = screenPanel();
+    panel.querySelector('#screenTitle').textContent = title;
+    panel.classList.remove('hidden');
+    return panel;
+  }
+
+  function newScreenPc(peerId) {
+    const pc = new RTCPeerConnection(ICE_CONFIG);
+    pc.onicecandidate = (e) => {
+      if (e.candidate && state.socket) {
+        state.socket.emit('screen:ice', { to: peerId, candidate: e.candidate });
+      }
+    };
+    pc.onconnectionstatechange = () => {
+      if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+        if (state.screen && state.screen.pc === pc) stopScreenShare(true);
+      }
+    };
+    return pc;
+  }
+
+  function toggleScreenShare(peer) {
+    if (!state.socket) return;
+    if (state.screen) { stopScreenShare(); return; } // second click ends it
+    startScreenShare(peer);
+  }
+
+  async function startScreenShare(peer) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      return notifyToast('Screen sharing is not supported in this browser.');
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: 'browser' },
+        audio: false,
+        // Steer the picker toward a single browser tab.
+        monitorTypeSurfaces: 'exclude',
+        selfBrowserSurface: 'exclude',
+        surfaceSwitching: 'include',
+      });
+    } catch (e) {
+      return; // user cancelled the picker or denied permission
+    }
+    const track = stream.getVideoTracks()[0];
+    const surface = track && track.getSettings ? track.getSettings().displaySurface : null;
+    // Hard rule: only a browser tab may be shared. A window, a whole screen,
+    // or a browser that can't report the surface type is refused outright.
+    if (surface !== 'browser') {
+      stream.getTracks().forEach((t) => t.stop());
+      return notifyToast('You can only share a browser tab — pick a tab, not a window or a screen.');
+    }
+
+    const pc = newScreenPc(peer.id);
+    state.screen = { pc, stream, role: 'sharer', peerId: peer.id };
+    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+    // Ending the share from the browser's own "Stop sharing" bar tears down too.
+    track.addEventListener('ended', () => stopScreenShare());
+
+    const panel = showScreenPanel('You are sharing a tab with ' + esc(peer.displayName || peer.username));
+    const v = panel.querySelector('#screenVideo');
+    v.srcObject = stream; v.muted = true; // never echo your own audio (none here anyway)
+
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      state.socket.emit('screen:offer', { to: peer.id, sdp: pc.localDescription });
+    } catch (e) {
+      stopScreenShare();
+      return notifyToast('Could not start the screen share.');
+    }
+    reflectScreenShare(peer.id);
+  }
+
+  async function handleScreenOffer(msg) {
+    if (state.screen) return; // already busy; one screen share at a time
+    const fromId = msg.from;
+    const peer = state.chatPeers[fromId] || (state.peer && state.peer.id === fromId ? state.peer : null);
+    const name = peer ? (peer.displayName || peer.username) : 'Someone';
+    const pc = newScreenPc(fromId);
+    state.screen = { pc, stream: null, role: 'viewer', peerId: fromId };
+    pc.ontrack = (e) => {
+      const panel = showScreenPanel(esc(name) + ' is sharing a tab');
+      const v = panel.querySelector('#screenVideo');
+      v.srcObject = e.streams[0]; v.muted = false;
+      state.screen.stream = e.streams[0];
+    };
+    try {
+      await pc.setRemoteDescription(msg.sdp);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      state.socket.emit('screen:answer', { to: fromId, sdp: pc.localDescription });
+    } catch (e) {
+      return stopScreenShare(true);
+    }
+    reflectScreenShare(fromId);
+  }
+
+  async function handleScreenAnswer(msg) {
+    const s = state.screen;
+    if (!s || s.role !== 'sharer' || s.peerId !== msg.from) return;
+    try { await s.pc.setRemoteDescription(msg.sdp); } catch (e) { /* ignore */ }
+  }
+
+  async function handleScreenIce(msg) {
+    const s = state.screen;
+    if (!s || s.peerId !== msg.from || !msg.candidate) return;
+    try { await s.pc.addIceCandidate(msg.candidate); } catch (e) { /* late/dup candidate */ }
+  }
+
+  function stopScreenShare(silent) {
+    const s = state.screen;
+    if (!s) return;
+    state.screen = null;
+    if (!silent && state.socket) state.socket.emit('screen:stop', { to: s.peerId });
+    try { if (s.stream) s.stream.getTracks().forEach((t) => t.stop()); } catch (_e) {}
+    try { s.pc.close(); } catch (_e) {}
+    const panel = document.getElementById('screenPanel');
+    if (panel) {
+      const v = panel.querySelector('#screenVideo');
+      if (v) v.srcObject = null;
+      panel.classList.add('hidden');
+    }
+    reflectScreenShare(s.peerId);
+  }
+
   /* ---------- socket ---------- */
   function connectSocket() {
     if (state.socket) state.socket.disconnect();
@@ -3014,6 +3191,14 @@
         rememberPeer(meta.from);
         notifyIncomingFile(meta);
       }
+    });
+
+    // Screen-share signaling (WebRTC; the media is peer-to-peer).
+    s.on('screen:offer', (msg) => handleScreenOffer(msg));
+    s.on('screen:answer', (msg) => handleScreenAnswer(msg));
+    s.on('screen:ice', (msg) => handleScreenIce(msg));
+    s.on('screen:stop', (msg) => {
+      if (state.screen && state.screen.peerId === msg.from) stopScreenShare(true);
     });
 
     // Group chat message for one of my groups.

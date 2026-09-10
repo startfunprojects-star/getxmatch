@@ -1402,3 +1402,42 @@ a.share-link:hover { text-decoration: underline; }
 .crop-h.sw { left: -8px; bottom: -8px; cursor: nesw-resize; }
 .crop-h.se { right: -8px; bottom: -8px; cursor: nwse-resize; }
 .cropper-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* ============================================================
+   Screen sharing (browser-tab only)
+   ============================================================ */
+#screenShareBtn.on { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+
+.screen-panel {
+  position: fixed; right: 20px; bottom: 20px; z-index: 900;
+  width: min(520px, 92vw); background: var(--bg-2);
+  border: 1px solid var(--border-strong); border-radius: 14px; overflow: hidden;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, .55);
+  resize: both; min-width: 260px; min-height: 190px; max-width: 96vw; max-height: 88vh;
+}
+.screen-panel.hidden { display: none; }
+.screen-panel-head {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  background: var(--bg-3); border-bottom: 1px solid var(--border);
+}
+.screen-dot {
+  width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: 0 0 auto;
+  box-shadow: 0 0 0 0 rgba(255, 77, 125, .5); animation: screenPulse 1.6s infinite;
+}
+@keyframes screenPulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 77, 125, .5); }
+  70% { box-shadow: 0 0 0 7px rgba(255, 77, 125, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 77, 125, 0); }
+}
+.screen-title {
+  flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.screen-actions { display: flex; gap: 4px; flex: 0 0 auto; }
+.screen-panel video {
+  display: block; width: 100%; height: calc(100% - 39px);
+  background: #000; object-fit: contain;
+}
+@media (max-width: 560px) {
+  .screen-panel { right: 8px; left: 8px; bottom: 8px; width: auto; }
+}

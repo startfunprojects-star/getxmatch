@@ -977,6 +977,31 @@ function initSocket(io) {
       if (to) io.to(`user:${to}`).emit('chat:typing', { from: me.id });
     });
 
+    /* ----------------------------------------------------------------
+       Screen sharing (browser-tab only) — WebRTC signaling relay.
+
+       The media itself is peer-to-peer (RTCPeerConnection); the server
+       only shuttles the offer/answer/ICE between the two chat partners
+       and never sees the stream. The sharer's client enforces that only
+       a browser TAB can be captured (it rejects any window/monitor
+       surface), so nothing else is shareable. Each relay is a thin
+       forward to the recipient's room, gated by the same block check as
+       chat so a blocked user can't push a connection request.
+    ---------------------------------------------------------------- */
+    const relayScreen = (payload, event) => {
+      const to = parseInt(payload && payload.to, 10);
+      if (!to) return;
+      if (areBlocked(me.id, to)) return;
+      const out = { from: me.id };
+      if (payload.sdp) out.sdp = payload.sdp;
+      if (payload.candidate) out.candidate = payload.candidate;
+      io.to(`user:${to}`).emit(event, out);
+    };
+    socket.on('screen:offer', (payload) => relayScreen(payload, 'screen:offer'));
+    socket.on('screen:answer', (payload) => relayScreen(payload, 'screen:answer'));
+    socket.on('screen:ice', (payload) => relayScreen(payload, 'screen:ice'));
+    socket.on('screen:stop', (payload) => relayScreen(payload, 'screen:stop'));
+
     // Group chat message → stored, then delivered live to every joined member.
     socket.on('group:message', (payload, ack) => {
       try {
