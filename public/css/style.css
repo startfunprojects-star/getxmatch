@@ -403,6 +403,10 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .adult-section { margin-top: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
 .adult-section summary { cursor: pointer; color: var(--muted); font-size: 14px; }
 
+.privacy-toggle { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.switch-row { display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 600; }
+.switch-row input { width: auto; margin: 0; }
+
 /* ====================================================================
    Professional profile view
 ==================================================================== */

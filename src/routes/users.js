@@ -32,6 +32,7 @@ router.get('/', requireAuth, (req, res) => {
       `SELECT u.id, u.username, p.display_name, p.avatar
        FROM users u JOIN profiles p ON p.user_id = u.id
        WHERE u.id != ?
+         AND p.hidden = 0
          AND (? = '' OR u.username LIKE ? OR p.display_name LIKE ?)
        ORDER BY p.updated_at DESC
        LIMIT 100`

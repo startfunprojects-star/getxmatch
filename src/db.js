@@ -189,6 +189,7 @@ db.exec(`
     ['relationship_status', 'TEXT'],
     ['partner_user_id', 'INTEGER'],
     ['friends_visibility', "TEXT NOT NULL DEFAULT 'public'"],
+    ['hidden', 'INTEGER NOT NULL DEFAULT 0'], // 1 = profile excluded from search/browse
   ];
   for (const [name, type] of additions) {
     if (!cols.includes(name)) {

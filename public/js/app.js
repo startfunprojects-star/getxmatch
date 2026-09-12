@@ -641,6 +641,14 @@
           ${selectHtml('bedRole', OPT.bedRole, e.bedRole, 'Select…')}
         </details>
 
+        <div class="privacy-toggle">
+          <label class="switch-row">
+            <input type="checkbox" id="hidden"${e.hidden ? ' checked' : ''} />
+            <span>Hide my profile from search</span>
+          </label>
+          <div class="hint">When on, other people can't find you by searching or browsing. Your existing friends and chats are unaffected.</div>
+        </div>
+
         <div class="msg" id="pMsg"></div>
         <div class="row-actions">
           <button class="primary" id="saveProfile" type="button">${firstTime ? 'Create profile' : 'Save'}</button>
@@ -695,6 +703,7 @@
       fd.append('likesInBed', val('likesInBed'));
       fd.append('bedRole', val('bedRole'));
       fd.append('interests', JSON.stringify(interests));
+      fd.append('hidden', wrap.querySelector('#hidden').checked ? '1' : '0');
       if (avatarFile) fd.append('avatar', avatarFile);
 
       try {

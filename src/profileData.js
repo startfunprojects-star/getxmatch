@@ -106,7 +106,7 @@ function buildProfile(userId, viewerId) {
               p.display_name, p.bio, p.avatar, p.updated_at,
               p.gender, p.date_of_birth, p.country, p.weight, p.smokes, p.drinks, p.diet,
               p.sexuality, p.interests, p.persona, p.likes_in_bed, p.bed_role,
-              p.relationship_status, p.partner_user_id, p.friends_visibility
+              p.relationship_status, p.partner_user_id, p.friends_visibility, p.hidden
        FROM users u JOIN profiles p ON p.user_id = u.id
        WHERE u.id = ?`
     )
@@ -190,6 +190,8 @@ function buildProfile(userId, viewerId) {
     },
     blocked,
     isMe,
+    // "Hidden from search" is a private setting — only the owner sees its state.
+    hidden: isMe ? !!row.hidden : undefined,
     updatedAt: row.updated_at,
   };
 }

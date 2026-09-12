@@ -81,6 +81,18 @@ function saveProfile(userId, body, file) {
   let friendsVisibility = (b.friendsVisibility || 'public').trim();
   if (!F.FRIENDS_VISIBILITY.includes(friendsVisibility)) friendsVisibility = 'public';
 
+  // --- Hide from search: when set, the profile is excluded from browse/search
+  // results. The member editor always sends '1' or '0'; when the field is
+  // absent (e.g. the admin editor doesn't render it) keep the current value so
+  // an unrelated edit never silently unhides someone.
+  let hidden;
+  if (b.hidden == null || String(b.hidden).trim() === '') {
+    const cur = db.prepare('SELECT hidden FROM profiles WHERE user_id = ?').get(userId);
+    hidden = cur ? cur.hidden : 0;
+  } else {
+    hidden = ['1', 'true', 'on', 'yes'].includes(String(b.hidden).trim().toLowerCase()) ? 1 : 0;
+  }
+
   // --- Interests: JSON array or comma list of allowed values.
   let interests = [];
   const rawInterests = b.interests;
@@ -133,27 +145,27 @@ function saveProfile(userId, body, file) {
          gender = ?, date_of_birth = ?, country = ?, weight = ?, smokes = ?, drinks = ?,
          diet = ?, sexuality = ?, interests = ?, persona = ?, likes_in_bed = ?,
          bed_role = ?, relationship_status = ?, partner_user_id = ?,
-         friends_visibility = ?, updated_at = ?
+         friends_visibility = ?, hidden = ?, updated_at = ?
        WHERE user_id = ?`
     ).run(
       displayName, about, avatar,
       gender, dob, country, weight, smokes.value, drinks.value,
       diet.value, sexuality.value, interestsJson, persona, likesInBed,
       bedRole.value, relStatus.value, partnerId,
-      friendsVisibility, now, userId
+      friendsVisibility, hidden, now, userId
     );
   } else {
     db.prepare(
       `INSERT INTO profiles
          (user_id, display_name, bio, avatar, gender, date_of_birth, country, weight,
           smokes, drinks, diet, sexuality, interests, persona, likes_in_bed,
-          bed_role, relationship_status, partner_user_id, friends_visibility, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          bed_role, relationship_status, partner_user_id, friends_visibility, hidden, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       userId, displayName, about, avatar, gender, dob, country, weight,
       smokes.value, drinks.value, diet.value, sexuality.value, interestsJson,
       persona, likesInBed, bedRole.value, relStatus.value, partnerId,
-      friendsVisibility, now
+      friendsVisibility, hidden, now
     );
   }
 
