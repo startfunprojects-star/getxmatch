@@ -656,6 +656,11 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .quiz-opt input { width: auto; }
 .quiz-opt.correct { background: rgba(46,204,113,.15); border-color: var(--ok); }
 .quiz-opt.wrong { background: rgba(255,92,92,.15); border-color: var(--danger); }
+.quiz-step { min-height: 120px; }
+.quiz-progress { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+.quiz-q:last-child { border-bottom: 0; }
+.quiz-interstitial { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 8px 0; }
+.quiz-interstitial .row-actions { margin-top: 4px; }
 
 /* ---------- Polls ---------- */
 .poll-card h3 { margin-bottom: 12px; }

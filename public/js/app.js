@@ -4226,52 +4226,96 @@
     const sub = main.querySelector('.section-head');
     if (quiz.description) sub.appendChild(el(`<p class="hint">${esc(quiz.description)}</p>`));
 
+    // Load ads up front so interstitials between questions are ready.
+    loadAds().catch(() => {});
+
     body.innerHTML = '';
+    const total = quiz.questions.length;
+    const answers = quiz.questions.map(() => -1);
+    let adCount = 0; // running index into the content_inline slot list
+
     const form = el('<div class="quiz-form card"></div>');
     form.appendChild(el('<p class="hint">Pick the answer that fits you for each question. When you finish you\'ll get a private link to send to someone — your match score is revealed once they answer too.</p>'));
-    quiz.questions.forEach((qq, qi) => {
-      const block = el(`<div class="quiz-q"><div class="quiz-prompt">${qi + 1}. ${esc(qq.prompt)}</div></div>`);
-      qq.options.forEach((opt, oi) => {
-        const optEl = el(`<label class="quiz-opt"><input type="radio" name="q${qi}" value="${oi}" /> <span>${esc(opt)}</span></label>`);
-        block.appendChild(optEl);
-      });
-      form.appendChild(block);
-    });
-    const actions = el('<div class="row-actions"></div>');
-    const submit = el('<button class="primary">Get my share link</button>');
-    const back = el('<button class="ghost">Back to quizzes</button>');
-    back.addEventListener('click', renderQuizzes);
-    actions.appendChild(submit); actions.appendChild(back);
-    form.appendChild(actions);
+    const stepHost = el('<div class="quiz-step"></div>');
+    form.appendChild(stepHost);
     const result = el('<div class="msg" id="quizResult"></div>');
     form.appendChild(result);
     const share = el('<div class="share-box" hidden></div>');
     form.appendChild(share);
     body.appendChild(form);
 
-    submit.addEventListener('click', async () => {
-      const answers = quiz.questions.map((_q, qi) => {
-        const sel = form.querySelector(`input[name="q${qi}"]:checked`);
-        return sel ? Number(sel.value) : -1;
-      });
-      if (answers.some((a) => a < 0)) {
-        result.className = 'msg error';
-        result.textContent = 'Please answer every question first.';
-        return;
-      }
-      submit.disabled = true;
+    // Show an interstitial ad while switching pages, then run `next`. Falls
+    // through immediately when no inline ad is configured.
+    function interstitial(next) {
+      const ad = slotEl('content_inline', adCount++);
+      if (!ad) { next(); return; }
+      result.className = 'msg'; result.textContent = '';
+      stepHost.innerHTML = '';
+      const wrap = el('<div class="quiz-interstitial"></div>');
+      ad.classList.add('ad-inline-row');
+      wrap.appendChild(ad);
+      const cont = el('<button class="primary">Continue ›</button>');
+      const row = el('<div class="row-actions"></div>');
+      row.appendChild(cont);
+      wrap.appendChild(row);
+      stepHost.appendChild(wrap);
+      cont.addEventListener('click', next);
+    }
+
+    async function submitAnswers(submitBtn) {
+      submitBtn.disabled = true;
       try {
         const out = await api.post('/api/content/quizzes/' + id + '/match', { answers });
+        stepHost.innerHTML = '';
         result.className = 'msg ok';
         result.textContent = 'Your answers are locked in. Share this link — it stays active for 1 hour.';
         renderShareBox(share, out.token);
-        form.querySelectorAll('input[type=radio]').forEach((r) => { r.disabled = true; });
       } catch (e) {
-        submit.disabled = false;
+        submitBtn.disabled = false;
         result.className = 'msg error';
         result.textContent = e.message;
       }
-    });
+    }
+
+    function renderStep(i) {
+      result.className = 'msg'; result.textContent = '';
+      stepHost.innerHTML = '';
+      const qq = quiz.questions[i];
+      stepHost.appendChild(el(`<div class="quiz-progress">Question ${i + 1} of ${total}</div>`));
+      const block = el(`<div class="quiz-q"><div class="quiz-prompt">${i + 1}. ${esc(qq.prompt)}</div></div>`);
+      qq.options.forEach((opt, oi) => {
+        const optEl = el(`<label class="quiz-opt"><input type="radio" name="q${i}" value="${oi}"${answers[i] === oi ? ' checked' : ''} /> <span>${esc(opt)}</span></label>`);
+        optEl.querySelector('input').addEventListener('change', () => { answers[i] = oi; });
+        block.appendChild(optEl);
+      });
+      stepHost.appendChild(block);
+
+      const actions = el('<div class="row-actions"></div>');
+      if (i > 0) {
+        const prev = el('<button class="ghost">‹ Back</button>');
+        prev.addEventListener('click', () => interstitial(() => renderStep(i - 1)));
+        actions.appendChild(prev);
+      } else {
+        const quit = el('<button class="ghost">Back to quizzes</button>');
+        quit.addEventListener('click', renderQuizzes);
+        actions.appendChild(quit);
+      }
+      const last = i === total - 1;
+      const next = el(`<button class="primary">${last ? 'Get my share link' : 'Next ›'}</button>`);
+      next.addEventListener('click', () => {
+        if (answers[i] < 0) {
+          result.className = 'msg error';
+          result.textContent = 'Please pick an answer to continue.';
+          return;
+        }
+        if (last) submitAnswers(next);
+        else interstitial(() => renderStep(i + 1));
+      });
+      actions.appendChild(next);
+      stepHost.appendChild(actions);
+    }
+
+    renderStep(0);
   }
 
   // Render the shareable link + copy / WhatsApp / Telegram buttons.
