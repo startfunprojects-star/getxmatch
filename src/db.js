@@ -290,6 +290,36 @@ db.exec(`
     ON gallery_reactions (photo_id);
 `);
 
+// --- WhatsApp-style polls sent inside a chat. A poll lives as its own row and
+// is referenced by a chat message (kind='poll', whose body is JSON {pollId}).
+// It belongs to a 1:1 conversation (scope='dm', dm_a < dm_b) or a group
+// (scope='group', group_id). Votes are one row per (poll, option, voter);
+// single-choice polls keep at most one option per voter (enforced in
+// src/polls.js), multi-choice allow several.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_polls (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope       TEXT NOT NULL,           -- 'dm' | 'group'
+    dm_a        INTEGER,                 -- dm: lower participant user id
+    dm_b        INTEGER,                 -- dm: higher participant user id
+    group_id    INTEGER,                 -- group: chat_groups.id
+    message_id  INTEGER,                 -- messages.id (dm) / group_messages.id (group)
+    creator_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    question    TEXT NOT NULL,
+    options     TEXT NOT NULL,           -- JSON array of option strings
+    multi       INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS chat_poll_votes (
+    poll_id      INTEGER NOT NULL REFERENCES chat_polls(id) ON DELETE CASCADE,
+    option_index INTEGER NOT NULL,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at   INTEGER NOT NULL,
+    PRIMARY KEY (poll_id, option_index, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_poll_votes_poll ON chat_poll_votes (poll_id);
+`);
+
 // --- Profile picture buffer: a pool of up to 10 images per user, separate from
 // the single display picture (profiles.avatar) and the photo gallery. In chat,
 // the picture shown for a user is drawn at random from this buffer and rotates

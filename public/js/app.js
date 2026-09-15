@@ -1139,6 +1139,7 @@
         <div class="composer">
           <input type="text" id="msgInput" placeholder="Message the group…" autocomplete="off" />
           <button class="icon-btn" id="wastedBtn" title="Offer a drink or substance — get Wasted">🥂</button>
+          <button class="icon-btn" id="pollBtn" title="Create a poll">📊</button>
           <button class="primary" id="sendBtn">Send</button>
         </div>
       </div>
@@ -1184,6 +1185,9 @@
       if (!wastedPicker.contains(ev.target) && ev.target !== wastedBtn) wastedPicker.classList.add('hidden');
     });
 
+    // Poll builder.
+    view.querySelector('#pollBtn').addEventListener('click', () => openPollBuilder({ groupId: gid }));
+
     state.wasted = groupWasted || null;
     messages.forEach(appendGroupMessage);
     updateWastedBar();
@@ -1208,11 +1212,15 @@
     // Wasted narrations render centered for everyone, not as a user's bubble.
     if (m.kind === 'wasted') return appendWastedSentence(m);
     if (m.kind === 'offer') return appendGroupOfferBubble(m);
+    if (m.kind === 'poll') return appendPollBubble(m);
     const narration = narrationText(m.body);
+    if (narration != null) {
+      return appendNarrationLine(narration, m.at, { author: m.mine ? 'You' : m.fromName });
+    }
     const side = m.mine ? 'me' : 'them';
-    const bubble = el(`<div class="bubble ${side}${narration ? ' has-narration' : ''}"></div>`);
+    const bubble = el(`<div class="bubble ${side}"></div>`);
     if (!m.mine) bubble.appendChild(el(`<div class="bubble-author">${esc(m.fromName)}</div>`));
-    appendRichText(bubble, narration != null ? narration : m.body);
+    appendRichText(bubble, m.body);
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
     mountBubble(bubble, m);
     scrollBody();
@@ -1489,6 +1497,7 @@
           <button class="icon-btn" id="giftBtn" title="Send a naughty gift">🎁</button>
           <button class="icon-btn" id="rpBtn" title="Start a roleplay story">🎭</button>
           <button class="icon-btn" id="wastedBtn" title="Offer a drink or substance — get Wasted">🥂</button>
+          <button class="icon-btn" id="pollBtn" title="Create a poll">📊</button>
           <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" />
           <button class="primary" id="sendBtn">Send</button>
         </div>
@@ -1596,6 +1605,9 @@
       if (!document.body.contains(wastedPicker)) { document.removeEventListener('click', onWDocClick); return; }
       if (!wastedPicker.contains(ev.target) && ev.target !== wastedBtn) wastedPicker.classList.add('hidden');
     });
+
+    // Poll builder.
+    view.querySelector('#pollBtn').addEventListener('click', () => openPollBuilder({ to: peer.id }));
 
     // Load persisted history (text + gifts + roleplay narration).
     adState.counters.chat = 0; // restart the every-20-messages ad cadence per chat
@@ -1882,16 +1894,37 @@
     return rest ? rest : null;
   }
 
+  // A narration/action line ("/…"): a standalone box centered in the chat,
+  // not a side-attached speech bubble. `author` (optional) labels who narrated
+  // in group chats. Honours the disappearing-message TTL like any other message.
+  function appendNarrationLine(text, at, opts) {
+    const b = chatBody();
+    if (!b) return null;
+    opts = opts || {};
+    const line = el('<div class="narration-line"></div>');
+    if (opts.id) line.dataset.id = opts.id;
+    if (opts.author) line.appendChild(el(`<span class="nl-author">${esc(opts.author)}</span>`));
+    line.appendChild(el('<span class="nl-text"></span>')).textContent = text;
+    line.appendChild(el(`<span class="nl-time">${fmtTime(at)}</span>`));
+    b.appendChild(line);
+    if (opts.expiresAt) scheduleExpiry(line, opts.expiresAt);
+    scrollBody();
+    return line;
+  }
+
   // m: { body, mine, at, id?, reply? }
   function appendTextBubble(m) {
     const b = chatBody();
     if (!b) return;
     const narration = narrationText(m.body);
+    if (narration != null) {
+      return appendNarrationLine(narration, m.at, { id: m.id, expiresAt: m.expiresAt });
+    }
     const side = m.mine ? 'me' : 'them';
-    const bubble = el(`<div class="bubble ${side}${narration ? ' has-narration' : ''}"></div>`);
+    const bubble = el(`<div class="bubble ${side}"></div>`);
     if (m.id) bubble.dataset.id = m.id;
     if (m.reply) bubble.appendChild(renderQuote(m.reply));
-    appendRichText(bubble, narration != null ? narration : m.body);
+    appendRichText(bubble, m.body);
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
     attachBubbleActions(bubble, m);
     const row = mountBubble(bubble, m);
@@ -1928,13 +1961,14 @@
   // Route a message object (from history or live) to the right bubble.
   function appendMessage(m) {
     if (m.kind === 'gift') appendGiftBubble(m);
+    else if (m.kind === 'poll') appendPollBubble(m);
     else if (m.kind === 'narration') appendNarrationBubble(m.body, m.at);
     else if (m.kind === 'offer') appendOfferBubble(m);
     else if (m.kind === 'wasted') appendWastedSentence(m);
     else if (m.kind === 'voice') return; // legacy voice notes (feature removed)
     else appendTextBubble(m);
     // Advertisement after every 20 exchanged messages (text + gifts).
-    if (m.kind !== 'narration' && m.kind !== 'voice' && m.kind !== 'offer' && m.kind !== 'wasted') {
+    if (m.kind !== 'narration' && m.kind !== 'voice' && m.kind !== 'offer' && m.kind !== 'wasted' && m.kind !== 'poll') {
       maybeInsertStreamAd(chatBody(), 'chat_inline', 'chat', 20);
     }
   }
@@ -2268,6 +2302,124 @@
     if (!b) return;
     b.appendChild(el(`<div class="wasted-sentence">🥴 ${esc(m.body)}</div>`));
     scrollBody();
+  }
+
+  /* ---------- Polls (WhatsApp-style, in chat) ---------- */
+
+  // Poll builder modal. `target` is { to } (1:1) or { groupId } (group).
+  function openPollBuilder(target) {
+    const MAX = 12;
+    const { card, close } = openModal('Create a poll', `
+      <div class="poll-builder">
+        <label class="pb-label">Question</label>
+        <input id="pbQ" class="pb-input" maxlength="300" placeholder="Ask something…" autocomplete="off" />
+        <label class="pb-label">Options</label>
+        <div id="pbOptions" class="pb-options"></div>
+        <button class="ghost small" id="pbAdd" type="button">＋ Add option</button>
+        <label class="pb-multi"><input type="checkbox" id="pbMulti" /> Allow multiple answers</label>
+        <div class="pb-error hidden" id="pbError"></div>
+        <div class="pb-actions">
+          <button class="ghost" id="pbCancel" type="button">Cancel</button>
+          <button class="primary" id="pbCreate" type="button">Create poll</button>
+        </div>
+      </div>
+    `);
+    const optsBox = card.querySelector('#pbOptions');
+    const addBtn = card.querySelector('#pbAdd');
+    const errBox = card.querySelector('#pbError');
+    const showErr = (msg) => { errBox.textContent = msg; errBox.classList.remove('hidden'); };
+
+    function refresh() {
+      addBtn.disabled = optsBox.children.length >= MAX;
+      optsBox.querySelectorAll('.pb-opt-x').forEach((b) => {
+        b.style.visibility = optsBox.children.length > 2 ? 'visible' : 'hidden';
+      });
+      optsBox.querySelectorAll('.pb-opt-input').forEach((inp, i) => { inp.placeholder = 'Option ' + (i + 1); });
+    }
+    function addOption() {
+      if (optsBox.children.length >= MAX) return;
+      const row = el('<div class="pb-opt"><input class="pb-input pb-opt-input" maxlength="120" autocomplete="off" /><button class="pb-opt-x" type="button" title="Remove option">✕</button></div>');
+      row.querySelector('.pb-opt-x').addEventListener('click', () => { row.remove(); refresh(); });
+      optsBox.appendChild(row);
+      refresh();
+    }
+    addOption();
+    addOption();
+    addBtn.addEventListener('click', addOption);
+    card.querySelector('#pbCancel').addEventListener('click', close);
+    card.querySelector('#pbCreate').addEventListener('click', () => {
+      const question = card.querySelector('#pbQ').value.trim();
+      const options = Array.from(optsBox.querySelectorAll('.pb-opt-input')).map((i) => i.value.trim()).filter(Boolean);
+      const multi = card.querySelector('#pbMulti').checked;
+      if (!question) return showErr('Ask a question for your poll.');
+      if (options.length < 2) return showErr('Add at least two options.');
+      if (!state.socket) return showErr('You appear to be offline.');
+      state.socket.emit('poll:create', Object.assign({ question, options, multi }, target), (res) => {
+        if (res && res.error) return showErr(res.error);
+        close();
+      });
+    });
+    card.querySelector('#pbQ').focus();
+  }
+
+  // Render a poll message as a card on the sender's side. m.poll is the payload.
+  function appendPollBubble(m) {
+    const b = chatBody();
+    if (!b || !m.poll) return;
+    const bubble = el(`<div class="bubble poll-card ${m.mine ? 'me' : 'them'}"></div>`);
+    bubble.dataset.pollId = m.poll.id;
+    bubble._poll = m.poll;
+    bubble._at = m.at;
+    renderPollInner(bubble);
+    mountBubble(bubble, m);
+    scrollBody();
+  }
+
+  function renderPollInner(card) {
+    const p = card._poll;
+    const total = p.total || 0;
+    card.innerHTML = `
+      <div class="poll-q"><span class="poll-ico">📊</span><span class="poll-q-text"></span></div>
+      <div class="poll-sub">${p.multi ? 'Select one or more' : 'Select one'} · ${total} vote${total === 1 ? '' : 's'}</div>
+      <div class="poll-opts"></div>
+      <span class="time">${fmtTime(card._at)}</span>
+    `;
+    card.querySelector('.poll-q-text').textContent = p.question;
+    const box = card.querySelector('.poll-opts');
+    (p.options || []).forEach((o, i) => {
+      const mineSel = (p.myVotes || []).includes(i);
+      const pct = total ? Math.round((o.count / total) * 100) : 0;
+      const opt = el(`
+        <button class="poll-opt${mineSel ? ' sel' : ''}" type="button">
+          <span class="poll-bar" style="width:${pct}%"></span>
+          <span class="poll-opt-mark">${mineSel ? '✓' : ''}</span>
+          <span class="poll-opt-text"></span>
+          <span class="poll-opt-count">${o.count}</span>
+        </button>
+      `);
+      opt.querySelector('.poll-opt-text').textContent = o.text;
+      opt.addEventListener('click', () => votePoll(p.id, i));
+      box.appendChild(opt);
+    });
+  }
+
+  function votePoll(pollId, option) {
+    if (!state.socket) return;
+    state.socket.emit('poll:vote', { pollId, option }, (res) => {
+      if (res && res.error) return notify(res.error);
+      if (res && res.poll) updatePollCard(res.poll);
+    });
+  }
+
+  // Repaint a poll card in place from a fresh payload (own vote ack or the
+  // 'poll:update' broadcast when someone else votes).
+  function updatePollCard(poll) {
+    const b = chatBody();
+    if (!b || !poll) return;
+    const card = b.querySelector(`.poll-card[data-poll-id="${poll.id}"]`);
+    if (!card) return;
+    card._poll = poll;
+    renderPollInner(card);
   }
 
   // Paint the intoxication meter for the current viewer from state.wasted.
@@ -3227,6 +3379,9 @@
         if (state.tab !== 'chats') markNav('chats', true);
       }
     });
+
+    // A poll's tallies changed (someone voted) — repaint the card in place.
+    s.on('poll:update', (e) => { if (e && e.poll) updatePollCard(e.poll); });
 
     // A group I'm in changed (created / invited / joined / left).
     s.on('group:changed', ({ groupId }) => {

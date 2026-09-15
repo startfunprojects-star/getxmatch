@@ -11,6 +11,7 @@ const db = require('../db');
 const { requireAuth } = require('../auth');
 const { notifyGroup } = require('../socket');
 const wasted = require('../wasted');
+const polls = require('../polls');
 
 const router = express.Router();
 
@@ -174,6 +175,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       kind: r.kind || 'text',
       at: r.created_at,
       mine: r.sender_id === req.user.id,
+      poll: r.kind === 'poll' ? polls.pollPayload(polls.pollIdFromBody(r.body), req.user.id) : undefined,
     })),
   });
 });

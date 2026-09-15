@@ -9,6 +9,7 @@ const { getGift } = require('./gifts');
 const wasted = require('./wasted');
 const roleplay = require('./roleplay');
 const broadcast = require('./broadcast');
+const polls = require('./polls');
 
 // Emoji reactions a user may place on a message/gift. Server-side allow-list so
 // clients can't store arbitrary strings.
@@ -236,6 +237,8 @@ function replyPreview(replyToId) {
     text = '🎭 Roleplay';
   } else if (row.kind === 'offer') {
     text = '🥂 Wasted';
+  } else if (row.kind === 'poll') {
+    text = polls.pollLabel(polls.pollIdFromBody(row.body));
   }
   return { id: row.id, from: row.sender_id, kind: row.kind || 'text', text: String(text).slice(0, 140) };
 }
@@ -313,6 +316,8 @@ function broadcastMessageView(row) {
       const it = wasted.getItem(o.item);
       text = it ? `🥂 ${it.emoji} ${it.label}` : '🥂 Wasted';
     } catch (_e) { text = '🥂 Wasted'; }
+  } else if (kind === 'poll') {
+    text = polls.pollLabel(polls.pollIdFromBody(row.body));
   }
   return { from: row.sender_id, fromName: nameOf(row.sender_id), kind, text, at: row.created_at };
 }
@@ -361,6 +366,8 @@ function mirrorLiveMessage(io, from, to, kind, body, at) {
       const it = wasted.getItem(o.item);
       text = it ? `🥂 ${it.emoji} ${it.label}` : '🥂 Wasted';
     } catch (_e) { text = '🥂 Wasted'; }
+  } else if (kind === 'poll') {
+    text = polls.pollLabel(polls.pollIdFromBody(body));
   }
   io.to(broadcastRoom(b.token)).emit('broadcast:message', {
     from, fromName: nameOf(from), kind, text, at,
@@ -735,6 +742,98 @@ function initSocket(io) {
         mirrorLiveMessage(io, me.id, to, 'gift', gift.id, now);
 
         ack && ack({ ok: true, message: { ...msg, mine: true } });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    /* -------------------- Polls -------------------- */
+
+    // Create a poll in a 1:1 chat ({ to, question, options, multi }) or a group
+    // chat ({ groupId, ... }). The poll is delivered as a kind='poll' chat
+    // message carrying its full payload.
+    socket.on('poll:create', (payload, ack) => {
+      try {
+        const clean = polls.sanitize(payload);
+        if (clean.error) return ack && ack({ error: clean.error });
+
+        const groupId = parseInt(payload && payload.groupId, 10) || null;
+        if (groupId) {
+          const member = db
+            .prepare("SELECT 1 FROM chat_group_members WHERE group_id = ? AND user_id = ? AND status = 'joined'")
+            .get(groupId, me.id);
+          if (!member) return ack && ack({ error: 'You are not a member of this group.' });
+
+          const pollId = polls.createPoll({ creatorId: me.id, ...clean, groupId });
+          const now = Date.now();
+          const info = db
+            .prepare("INSERT INTO group_messages (group_id, sender_id, body, kind, created_at) VALUES (?, ?, ?, 'poll', ?)")
+            .run(groupId, me.id, JSON.stringify({ pollId }), now);
+          polls.attachMessage(pollId, info.lastInsertRowid);
+
+          const prof = db.prepare('SELECT display_name, avatar FROM profiles WHERE user_id = ?').get(me.id);
+          const base = {
+            id: info.lastInsertRowid,
+            groupId,
+            from: me.id,
+            fromName: (prof && prof.display_name) || nameOf(me.id),
+            fromAvatar: prof && prof.avatar ? `/uploads/${prof.avatar}` : null,
+            kind: 'poll',
+            at: now,
+          };
+          groupJoinedIds(groupId).forEach((uid) =>
+            io.to(`user:${uid}`).emit('group:message', { ...base, mine: uid === me.id, poll: polls.pollPayload(pollId, uid) }));
+          return ack && ack({ ok: true });
+        }
+
+        const to = parseInt(payload && payload.to, 10);
+        if (!to) return ack && ack({ error: 'Invalid recipient.' });
+        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
+        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
+        if (areBlocked(me.id, to)) {
+          return ack && ack({ error: 'You cannot send a poll to this user — a block is in place.' });
+        }
+
+        const pollId = polls.createPoll({ creatorId: me.id, ...clean, dmA: me.id, dmB: to });
+        const now = Date.now();
+        const info = db
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'poll', ?, NULL)")
+          .run(me.id, to, JSON.stringify({ pollId }), now);
+        polls.attachMessage(pollId, info.lastInsertRowid);
+
+        const base = { id: info.lastInsertRowid, from: me.id, to, kind: 'poll', at: now };
+        io.to(`user:${to}`).emit('chat:message', { ...base, mine: false, poll: polls.pollPayload(pollId, to) });
+        io.to(`user:${me.id}`).emit('chat:message', { ...base, mine: true, poll: polls.pollPayload(pollId, me.id) });
+
+        mirrorLiveMessage(io, me.id, to, 'poll', JSON.stringify({ pollId }), now);
+
+        ack && ack({ ok: true });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // Cast / toggle a vote. Broadcasts the updated tallies to every participant;
+    // the voter's ack carries their own (viewer-tailored) payload.
+    socket.on('poll:vote', (payload, ack) => {
+      try {
+        const pollId = parseInt(payload && payload.pollId, 10);
+        const option = parseInt(payload && payload.option, 10);
+        const poll = polls.getPoll(pollId);
+        if (!poll) return ack && ack({ error: 'Poll not found.' });
+        if (!polls.canParticipate(poll, me.id)) return ack && ack({ error: 'You cannot vote on this poll.' });
+
+        const out = polls.vote(poll, me.id, option);
+        if (out.error) return ack && ack({ error: out.error });
+
+        // Recipients get the shared tallies; each client keeps its own myVotes.
+        const recipients = poll.scope === 'group'
+          ? groupJoinedIds(poll.group_id)
+          : [poll.dm_a, poll.dm_b];
+        recipients.forEach((uid) =>
+          io.to(`user:${uid}`).emit('poll:update', { pollId, poll: polls.pollPayload(pollId, uid) }));
+
+        ack && ack({ ok: true, poll: polls.pollPayload(pollId, me.id) });
       } catch (e) {
         ack && ack({ error: 'Server error.' });
       }

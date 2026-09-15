@@ -5,6 +5,7 @@ const db = require('../db');
 const { requireAuth } = require('../auth');
 const { getGift } = require('../gifts');
 const wasted = require('../wasted');
+const polls = require('../polls');
 
 // Build the compact quoted-message preview attached to a reply. Mirrors
 // replyPreview() in src/socket.js so live and historical replies render alike.
@@ -129,6 +130,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       reply: buildReplyPreview(m),
       reactions: reactionsByMsg.get(m.id) || [],
       expiresAt: m.expires_at || null,
+      poll: m.kind === 'poll' ? polls.pollPayload(polls.pollIdFromBody(m.body), req.user.id) : undefined,
     })),
   });
 });

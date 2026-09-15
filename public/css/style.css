@@ -266,28 +266,85 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .msg-row .bubble.gift::after { display: none; } /* pill-shaped, no tail */
 
 /* ---------- Narration ("/…" action) ----------
-   A message typed with a leading "/" is narration/action text, not speech, so
-   it renders as a distinctly coloured box (purple accent) instead of the pink
-   speech balloon — italic, with a small "❝" marker and no speech tail. */
-.bubble.has-narration {
+   A message typed with a leading "/" is narration/action text, not speech. It
+   renders as a standalone box CENTERED in the chat (not attached to either
+   side), purple-accented and italic with a small "❝" marker. */
+.narration-line {
+  align-self: center; text-align: center; max-width: 78%;
+  margin: 10px auto; padding: 9px 18px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
   font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', 'Times New Roman', serif;
-  font-style: italic;
-  font-weight: 400;
-  letter-spacing: .1px;
+  font-style: italic; letter-spacing: .1px;
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--accent-2) 26%, var(--bg-elev)),
     color-mix(in srgb, var(--accent-2) 14%, var(--bg-2)));
   border: 1px solid color-mix(in srgb, var(--accent-2) 50%, var(--border-strong));
-  border-left: 3px solid var(--accent-2);
-  border-radius: 13px;
+  border-radius: 14px;
   box-shadow: 0 3px 14px rgba(0, 0, 0, .32), inset 0 1px 0 rgba(255, 255, 255, .05);
   color: #f3efff;
 }
-/* Keep the accent spine on the side nearest the speaker's portrait. */
-.msg-row.me .bubble.has-narration { border-left: 1px solid color-mix(in srgb, var(--accent-2) 50%, var(--border-strong)); border-right: 3px solid var(--accent-2); }
-/* A subtle quote glyph so it reads as narration at a glance. */
-.bubble.has-narration .msg-text::before { content: "❝ "; color: var(--accent-2); font-weight: 700; opacity: .85; }
-.bubble.has-narration .time { font-style: normal; opacity: .55; }
+.narration-line .nl-author { font-style: normal; font-weight: 700; font-size: 11px; color: var(--accent-2); }
+.narration-line .nl-text { line-height: 1.45; overflow-wrap: anywhere; }
+.narration-line .nl-text::before { content: "❝ "; color: var(--accent-2); font-weight: 700; opacity: .85; }
+.narration-line .nl-text::after { content: " ❞"; color: var(--accent-2); font-weight: 700; opacity: .85; }
+.narration-line .nl-time { font-style: normal; font-size: 10px; color: var(--muted); opacity: .8; }
+
+/* ---------- Polls (WhatsApp-style, in chat) ----------
+   The poll renders inside a normal message balloon, so it inherits the light
+   card + speech tail; these rules widen it, restore a legible font, and lay out
+   the options with a live tally bar. */
+.msg-row .bubble.poll-card {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 500;
+  min-width: 250px; max-width: 340px;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 14px;
+}
+.poll-card .poll-q { display: flex; gap: 6px; align-items: flex-start; font-weight: 800; font-size: 14px; line-height: 1.3; }
+.poll-card .poll-ico { flex: none; }
+.poll-card .poll-q-text { overflow-wrap: anywhere; }
+.poll-card .poll-sub { font-size: 11.5px; opacity: .6; margin-top: -4px; }
+.poll-card .poll-opts { display: flex; flex-direction: column; gap: 7px; }
+.poll-card .poll-opt {
+  position: relative; overflow: hidden; text-align: left;
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; border-radius: 10px;
+  background: rgba(20, 23, 31, .06); border: 1.5px solid rgba(20, 23, 31, .18);
+  color: #14171f; font: inherit; cursor: pointer;
+}
+.poll-card .poll-opt:hover { border-color: var(--accent); }
+.poll-card .poll-opt.sel { border-color: var(--accent); }
+.poll-card .poll-bar {
+  position: absolute; left: 0; top: 0; bottom: 0; z-index: 0;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  transition: width .35s ease;
+}
+.poll-card .poll-opt.sel .poll-bar { background: color-mix(in srgb, var(--accent) 32%, transparent); }
+.poll-card .poll-opt-mark { position: relative; z-index: 1; width: 15px; flex: none; color: var(--accent); font-weight: 800; }
+.poll-card .poll-opt-text { position: relative; z-index: 1; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.poll-card .poll-opt-count { position: relative; z-index: 1; flex: none; font-weight: 700; font-size: 13px; opacity: .75; }
+
+/* Poll builder modal */
+.poll-builder { display: flex; flex-direction: column; gap: 8px; min-width: min(360px, 78vw); }
+.poll-builder .pb-label { font-size: 12px; font-weight: 700; color: var(--muted); margin-top: 4px; }
+.poll-builder .pb-input {
+  width: 100%; padding: 9px 12px; border-radius: 10px;
+  background: var(--bg-3); border: 1px solid var(--border); color: var(--text); font-size: 14px;
+}
+.poll-builder .pb-input:focus { outline: none; border-color: var(--accent); }
+.poll-builder .pb-options { display: flex; flex-direction: column; gap: 8px; }
+.poll-builder .pb-opt { display: flex; align-items: center; gap: 8px; }
+.poll-builder .pb-opt .pb-opt-input { flex: 1; }
+.poll-builder .pb-opt-x {
+  flex: none; width: 30px; height: 30px; border-radius: 8px; line-height: 1;
+  background: var(--bg-3); border: 1px solid var(--border); color: var(--muted); cursor: pointer;
+}
+.poll-builder .pb-opt-x:hover { color: var(--danger); border-color: var(--danger); }
+.poll-builder #pbAdd { align-self: flex-start; }
+.poll-builder .pb-multi { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin-top: 4px; cursor: pointer; }
+.poll-builder .pb-multi input { width: 16px; height: 16px; }
+.poll-builder .pb-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.poll-builder .pb-error { color: var(--danger); font-size: 12.5px; }
 
 /* ---------- Reply / quote + reactions ---------- */
 .bubble { position: relative; }
