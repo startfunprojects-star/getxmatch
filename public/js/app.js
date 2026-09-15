@@ -2362,16 +2362,18 @@
     card.querySelector('#pbQ').focus();
   }
 
-  // Render a poll message as a card on the sender's side. m.poll is the payload.
+  // Render a poll as a standalone card CENTERED in the chat (not a side bubble).
+  // m.poll is the payload; m.fromName (group only) labels who created it.
   function appendPollBubble(m) {
     const b = chatBody();
     if (!b || !m.poll) return;
-    const bubble = el(`<div class="bubble poll-card ${m.mine ? 'me' : 'them'}"></div>`);
-    bubble.dataset.pollId = m.poll.id;
-    bubble._poll = m.poll;
-    bubble._at = m.at;
-    renderPollInner(bubble);
-    mountBubble(bubble, m);
+    const card = el('<div class="poll-card"></div>');
+    card.dataset.pollId = m.poll.id;
+    card._poll = m.poll;
+    card._at = m.at;
+    card._author = (!m.mine && m.fromName) ? m.fromName : null;
+    renderPollInner(card);
+    b.appendChild(card);
     scrollBody();
   }
 
@@ -2380,11 +2382,13 @@
     const total = p.total || 0;
     card.innerHTML = `
       <div class="poll-q"><span class="poll-ico">📊</span><span class="poll-q-text"></span></div>
-      <div class="poll-sub">${p.multi ? 'Select one or more' : 'Select one'} · ${total} vote${total === 1 ? '' : 's'}</div>
+      <div class="poll-sub"></div>
       <div class="poll-opts"></div>
       <span class="time">${fmtTime(card._at)}</span>
     `;
     card.querySelector('.poll-q-text').textContent = p.question;
+    card.querySelector('.poll-sub').textContent =
+      `${card._author ? card._author + ' · ' : ''}${p.multi ? 'Select one or more' : 'Select one'} · ${total} vote${total === 1 ? '' : 's'}`;
     const box = card.querySelector('.poll-opts');
     (p.options || []).forEach((o, i) => {
       const mineSel = (p.myVotes || []).includes(i);

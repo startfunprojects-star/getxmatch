@@ -290,39 +290,45 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .narration-line .nl-time { font-style: normal; font-size: 10px; color: var(--muted); opacity: .8; }
 
 /* ---------- Polls (WhatsApp-style, in chat) ----------
-   The poll renders inside a normal message balloon, so it inherits the light
-   card + speech tail; these rules widen it, restore a legible font, and lay out
-   the options with a live tally bar. */
-.msg-row .bubble.poll-card {
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  font-weight: 500;
-  min-width: 250px; max-width: 340px;
+   A poll renders as a standalone card CENTERED in the chat (not a side bubble),
+   themed to the surface with a live tally bar behind each option. */
+.poll-card {
+  align-self: center;
+  width: min(380px, 84%);
+  margin: 10px auto;
   display: flex; flex-direction: column; gap: 8px;
-  padding: 12px 14px;
+  padding: 14px 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, .28);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: var(--text);
 }
-.poll-card .poll-q { display: flex; gap: 6px; align-items: flex-start; font-weight: 800; font-size: 14px; line-height: 1.3; }
+.poll-card .poll-q { display: flex; gap: 6px; align-items: flex-start; font-weight: 800; font-size: 14.5px; line-height: 1.3; }
 .poll-card .poll-ico { flex: none; }
 .poll-card .poll-q-text { overflow-wrap: anywhere; }
-.poll-card .poll-sub { font-size: 11.5px; opacity: .6; margin-top: -4px; }
-.poll-card .poll-opts { display: flex; flex-direction: column; gap: 7px; }
+.poll-card .poll-sub { font-size: 11.5px; color: var(--muted); margin-top: -3px; }
+.poll-card .poll-opts { display: flex; flex-direction: column; gap: 7px; margin-top: 2px; }
 .poll-card .poll-opt {
   position: relative; overflow: hidden; text-align: left;
   display: flex; align-items: center; gap: 8px;
-  padding: 9px 12px; border-radius: 10px;
-  background: rgba(20, 23, 31, .06); border: 1.5px solid rgba(20, 23, 31, .18);
-  color: #14171f; font: inherit; cursor: pointer;
+  padding: 10px 12px; border-radius: 10px;
+  background: var(--bg-3); border: 1.5px solid var(--border);
+  color: var(--text); font: inherit; cursor: pointer;
 }
 .poll-card .poll-opt:hover { border-color: var(--accent); }
 .poll-card .poll-opt.sel { border-color: var(--accent); }
 .poll-card .poll-bar {
   position: absolute; left: 0; top: 0; bottom: 0; z-index: 0;
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
   transition: width .35s ease;
 }
-.poll-card .poll-opt.sel .poll-bar { background: color-mix(in srgb, var(--accent) 32%, transparent); }
+.poll-card .poll-opt.sel .poll-bar { background: color-mix(in srgb, var(--accent) 34%, transparent); }
 .poll-card .poll-opt-mark { position: relative; z-index: 1; width: 15px; flex: none; color: var(--accent); font-weight: 800; }
 .poll-card .poll-opt-text { position: relative; z-index: 1; flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.poll-card .poll-opt-count { position: relative; z-index: 1; flex: none; font-weight: 700; font-size: 13px; opacity: .75; }
+.poll-card .poll-opt-count { position: relative; z-index: 1; flex: none; font-weight: 700; font-size: 13px; color: var(--muted); }
+.poll-card .time { color: var(--muted); font-size: 10px; }
 
 /* Poll builder modal */
 .poll-builder { display: flex; flex-direction: column; gap: 8px; min-width: min(360px, 78vw); }
