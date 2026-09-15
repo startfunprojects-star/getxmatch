@@ -530,7 +530,47 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 /* Lightbox */
 .lightbox { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.88); display: grid; place-items: center; padding: 24px; animation: pvIn .18s ease both; }
 .lightbox img { max-width: 92vw; max-height: 88vh; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
-.lb-close { position: absolute; top: 18px; right: 22px; width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.1); color: #fff; font-size: 18px; }
+.lb-close { position: absolute; top: 18px; right: 22px; width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.1); color: #fff; font-size: 18px; z-index: 3; }
+
+/* Little activity badge on a gallery cell: reaction + comment counts. */
+.gallery .cell-meta {
+  position: absolute; left: 6px; bottom: 6px; z-index: 2;
+  display: inline-flex; gap: 4px; align-items: center;
+  padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  color: #fff; background: rgba(0,0,0,.58); pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Rich gallery-photo viewer (image + reactions + comments). */
+.photo-viewer { place-items: stretch; }
+.photo-viewer .pv-shell {
+  display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 0;
+  width: min(1000px, 96vw); max-height: 90vh; margin: auto;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 16px; overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,.6);
+}
+.photo-viewer .pv-media { background: #000; display: grid; place-items: center; min-height: 0; }
+.photo-viewer .pv-media img { width: 100%; height: 100%; max-height: 90vh; object-fit: contain; border-radius: 0; box-shadow: none; }
+.photo-viewer .pv-panel { display: flex; flex-direction: column; min-height: 0; min-width: 0; padding: 16px; gap: 12px; }
+.photo-viewer .pv-reactions { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.photo-viewer .pv-react {
+  display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px;
+  border-radius: 999px; background: var(--bg-3); border: 1px solid var(--border);
+  font-size: 16px; line-height: 1; cursor: pointer; transition: transform .1s ease, background .15s ease, border-color .15s ease;
+}
+.photo-viewer .pv-react:hover:not(:disabled) { transform: translateY(-1px); background: var(--bg-elev); }
+.photo-viewer .pv-react.on { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: var(--accent); }
+.photo-viewer .pv-react:disabled { cursor: default; opacity: .85; }
+.photo-viewer .pv-react-count { font-size: 12px; font-weight: 700; }
+.photo-viewer .pv-comments-wrap { flex: 1; min-height: 0; overflow-y: auto; }
+.photo-viewer .pv-comments-wrap .comments { padding-right: 2px; }
+.photo-viewer .comment-form { margin-bottom: 0; margin-top: 4px; }
+
+@media (max-width: 760px) {
+  .photo-viewer .pv-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); width: 96vw; }
+  .photo-viewer .pv-media { max-height: 42vh; }
+  .photo-viewer .pv-media img { max-height: 42vh; }
+}
 
 /* Friends */
 .friend-row { display: flex; flex-direction: column; gap: 8px; }

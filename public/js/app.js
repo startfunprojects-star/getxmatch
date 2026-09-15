@@ -309,6 +309,17 @@
   const MAX_GALLERY = 25;
   const MAX_BUFFER = 10;
 
+  // Emoji "likes" a user can leave on a gallery photo. Mirrors the server-side
+  // allow-list in src/galleryReactions.js — keep the two in sync.
+  const GALLERY_REACTIONS = [
+    { emoji: '❤️', label: 'Love' },
+    { emoji: '🤤', label: 'Lust' },
+    { emoji: '😄', label: 'Smile' },
+    { emoji: '🍆', label: 'Erection' },
+    { emoji: '💦', label: 'Wet' },
+    { emoji: '🔥', label: 'Hot' },
+  ];
+
   // Relationship-request kinds (mirror src/relationships.js). Order matches spec.
   const REL_TYPES = {
     friend:     { label: 'Friends',    emoji: '🤝', requestLabel: 'Send Friend Request' },
@@ -3421,6 +3432,151 @@
     document.body.appendChild(box);
   }
 
+  // Rich gallery-photo viewer: the full-size image alongside emoji reactions
+  // ("likes") and a comment thread. `opts.isOwner` disables reacting/commenting
+  // on your own photos (you can still read reactions and delete comments).
+  // `opts.onUpdate({ reactionCount, commentCount, myReaction })` lets the
+  // originating gallery cell keep its little activity badges in sync.
+  function openPhotoViewer(photo, opts) {
+    opts = opts || {};
+    const isOwner = !!opts.isOwner;
+    const onUpdate = typeof opts.onUpdate === 'function' ? opts.onUpdate : function () {};
+
+    const box = el(`
+      <div class="lightbox photo-viewer">
+        <button class="lb-close" title="Close">✕</button>
+        <div class="pv-shell">
+          <div class="pv-media"><img src="${esc(photo.url)}" alt="" /></div>
+          <div class="pv-panel">
+            <div class="pv-reactions" id="pvReactions"></div>
+            <div class="pv-comments-wrap">
+              <div class="comments" id="pvPhotoComments"><div class="hint">Loading…</div></div>
+            </div>
+            <div id="pvPhotoForm"></div>
+          </div>
+        </div>
+      </div>
+    `);
+
+    const close = () => { box.remove(); document.removeEventListener('keydown', onKey); };
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    box.addEventListener('click', (e) => {
+      if (e.target === box || e.target.classList.contains('lb-close') || e.target.classList.contains('pv-shell')) close();
+    });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(box);
+
+    /* ----- reactions ----- */
+    const reactBar = box.querySelector('#pvReactions');
+    let myReaction = photo.myReaction || null;
+    let counts = {}; // emoji -> count
+    (photo.reactions || []).forEach((r) => { counts[r.emoji] = r.count; });
+
+    function totalReactions() {
+      return Object.values(counts).reduce((a, b) => a + b, 0);
+    }
+    function paintReactions() {
+      reactBar.innerHTML = '';
+      GALLERY_REACTIONS.forEach((r) => {
+        const n = counts[r.emoji] || 0;
+        const btn = el(
+          `<button class="pv-react${myReaction === r.emoji ? ' on' : ''}" title="${esc(r.label)}">
+             <span class="pv-react-emoji">${r.emoji}</span>${n ? `<span class="pv-react-count">${n}</span>` : ''}
+           </button>`
+        );
+        if (isOwner) {
+          btn.disabled = true;
+          btn.title = `${r.label} — ${n}`;
+        } else {
+          btn.addEventListener('click', () => react(r.emoji));
+        }
+        reactBar.appendChild(btn);
+      });
+      onUpdate({ reactionCount: totalReactions(), commentCount: commentsBox.querySelectorAll('.comment').length, myReaction });
+    }
+    async function react(emoji) {
+      try {
+        const { reactions } = await api.post('/api/social/photo/' + photo.id + '/react', { emoji });
+        counts = {};
+        reactions.reactions.forEach((r) => { counts[r.emoji] = r.count; });
+        myReaction = reactions.mine;
+        paintReactions();
+      } catch (e) { alert(e.message); }
+    }
+
+    /* ----- comments ----- */
+    const commentsBox = box.querySelector('#pvPhotoComments');
+    const renderPhotoComment = (c) => {
+      const item = el(`
+        <div class="comment">
+          <img class="avatar sm" src="${avatarUrl(c.author.avatar)}" />
+          <div class="c-body">
+            <div class="c-head"><b class="c-author" data-u="${esc(c.author.username)}">${esc(c.author.displayName)}</b> <span class="hint">${fmtDate(c.at)}</span></div>
+            <div class="c-text"></div>
+          </div>
+        </div>
+      `);
+      item.querySelector('.c-text').textContent = c.body;
+      item.querySelector('.c-author').addEventListener('click', () => { close(); showProfile(c.author.username); });
+      if (c.canDelete) {
+        const del = el('<button class="ghost small">Delete</button>');
+        del.addEventListener('click', async () => {
+          try {
+            await api.del('/api/social/photo-comment/' + c.id);
+            item.remove();
+            if (!commentsBox.querySelector('.comment')) commentsBox.appendChild(el('<div class="hint">No comments yet.</div>'));
+            paintReactions();
+          } catch (e) { alert(e.message); }
+        });
+        item.querySelector('.c-head').appendChild(del);
+      }
+      return item;
+    };
+
+    if (!isOwner) {
+      const form = el(`
+        <div class="comment-form">
+          <input id="pcInput" maxlength="500" placeholder="Say something about this photo…" />
+          <button class="primary small" id="pcSend">Post</button>
+        </div>
+      `);
+      box.querySelector('#pvPhotoForm').appendChild(form);
+      const input = form.querySelector('#pcInput');
+      const send = async () => {
+        const body = input.value.trim();
+        if (!body) return;
+        try {
+          const { comment } = await api.post('/api/social/photo/' + photo.id + '/comment', { body });
+          input.value = '';
+          const hint = commentsBox.querySelector('.hint');
+          if (hint) hint.remove();
+          commentsBox.prepend(renderPhotoComment(comment));
+          paintReactions();
+        } catch (e) { alert(e.message); }
+      };
+      form.querySelector('#pcSend').addEventListener('click', send);
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+    }
+
+    // Load the authoritative detail (comments + reaction counts) up front.
+    (async () => {
+      try {
+        const detail = await api.get('/api/social/photo/' + photo.id);
+        counts = {};
+        detail.reactions.reactions.forEach((r) => { counts[r.emoji] = r.count; });
+        myReaction = detail.reactions.mine;
+        commentsBox.innerHTML = '';
+        if (!detail.comments.length) commentsBox.appendChild(el('<div class="hint">No comments yet.</div>'));
+        else detail.comments.forEach((c) => commentsBox.appendChild(renderPhotoComment(c)));
+        paintReactions();
+      } catch (e) {
+        commentsBox.innerHTML = '';
+        commentsBox.appendChild(el(`<div class="hint">${esc(e.message)}</div>`));
+        paintReactions();
+      }
+    })();
+  }
+
   async function showProfile(username) {
     document.getElementById('shell').classList.add('viewing-main');
     const main = document.getElementById('main');
@@ -3572,9 +3728,30 @@
       galCount.textContent = isMe ? `(${n}/${MAX_GALLERY})` : `(${n})`;
     };
     const makeCell = (ph) => {
-      const cell = el(`<div class="cell"><img src="${ph.url}" loading="lazy" /><span class="cell-zoom">⤢</span></div>`);
-      cell.querySelector('img').addEventListener('click', () => openLightbox(ph.url));
-      cell.querySelector('.cell-zoom').addEventListener('click', () => openLightbox(ph.url));
+      ph.reactionCount = ph.reactionCount || 0;
+      ph.commentCount = ph.commentCount || 0;
+      const cell = el(`<div class="cell"><img src="${ph.url}" loading="lazy" /><span class="cell-zoom">⤢</span><span class="cell-meta"></span></div>`);
+      const meta = cell.querySelector('.cell-meta');
+      const paintMeta = () => {
+        const bits = [];
+        if (ph.reactionCount) bits.push(`❤ ${ph.reactionCount}`);
+        if (ph.commentCount) bits.push(`💬 ${ph.commentCount}`);
+        meta.textContent = bits.join('  ');
+        meta.style.display = bits.length ? '' : 'none';
+      };
+      paintMeta();
+      const open = () => openPhotoViewer(ph, {
+        isOwner: isMe,
+        ownerUsername: profile.username,
+        onUpdate: (s) => {
+          ph.reactionCount = s.reactionCount;
+          ph.commentCount = s.commentCount;
+          ph.myReaction = s.myReaction;
+          paintMeta();
+        },
+      });
+      cell.querySelector('img').addEventListener('click', open);
+      cell.querySelector('.cell-zoom').addEventListener('click', open);
       if (isMe) {
         const del = el('<button class="del" title="Delete photo">✕</button>');
         del.addEventListener('click', async (ev) => {

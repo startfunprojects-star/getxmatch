@@ -4,9 +4,10 @@ const express = require('express');
 
 const db = require('../db');
 const { requireAuth } = require('../auth');
-const { friendState, ratingSummary } = require('../profileData');
+const { friendState, ratingSummary, photoReactionState, photoComments } = require('../profileData');
 const { areBlocked } = require('../relations');
 const { GIFTS } = require('../gifts');
+const { GALLERY_REACTIONS, GALLERY_REACTION_SET } = require('../galleryReactions');
 const { listActivities } = require('../activities');
 const { isValidRelType, sentText, acceptedText, relEmoji } = require('../relationships');
 const { broadcastActivity, notifyUser, broadcastLeaderboardChange } = require('../socket');
@@ -126,6 +127,124 @@ router.delete('/comment/:id', requireAuth, (req, res) => {
     return res.status(403).json({ error: 'You cannot delete this comment.' });
   }
   db.prepare('DELETE FROM comments WHERE id = ?').run(comment.id);
+  res.json({ ok: true });
+});
+
+/* ---------------------------------------------------------------------------
+   Gallery photos — emoji reactions ("likes") and per-photo comments
+--------------------------------------------------------------------------- */
+
+// Resolve a :photoId param to its gallery photo row (id + owner user_id). Sends
+// the error response itself and returns null when invalid/not found.
+function resolvePhoto(req, res) {
+  const id = parseInt(req.params.photoId, 10);
+  if (!id) {
+    res.status(400).json({ error: 'Invalid photo.' });
+    return null;
+  }
+  const photo = db.prepare('SELECT id, user_id FROM gallery_photos WHERE id = ?').get(id);
+  if (!photo) {
+    res.status(404).json({ error: 'Photo not found.' });
+    return null;
+  }
+  return photo;
+}
+
+// GET /api/social/photo-reactions — the emoji "likes" a user may leave (catalog)
+router.get('/photo-reactions', requireAuth, (_req, res) => {
+  res.json({ reactions: GALLERY_REACTIONS });
+});
+
+// GET /api/social/photo/:photoId — full detail for one gallery photo: its
+// comments plus aggregated reactions and the viewer's own reaction.
+router.get('/photo/:photoId', requireAuth, (req, res) => {
+  const photo = resolvePhoto(req, res);
+  if (!photo) return;
+  res.json({
+    reactions: photoReactionState(photo.id, req.user.id),
+    comments: photoComments(photo.id, req.user.id),
+  });
+});
+
+// POST /api/social/photo/:photoId/react  { emoji }  — set / toggle a reaction.
+// Same emoji again clears it; a different emoji replaces it.
+router.post('/photo/:photoId/react', requireAuth, (req, res) => {
+  const photo = resolvePhoto(req, res);
+  if (!photo) return;
+  if (areBlocked(req.user.id, photo.user_id)) {
+    return res.status(403).json({ error: 'You cannot react while a block is in place.' });
+  }
+  const emoji = ((req.body && req.body.emoji) || '').trim();
+  if (!GALLERY_REACTION_SET.has(emoji)) {
+    return res.status(400).json({ error: 'Invalid reaction.' });
+  }
+
+  const existing = db
+    .prepare('SELECT emoji FROM gallery_reactions WHERE photo_id = ? AND user_id = ?')
+    .get(photo.id, req.user.id);
+  const now = Date.now();
+  if (existing && existing.emoji === emoji) {
+    db.prepare('DELETE FROM gallery_reactions WHERE photo_id = ? AND user_id = ?').run(photo.id, req.user.id);
+  } else if (existing) {
+    db.prepare('UPDATE gallery_reactions SET emoji = ?, created_at = ? WHERE photo_id = ? AND user_id = ?')
+      .run(emoji, now, photo.id, req.user.id);
+  } else {
+    db.prepare('INSERT INTO gallery_reactions (photo_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?)')
+      .run(photo.id, req.user.id, emoji, now);
+  }
+
+  res.json({ reactions: photoReactionState(photo.id, req.user.id) });
+});
+
+// POST /api/social/photo/:photoId/comment  { body }  — comment on a photo
+router.post('/photo/:photoId/comment', requireAuth, (req, res) => {
+  const photo = resolvePhoto(req, res);
+  if (!photo) return;
+  if (areBlocked(req.user.id, photo.user_id)) {
+    return res.status(403).json({ error: 'You cannot comment while a block is in place.' });
+  }
+  const body = ((req.body && req.body.body) || '').trim();
+  if (!body) return res.status(400).json({ error: 'Comment cannot be empty.' });
+  if (body.length > 500) return res.status(400).json({ error: 'Comment must be 500 characters or fewer.' });
+
+  const now = Date.now();
+  const info = db
+    .prepare('INSERT INTO gallery_comments (photo_id, author_id, body, created_at) VALUES (?, ?, ?, ?)')
+    .run(photo.id, req.user.id, body, now);
+
+  const me = db.prepare('SELECT display_name, avatar FROM profiles WHERE user_id = ?').get(req.user.id);
+  res.status(201).json({
+    comment: {
+      id: info.lastInsertRowid,
+      body,
+      at: now,
+      author: {
+        id: req.user.id,
+        username: req.user.username,
+        displayName: (me && me.display_name) || req.user.username,
+        avatar: me && me.avatar ? `/uploads/${me.avatar}` : null,
+      },
+      canDelete: true,
+    },
+  });
+});
+
+// DELETE /api/social/photo-comment/:id — the comment's author or the photo
+// owner may delete it.
+router.delete('/photo-comment/:id', requireAuth, (req, res) => {
+  const row = db
+    .prepare(
+      `SELECT gc.id, gc.author_id, gp.user_id AS owner_id
+       FROM gallery_comments gc
+       JOIN gallery_photos gp ON gp.id = gc.photo_id
+       WHERE gc.id = ?`
+    )
+    .get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Comment not found.' });
+  if (row.author_id !== req.user.id && row.owner_id !== req.user.id) {
+    return res.status(403).json({ error: 'You cannot delete this comment.' });
+  }
+  db.prepare('DELETE FROM gallery_comments WHERE id = ?').run(row.id);
   res.json({ ok: true });
 });
 

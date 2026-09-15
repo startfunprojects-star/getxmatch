@@ -260,6 +260,36 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_reactions_msg ON message_reactions (message_id);
 `);
 
+// --- Gallery social layer: comments and emoji "likes" other users leave on a
+// specific gallery photo. Both cascade-delete with the photo (and the owner).
+db.exec(`
+  -- Comments left on a single gallery photo.
+  CREATE TABLE IF NOT EXISTS gallery_comments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    photo_id   INTEGER NOT NULL REFERENCES gallery_photos(id) ON DELETE CASCADE,
+    author_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_gallery_comments_photo
+    ON gallery_comments (photo_id, created_at);
+
+  -- Emoji reactions ("likes") on a gallery photo. One row per (photo, user): a
+  -- user has at most one reaction per photo; picking a new emoji replaces it,
+  -- picking the same one again clears it. Allowed emojis are enforced at write
+  -- time by the route (see src/galleryReactions.js).
+  CREATE TABLE IF NOT EXISTS gallery_reactions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    photo_id   INTEGER NOT NULL REFERENCES gallery_photos(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji      TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE (photo_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_gallery_reactions_photo
+    ON gallery_reactions (photo_id);
+`);
+
 // --- Profile picture buffer: a pool of up to 10 images per user, separate from
 // the single display picture (profiles.avatar) and the photo gallery. In chat,
 // the picture shown for a user is drawn at random from this buffer and rotates

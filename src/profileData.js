@@ -87,6 +87,110 @@ function commentsFor(subjectId, viewerId) {
   }));
 }
 
+// Build the gallery for a profile: each photo carries its aggregated emoji
+// reactions, a total, the viewer's own reaction (if any), and a comment count.
+// Detail (the full comment list) is fetched lazily when a photo is opened.
+function buildGallery(userId, viewerId) {
+  const photos = db
+    .prepare('SELECT id, filename FROM gallery_photos WHERE user_id = ? ORDER BY created_at DESC')
+    .all(userId);
+  if (!photos.length) return [];
+
+  const ids = photos.map((p) => p.id);
+  const marks = ids.map(() => '?').join(',');
+
+  const reactRows = db
+    .prepare(
+      `SELECT photo_id, emoji, COUNT(*) AS n FROM gallery_reactions
+       WHERE photo_id IN (${marks}) GROUP BY photo_id, emoji`
+    )
+    .all(...ids);
+  const reactionsBy = new Map();
+  for (const r of reactRows) {
+    if (!reactionsBy.has(r.photo_id)) reactionsBy.set(r.photo_id, []);
+    reactionsBy.get(r.photo_id).push({ emoji: r.emoji, count: r.n });
+  }
+
+  const commentRows = db
+    .prepare(
+      `SELECT photo_id, COUNT(*) AS n FROM gallery_comments
+       WHERE photo_id IN (${marks}) GROUP BY photo_id`
+    )
+    .all(...ids);
+  const commentCount = new Map(commentRows.map((r) => [r.photo_id, r.n]));
+
+  let mineBy = new Map();
+  if (viewerId) {
+    const mineRows = db
+      .prepare(`SELECT photo_id, emoji FROM gallery_reactions WHERE user_id = ? AND photo_id IN (${marks})`)
+      .all(viewerId, ...ids);
+    mineBy = new Map(mineRows.map((r) => [r.photo_id, r.emoji]));
+  }
+
+  return photos.map((ph) => {
+    const reactions = reactionsBy.get(ph.id) || [];
+    return {
+      id: ph.id,
+      url: `/uploads/${ph.filename}`,
+      reactions,
+      reactionCount: reactions.reduce((sum, r) => sum + r.count, 0),
+      commentCount: commentCount.get(ph.id) || 0,
+      myReaction: mineBy.get(ph.id) || null,
+    };
+  });
+}
+
+// Aggregated reaction state for one photo: per-emoji counts, the total, and the
+// viewer's own reaction (if any). Returned by the react endpoint and the photo
+// detail endpoint so the client can repaint without a full profile reload.
+function photoReactionState(photoId, viewerId) {
+  const rows = db
+    .prepare('SELECT emoji, COUNT(*) AS n FROM gallery_reactions WHERE photo_id = ? GROUP BY emoji')
+    .all(photoId);
+  let mine = null;
+  if (viewerId) {
+    const r = db
+      .prepare('SELECT emoji FROM gallery_reactions WHERE photo_id = ? AND user_id = ?')
+      .get(photoId, viewerId);
+    mine = r ? r.emoji : null;
+  }
+  return {
+    reactions: rows.map((r) => ({ emoji: r.emoji, count: r.n })),
+    total: rows.reduce((sum, r) => sum + r.n, 0),
+    mine,
+  };
+}
+
+// Full comment list for a single gallery photo. The photo owner or a comment's
+// own author may delete it.
+function photoComments(photoId, viewerId) {
+  const owner = db.prepare('SELECT user_id FROM gallery_photos WHERE id = ?').get(photoId);
+  const ownerId = owner ? owner.user_id : null;
+  const rows = db
+    .prepare(
+      `SELECT c.id, c.author_id, c.body, c.created_at, u.username, p.display_name, p.avatar
+       FROM gallery_comments c
+       JOIN users u ON u.id = c.author_id
+       LEFT JOIN profiles p ON p.user_id = c.author_id
+       WHERE c.photo_id = ?
+       ORDER BY c.created_at DESC
+       LIMIT 200`
+    )
+    .all(photoId);
+  return rows.map((r) => ({
+    id: r.id,
+    body: r.body,
+    at: r.created_at,
+    author: {
+      id: r.author_id,
+      username: r.username,
+      displayName: r.display_name || r.username,
+      avatar: r.avatar ? `/uploads/${r.avatar}` : null,
+    },
+    canDelete: !!viewerId && (viewerId === r.author_id || viewerId === ownerId),
+  }));
+}
+
 function parseInterests(raw) {
   if (!raw) return [];
   try {
@@ -115,9 +219,7 @@ function buildProfile(userId, viewerId) {
 
   const isMe = viewerId === row.id;
 
-  const photos = db
-    .prepare('SELECT id, filename FROM gallery_photos WHERE user_id = ? ORDER BY created_at DESC')
-    .all(userId);
+  const gallery = buildGallery(userId, viewerId);
 
   // Profile picture buffer (up to 10). Separate from the gallery and the single
   // display picture; the chat rotates through these.
@@ -178,7 +280,7 @@ function buildProfile(userId, viewerId) {
     bedRole: row.bed_role || null,
     relationshipStatus: row.relationship_status || null,
     partner,
-    gallery: photos.map((ph) => ({ id: ph.id, url: `/uploads/${ph.filename}` })),
+    gallery,
     buffer: bufferPhotos.map((ph) => ({ id: ph.id, url: `/uploads/${ph.filename}` })),
     rating: ratingSummary(row.id, viewerId),
     comments: commentsFor(row.id, viewerId),
@@ -202,5 +304,8 @@ module.exports = {
   friendsOf,
   ratingSummary,
   commentsFor,
+  buildGallery,
+  photoReactionState,
+  photoComments,
   parseInterests,
 };
