@@ -220,7 +220,7 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 /* ---------- Comic speech balloon (normal, non-thought messages) ----------
    White balloon, heavy ink outline, comic hand, hard offset shadow, and a
    pointed outlined tail (a bordered diamond) that reaches to the picture. */
-.msg-row .bubble:not(.has-monologue) {
+.msg-row .bubble:not(.has-narration) {
   --balloon: #fff;
   background: var(--balloon);
   color: #14171f;
@@ -230,34 +230,34 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
   font-weight: 600;
   box-shadow: 2px 3px 0 rgba(0, 0, 0, .30);
 }
-.msg-row.me .bubble:not(.has-monologue) { --balloon: #ffe3ee; }
-.msg-row .bubble:not(.has-monologue) .msg-link { color: #1a4fd0; }
-.msg-row .bubble:not(.has-monologue) .bubble-author { color: #c0246a; }
-.msg-row .bubble:not(.has-monologue) .time { color: rgba(20, 23, 31, .55); }
+.msg-row.me .bubble:not(.has-narration) { --balloon: #ffe3ee; }
+.msg-row .bubble:not(.has-narration) .msg-link { color: #1a4fd0; }
+.msg-row .bubble:not(.has-narration) .bubble-author { color: #c0246a; }
+.msg-row .bubble:not(.has-narration) .time { color: rgba(20, 23, 31, .55); }
 
 /* Tail = an outer ink triangle with a slightly-inset fill triangle on top, so
    it reads as an outlined comic tail whose tip reaches into the picture. */
-.msg-row .bubble:not(.has-monologue)::before,
-.msg-row .bubble:not(.has-monologue)::after {
+.msg-row .bubble:not(.has-narration)::before,
+.msg-row .bubble:not(.has-narration)::after {
   content: ''; position: absolute; width: 0; height: 0; border-style: solid;
   border-color: transparent;
 }
-.msg-row.them .bubble:not(.has-monologue)::before { /* ink */
+.msg-row.them .bubble:not(.has-narration)::before { /* ink */
   left: -22px; top: 50%; transform: translateY(-50%);
   border-width: 9px; border-right-width: 23px;
   border-right-color: #14171f; border-left-width: 0;
 }
-.msg-row.them .bubble:not(.has-monologue)::after {  /* fill */
+.msg-row.them .bubble:not(.has-narration)::after {  /* fill */
   left: -16px; top: 50%; transform: translateY(-50%);
   border-width: 6px; border-right-width: 18px;
   border-right-color: var(--balloon); border-left-width: 0;
 }
-.msg-row.me .bubble:not(.has-monologue)::before {   /* ink */
+.msg-row.me .bubble:not(.has-narration)::before {   /* ink */
   right: -22px; top: 50%; transform: translateY(-50%);
   border-width: 9px; border-left-width: 23px;
   border-left-color: #14171f; border-right-width: 0;
 }
-.msg-row.me .bubble:not(.has-monologue)::after {    /* fill */
+.msg-row.me .bubble:not(.has-narration)::after {    /* fill */
   right: -16px; top: 50%; transform: translateY(-50%);
   border-width: 6px; border-left-width: 18px;
   border-left-color: var(--balloon); border-right-width: 0;
@@ -265,55 +265,29 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .msg-row .bubble.gift::before,
 .msg-row .bubble.gift::after { display: none; } /* pill-shaped, no tail */
 
-/* ---------- Internal monologue ("/…" thought) ----------
-   The caption is a normal rectangle. What marks it as a thought is a trail of
-   two comic puff-bubbles rising from the picture up to the caption (instead of
-   the pointed speech tail) plus a soft italic style. */
-.bubble.has-monologue {
+/* ---------- Narration ("/…" action) ----------
+   A message typed with a leading "/" is narration/action text, not speech, so
+   it renders as a distinctly coloured box (purple accent) instead of the pink
+   speech balloon — italic, with a small "❝" marker and no speech tail. */
+.bubble.has-narration {
   font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', 'Times New Roman', serif;
   font-style: italic;
   font-weight: 400;
   letter-spacing: .1px;
-  background: linear-gradient(180deg, var(--bg-elev), var(--bg-2));
-  border: 1px solid var(--border-strong);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent-2) 26%, var(--bg-elev)),
+    color-mix(in srgb, var(--accent-2) 14%, var(--bg-2)));
+  border: 1px solid color-mix(in srgb, var(--accent-2) 50%, var(--border-strong));
+  border-left: 3px solid var(--accent-2);
   border-radius: 13px;
   box-shadow: 0 3px 14px rgba(0, 0, 0, .32), inset 0 1px 0 rgba(255, 255, 255, .05);
-  color: var(--text);
+  color: #f3efff;
 }
-/* Slim accent "spine" on the picture side, so the thought reads as coming from
-   the portrait without the heaviness of the speech balloon. */
-.msg-row.them .bubble.has-monologue { border-left: 3px solid var(--accent-2); }
-.msg-row.me .bubble.has-monologue { border-right: 3px solid var(--accent-2); }
-.bubble.has-monologue .time { font-style: normal; opacity: .55; }
-.bubble.has-monologue.me {
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--accent-2) 24%, var(--bg-elev)),
-    color-mix(in srgb, var(--accent-2) 15%, var(--bg-2)));
-  border-color: color-mix(in srgb, var(--accent-2) 42%, var(--border-strong));
-  color: #fff;
-}
-/* Thought trail: a run of shrinking puffs between the picture and the caption
-   (smallest nearest the picture, largest nearest the thought), so it reads as a
-   classic comic thought-bubble tail. Rendered as real elements in the row. */
-.think-trail { display: flex; align-items: center; gap: 3px; flex: none; }
-.msg-row.me .think-trail { flex-direction: row-reverse; } /* keep small end at the picture */
-.think-trail .tp {
-  border-radius: 50%;
-  background: var(--bg-elev); box-shadow: 0 0 0 1px var(--border-strong);
-}
-.think-trail .tp1 { width: 5px;  height: 5px;  }
-.think-trail .tp2 { width: 8px;  height: 8px;  }
-.think-trail .tp3 { width: 11px; height: 11px; }
-.think-trail .tp4 { width: 14px; height: 14px; }
-/* Gentle rise toward the thought, like real thought bubbles. */
-.think-trail .tp1 { margin-top: 12px; }
-.think-trail .tp2 { margin-top: 4px; }
-.think-trail .tp3 { margin-top: -3px; }
-.think-trail .tp4 { margin-top: -10px; }
-.msg-row.me .think-trail .tp {
-  background: color-mix(in srgb, var(--accent-2) 20%, var(--bg-elev));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-2) 45%, var(--border-strong));
-}
+/* Keep the accent spine on the side nearest the speaker's portrait. */
+.msg-row.me .bubble.has-narration { border-left: 1px solid color-mix(in srgb, var(--accent-2) 50%, var(--border-strong)); border-right: 3px solid var(--accent-2); }
+/* A subtle quote glyph so it reads as narration at a glance. */
+.bubble.has-narration .msg-text::before { content: "❝ "; color: var(--accent-2); font-weight: 700; opacity: .85; }
+.bubble.has-narration .time { font-style: normal; opacity: .55; }
 
 /* ---------- Reply / quote + reactions ---------- */
 .bubble { position: relative; }

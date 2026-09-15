@@ -1208,11 +1208,11 @@
     // Wasted narrations render centered for everyone, not as a user's bubble.
     if (m.kind === 'wasted') return appendWastedSentence(m);
     if (m.kind === 'offer') return appendGroupOfferBubble(m);
-    const thought = monologueText(m.body);
+    const narration = narrationText(m.body);
     const side = m.mine ? 'me' : 'them';
-    const bubble = el(`<div class="bubble ${side}${thought ? ' has-monologue' : ''}"></div>`);
+    const bubble = el(`<div class="bubble ${side}${narration ? ' has-narration' : ''}"></div>`);
     if (!m.mine) bubble.appendChild(el(`<div class="bubble-author">${esc(m.fromName)}</div>`));
-    appendRichText(bubble, thought != null ? thought : m.body);
+    appendRichText(bubble, narration != null ? narration : m.body);
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
     mountBubble(bubble, m);
     scrollBody();
@@ -1707,11 +1707,6 @@
     const img = el(`<img class="chat-av" data-uid="${uid == null ? '' : uid}"${pending ? ' data-pending' : ''} src="${esc(src)}" alt="" />`);
     if (uid && !mine) img.addEventListener('click', () => { if (state.peer) showProfile(state.peer.username); });
     row.appendChild(img);
-    // Internal monologue: a trail of shrinking "thought" puffs between the
-    // picture and the caption (a comic thought-bubble tail).
-    if (bubble.classList.contains('has-monologue')) {
-      row.appendChild(el('<span class="think-trail"><i class="tp tp1"></i><i class="tp tp2"></i><i class="tp tp3"></i><i class="tp tp4"></i></span>'));
-    }
     row.appendChild(bubble);
     b.appendChild(row);
     ensureAvatars(uid, fallback);
@@ -1873,14 +1868,14 @@
     box.classList.add('hidden');
   }
 
-  // "Internal monologue": a message whose body starts with "/" followed by a
-  // sentence is a thought, not speech. Returns the thought text (the part after
-  // the leading "/"), or null if not a monologue. The "/" is only a prefix, so
-  // URLs like "/foo" mid-message aren't affected — only when the whole message
-  // opens with "/". The caption itself stays a normal rectangle; what marks it
-  // as a thought is the trail of comic puff-bubbles rising from the picture
-  // (see the .has-monologue tail in the stylesheet).
-  function monologueText(body) {
+  // Narration: a message whose body starts with "/" is narration/action text
+  // ("*walks in and smiles*"), not speech. Returns the narration text (the part
+  // after the leading "/"), or null if the message isn't narration. The "/" is
+  // only a trigger as the FIRST character, so URLs like "/foo" mid-message
+  // aren't affected — only when the whole message opens with "/". Narration is
+  // rendered in a distinctly coloured box instead of a speech balloon (see the
+  // .bubble.has-narration rules in the stylesheet).
+  function narrationText(body) {
     const str = String(body == null ? '' : body);
     if (str[0] !== '/') return null;
     const rest = str.slice(1).trim();
@@ -1891,12 +1886,12 @@
   function appendTextBubble(m) {
     const b = chatBody();
     if (!b) return;
-    const thought = monologueText(m.body);
+    const narration = narrationText(m.body);
     const side = m.mine ? 'me' : 'them';
-    const bubble = el(`<div class="bubble ${side}${thought ? ' has-monologue' : ''}"></div>`);
+    const bubble = el(`<div class="bubble ${side}${narration ? ' has-narration' : ''}"></div>`);
     if (m.id) bubble.dataset.id = m.id;
     if (m.reply) bubble.appendChild(renderQuote(m.reply));
-    appendRichText(bubble, thought != null ? thought : m.body);
+    appendRichText(bubble, narration != null ? narration : m.body);
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
     attachBubbleActions(bubble, m);
     const row = mountBubble(bubble, m);
