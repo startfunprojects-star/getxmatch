@@ -612,7 +612,22 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
   .photo-viewer .pv-media img { max-height: 42vh; }
 }
 
-/* Friends */
+/* Connections, grouped into a block per relationship kind */
+.rel-group { margin-bottom: 14px; }
+.rel-group:last-child { margin-bottom: 0; }
+.rel-group-head {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 8px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.rel-group-head .rel-emoji { font-size: 14px; }
+.rel-group-head .hint { text-transform: none; letter-spacing: 0; }
+/* A soft accent tint on the romantic groups so they stand apart at a glance. */
+.rel-girlfriend .rel-group-head, .rel-boyfriend .rel-group-head,
+.rel-wife .rel-group-head, .rel-husband .rel-group-head,
+.rel-crush .rel-group-head { color: var(--accent); border-bottom-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+
 .friend-row { display: flex; flex-direction: column; gap: 8px; }
 .friend-chip { display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: 12px; cursor: pointer; transition: background .15s ease; }
 .friend-chip:hover { background: var(--bg-3); }

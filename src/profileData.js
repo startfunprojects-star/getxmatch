@@ -26,7 +26,7 @@ function friendState(ownerId, viewerId) {
 function friendsOf(userId) {
   const rows = db
     .prepare(
-      `SELECT u.id, u.username, p.display_name, p.avatar
+      `SELECT u.id, u.username, p.display_name, p.avatar, f.rel_type
        FROM friendships f
        JOIN users u ON u.id = CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END
        JOIN profiles p ON p.user_id = u.id
@@ -39,6 +39,7 @@ function friendsOf(userId) {
     username: r.username,
     displayName: r.display_name,
     avatar: r.avatar ? `/uploads/${r.avatar}` : null,
+    relType: r.rel_type || 'friend',
   }));
 }
 

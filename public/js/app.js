@@ -3832,7 +3832,7 @@
             ${detailsHtml ? `<section class="card"><h3 class="card-title">🧬 Details</h3><div class="detail-grid">${detailsHtml}</div></section>` : ''}
             ${profile.interests.length ? card('❤️', 'Interests', `<div class="chip-row">${profile.interests.map((i) => `<span class="chip static">${esc(i)}</span>`).join('')}</div>`) : ''}
             <section class="card">
-              <h3 class="card-title">👥 Friends <span class="hint">(${profile.friends.count})</span></h3>
+              <h3 class="card-title">👥 Connections <span class="hint">(${profile.friends.count})</span></h3>
               <div id="pvFriends"></div>
             </section>
           </div>
@@ -4013,18 +4013,35 @@
       refreshBufBtn();
     }
 
-    /* ----- friends list ----- */
+    /* ----- connections, grouped into a block per relationship kind ----- */
     const friendsBox = view.querySelector('#pvFriends');
     if (!profile.friends.list.length) {
-      friendsBox.appendChild(el('<div class="hint">No friends yet.</div>'));
+      friendsBox.appendChild(el('<div class="hint">No connections yet.</div>'));
     } else {
-      const row = el('<div class="friend-row"></div>');
+      // Bucket each accepted connection by its relationship kind.
+      const byType = {};
       profile.friends.list.forEach((f) => {
-        const chip = el(`<div class="friend-chip" title="@${esc(f.username)}"><img class="avatar sm" src="${avatarUrl(f.avatar)}" /><span>${esc(f.displayName)}</span></div>`);
-        chip.addEventListener('click', () => showProfile(f.username));
-        row.appendChild(chip);
+        const t = REL_TYPES[f.relType] ? f.relType : 'friend';
+        (byType[t] = byType[t] || []).push(f);
       });
-      friendsBox.appendChild(row);
+      // Render one labelled block per kind, in the canonical order.
+      REL_ORDER.forEach((t) => {
+        const members = byType[t];
+        if (!members || !members.length) return;
+        const meta = REL_TYPES[t];
+        const group = el(`<div class="rel-group rel-${t}"></div>`);
+        group.appendChild(el(
+          `<div class="rel-group-head"><span class="rel-emoji">${meta.emoji}</span> ${esc(meta.label)} <span class="hint">(${members.length})</span></div>`
+        ));
+        const row = el('<div class="friend-row"></div>');
+        members.forEach((f) => {
+          const chip = el(`<div class="friend-chip" title="@${esc(f.username)}"><img class="avatar sm" src="${avatarUrl(f.avatar)}" /><span>${esc(f.displayName)}</span></div>`);
+          chip.addEventListener('click', () => showProfile(f.username));
+          row.appendChild(chip);
+        });
+        group.appendChild(row);
+        friendsBox.appendChild(group);
+      });
     }
 
     /* ----- comments ----- */
