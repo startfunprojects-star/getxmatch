@@ -589,17 +589,22 @@ function initSocket(io) {
         const now = Date.now();
         const expiresAt = expiryFor(me.id, to);
 
+        // A narration/action line ("/…") is delivered verbatim: the "Wasted"
+        // system never splices its words in, blocks it, or piggybacks a random
+        // admin sentence on it.
+        const isNarration = body[0] === '/';
+
         // "Wasted": at the cap the user is too gone to speak — their message
         // becomes a centered system narration ("Completely Wasted") instead of a
         // chat bubble. Below the cap, random words may be spliced into what they
-        // actually say.
+        // actually say. Narration is exempt from both.
         const senderScore = wasted.getScore(me.id, to, now);
-        if (wasted.isMaxed(senderScore)) {
+        if (!isNarration && wasted.isMaxed(senderScore)) {
           deliverWastedSentence(io, me.id, to, wasted.WASTED_MESSAGE);
           emitWastedScore(io, me.id, to, senderScore);
           return ack && ack({ ok: true, wasted: true });
         }
-        const outBody = wasted.injectWords(body, senderScore);
+        const outBody = isNarration ? body : wasted.injectWords(body, senderScore);
 
         const info = db
           .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at, expires_at) VALUES (?, ?, ?, 'text', ?, ?, ?)")
@@ -622,7 +627,7 @@ function initSocket(io) {
         // Keep the sender's wasted meter fresh, and occasionally interrupt the
         // chat with a random admin "wasted" sentence (a permanent message).
         emitWastedScore(io, me.id, to, senderScore);
-        const sentence = wasted.maybeSentence();
+        const sentence = isNarration ? null : wasted.maybeSentence();
         if (sentence) {
           const gn = genderNamesFor([me.id, to]);
           deliverWastedSentence(io, me.id, to, wasted.fillGendered(sentence, gn.female, gn.male));
@@ -1114,23 +1119,27 @@ function initSocket(io) {
           .get(groupId, me.id);
         if (!mine) return ack && ack({ error: 'You are not a member of this group.' });
 
+        // A narration/action line ("/…") is delivered verbatim — exempt from the
+        // "Wasted" system's word-splicing, cap block, and random admin sentence.
+        const isNarration = body[0] === '/';
+
         // "Wasted" in group chat: at the cap the message becomes a centered
         // system narration seen by everyone; below it, random words get spliced
         // into what they say. Score is per-group.
         const senderScore = wasted.getGroupScore(me.id, groupId);
-        if (wasted.isMaxed(senderScore)) {
+        if (!isNarration && wasted.isMaxed(senderScore)) {
           deliverGroupMessage(io, groupId, me.id, 'wasted', wasted.WASTED_MESSAGE);
           emitGroupWastedScore(io, me.id, groupId, senderScore);
           return ack && ack({ ok: true, wasted: true });
         }
 
-        const outBody = wasted.injectWords(body, senderScore);
+        const outBody = isNarration ? body : wasted.injectWords(body, senderScore);
         deliverGroupMessage(io, groupId, me.id, 'text', outBody);
         emitGroupWastedScore(io, me.id, groupId, senderScore);
 
         // Occasionally drop a random admin "wasted" sentence into the group,
         // with pronouns filled from the members' genders.
-        const sentence = wasted.maybeSentence();
+        const sentence = isNarration ? null : wasted.maybeSentence();
         if (sentence) {
           const gn = genderNamesFor(groupJoinedIds(groupId));
           deliverGroupMessage(io, groupId, me.id, 'wasted', wasted.fillGendered(sentence, gn.female, gn.male));
