@@ -333,6 +333,15 @@
   const REL_ORDER = ['friend', 'girlfriend', 'boyfriend', 'wife', 'husband', 'crush', 'colleague'];
   function relLabel(type) { const t = REL_TYPES[type] || REL_TYPES.friend; return `${t.emoji} ${t.label}`; }
 
+  // The four rating dimensions (each 1-5 stars). Mirrors RATING_DIMS in
+  // src/profileData.js.
+  const RATING_DIMS = [
+    { key: 'slow', label: 'Slow', emoji: '🐢' },
+    { key: 'fast', label: 'Fast', emoji: '⚡' },
+    { key: 'creative', label: 'Creative', emoji: '🎨' },
+    { key: 'thoughtful', label: 'Thoughtful', emoji: '💭' },
+  ];
+
   const COUNTRIES = ['Afghanistan', 'Albania', 'Algeria', 'Argentina', 'Australia', 'Austria',
     'Bangladesh', 'Belgium', 'Brazil', 'Bulgaria', 'Canada', 'Chile', 'China', 'Colombia',
     'Croatia', 'Czechia', 'Denmark', 'Egypt', 'Finland', 'France', 'Germany', 'Ghana', 'Greece',
@@ -361,6 +370,75 @@
       out += `<span class="star${filled ? ' on' : ''}"${interactive ? ` data-v="${i}"` : ''}>★</span>`;
     }
     return out;
+  }
+
+  // Render the four-dimension ratings card into #pvRatings. Each dimension has
+  // its own average + a 1-5 star control (interactive when viewing someone else).
+  // Re-renders itself and the hero overall score after each change.
+  function renderRatingsCard(view, profile, isMe, username) {
+    const box = view.querySelector('#pvRatings');
+    if (!box) return;
+    const heroScore = view.querySelector('.pro-score');
+    const heroStars = view.querySelector('.pro-rating .stars');
+    const heroCount = view.querySelector('.pro-rcount');
+
+    const repaintHero = () => {
+      const r = profile.rating;
+      if (heroScore) heroScore.textContent = r.average ? r.average.toFixed(1) : '—';
+      if (heroStars) heroStars.innerHTML = starsHtml(r.average, false);
+      if (heroCount) heroCount.textContent = `${r.count} rating${r.count === 1 ? '' : 's'}`;
+    };
+
+    function render() {
+      box.innerHTML = '';
+      RATING_DIMS.forEach((dim) => {
+        const d = (profile.rating.dimensions && profile.rating.dimensions[dim.key]) || { average: 0, count: 0 };
+        const mineVal = profile.rating.mine ? profile.rating.mine[dim.key] : null;
+        const row = el(`
+          <div class="rate-dim">
+            <div class="rate-dim-top">
+              <span class="rate-dim-name">${dim.emoji} ${dim.label}</span>
+              <span class="rate-dim-avg">${d.average ? d.average.toFixed(1) : '—'}<span class="hint"> (${d.count})</span></span>
+            </div>
+            <div class="stars rate-stars">${starsHtml(mineVal || d.average, !isMe)}</div>
+          </div>
+        `);
+        if (!isMe) {
+          const starsEl = row.querySelector('.rate-stars');
+          const base = () => mineVal || Math.round(d.average);
+          const paint = (n) => starsEl.querySelectorAll('.star').forEach((s) =>
+            s.classList.toggle('on', Number(s.dataset.v) <= n));
+          paint(base());
+          starsEl.querySelectorAll('.star').forEach((s) => {
+            s.addEventListener('mouseenter', () => paint(Number(s.dataset.v)));
+            s.addEventListener('click', async () => {
+              try {
+                const { rating } = await api.post('/api/social/rate/' + encodeURIComponent(username), { dimension: dim.key, stars: Number(s.dataset.v) });
+                profile.rating = rating;
+                render();
+                repaintHero();
+              } catch (e) { alert(e.message); }
+            });
+          });
+          starsEl.addEventListener('mouseleave', () => paint(base()));
+        }
+        box.appendChild(row);
+      });
+
+      if (!isMe && profile.rating.mine && RATING_DIMS.some((dm) => profile.rating.mine[dm.key])) {
+        const clear = el('<button class="ghost small rate-clear">Clear my ratings</button>');
+        clear.addEventListener('click', async () => {
+          try {
+            const { rating } = await api.del('/api/social/rate/' + encodeURIComponent(username));
+            profile.rating = rating;
+            render();
+            repaintHero();
+          } catch (e) { alert(e.message); }
+        });
+        box.appendChild(clear);
+      }
+    }
+    render();
   }
 
   /* ======================================================================
@@ -3793,11 +3871,10 @@
               ${badgesHtml ? `<div class="pro-badges">${badgesHtml}</div>` : ''}
               ${relLine ? `<div class="rel-line">💞 ${relLine}</div>` : ''}
             </div>
-            <div class="pro-rating" title="${profile.rating.count} rating${profile.rating.count === 1 ? '' : 's'}">
+            <div class="pro-rating" title="Overall — the mean of the four rating dimensions">
               <div class="pro-score">${score}</div>
-              <div class="stars" id="pvStars">${starsHtml(profile.rating.average, !isMe)}</div>
+              <div class="stars">${starsHtml(profile.rating.average, false)}</div>
               <div class="pro-rcount">${profile.rating.count} rating${profile.rating.count === 1 ? '' : 's'}</div>
-              ${!isMe && profile.rating.mine ? '<button class="ghost small" id="unrate">Clear rating</button>' : ''}
             </div>
           </div>
           <div class="pro-actions pv-actions">
@@ -3829,6 +3906,11 @@
             </section>
           </div>
           <div class="pro-col-side">
+            <section class="card">
+              <h3 class="card-title">⭐ Ratings</h3>
+              ${!isMe ? '<p class="hint" style="margin:-4px 0 12px">Rate them 1–5 stars on each.</p>' : ''}
+              <div id="pvRatings"></div>
+            </section>
             ${detailsHtml ? `<section class="card"><h3 class="card-title">🧬 Details</h3><div class="detail-grid">${detailsHtml}</div></section>` : ''}
             ${profile.interests.length ? card('❤️', 'Interests', `<div class="chip-row">${profile.interests.map((i) => `<span class="chip static">${esc(i)}</span>`).join('')}</div>`) : ''}
             <section class="card">
@@ -3842,29 +3924,8 @@
     main.innerHTML = '';
     main.appendChild(view);
 
-    /* ----- rating interaction ----- */
-    if (!isMe) {
-      const starsEl = view.querySelector('#pvStars');
-      const paint = (n) => starsEl.querySelectorAll('.star').forEach((s) =>
-        s.classList.toggle('on', Number(s.dataset.v) <= n));
-      paint(profile.rating.mine || Math.round(profile.rating.average));
-      starsEl.querySelectorAll('.star').forEach((s) => {
-        s.addEventListener('mouseenter', () => paint(Number(s.dataset.v)));
-        s.addEventListener('click', async () => {
-          try {
-            const { rating } = await api.post('/api/social/rate/' + encodeURIComponent(profile.username), { stars: Number(s.dataset.v) });
-            profile.rating = rating;
-            showProfile(username); // refresh to reflect new average
-          } catch (e) { alert(e.message); }
-        });
-      });
-      starsEl.addEventListener('mouseleave', () => paint(profile.rating.mine || Math.round(profile.rating.average)));
-      const unrate = view.querySelector('#unrate');
-      if (unrate) unrate.addEventListener('click', async () => {
-        try { await api.del('/api/social/rate/' + encodeURIComponent(profile.username)); showProfile(username); }
-        catch (e) { alert(e.message); }
-      });
-    }
+    /* ----- ratings: four independent 1-5 star dimensions ----- */
+    renderRatingsCard(view, profile, isMe, username);
 
     /* ----- friend & block buttons ----- */
     const anyBlock = !isMe && profile.blocked && (profile.blocked.iBlocked || profile.blocked.blockedMe);

@@ -43,21 +43,47 @@ function friendsOf(userId) {
   }));
 }
 
+// The four independent rating dimensions, each scored 1-5 stars. Mirrored on
+// the client (RATING_DIMS in public/js/app.js).
+const RATING_DIMS = ['slow', 'fast', 'creative', 'thoughtful'];
+
 function ratingSummary(rateeId, viewerId) {
   const agg = db
-    .prepare('SELECT COUNT(*) AS count, AVG(stars) AS avg FROM ratings WHERE ratee_id = ?')
+    .prepare(
+      `SELECT COUNT(*) AS count,
+              AVG(slow) AS slow,             COUNT(slow) AS slow_n,
+              AVG(fast) AS fast,             COUNT(fast) AS fast_n,
+              AVG(creative) AS creative,     COUNT(creative) AS creative_n,
+              AVG(thoughtful) AS thoughtful, COUNT(thoughtful) AS thoughtful_n
+       FROM ratings WHERE ratee_id = ?`
+    )
     .get(rateeId);
+
+  const dimensions = {};
+  const dimAverages = [];
+  for (const d of RATING_DIMS) {
+    const n = agg[`${d}_n`] || 0;
+    const avg = n ? Math.round(agg[d] * 10) / 10 : 0;
+    dimensions[d] = { average: avg, count: n };
+    if (n) dimAverages.push(agg[d]);
+  }
+  const overall = dimAverages.length
+    ? Math.round((dimAverages.reduce((s, x) => s + x, 0) / dimAverages.length) * 10) / 10
+    : 0;
+
   let mine = null;
   if (viewerId && viewerId !== rateeId) {
     const r = db
-      .prepare('SELECT stars FROM ratings WHERE rater_id = ? AND ratee_id = ?')
+      .prepare('SELECT slow, fast, creative, thoughtful FROM ratings WHERE rater_id = ? AND ratee_id = ?')
       .get(viewerId, rateeId);
-    mine = r ? r.stars : null;
+    if (r) mine = { slow: r.slow || null, fast: r.fast || null, creative: r.creative || null, thoughtful: r.thoughtful || null };
   }
+
   return {
-    count: agg.count,
-    average: agg.count ? Math.round(agg.avg * 10) / 10 : 0,
-    mine,
+    count: agg.count,     // number of people who rated (any dimension)
+    average: overall,     // overall = mean of the dimension averages (hero score)
+    dimensions,           // { slow: {average,count}, fast: {...}, ... }
+    mine,                 // the viewer's own per-dimension scores, or null
   };
 }
 
@@ -304,6 +330,7 @@ module.exports = {
   friendState,
   friendsOf,
   ratingSummary,
+  RATING_DIMS,
   commentsFor,
   buildGallery,
   photoReactionState,

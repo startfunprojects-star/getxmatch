@@ -4,7 +4,7 @@ const express = require('express');
 
 const db = require('../db');
 const { requireAuth } = require('../auth');
-const { friendState, ratingSummary, photoReactionState, photoComments } = require('../profileData');
+const { friendState, ratingSummary, RATING_DIMS, photoReactionState, photoComments } = require('../profileData');
 const { areBlocked } = require('../relations');
 const { GIFTS } = require('../gifts');
 const { GALLERY_REACTIONS, GALLERY_REACTION_SET } = require('../galleryReactions');
@@ -53,23 +53,44 @@ function resolveTarget(req, res) {
    Ratings
 --------------------------------------------------------------------------- */
 
-// POST /api/social/rate/:username  { stars: 1-5 }  — rate another user
+// POST /api/social/rate/:username  { dimension, stars: 1-5 }  — rate another
+// user on ONE dimension (slow / fast / creative / thoughtful). The row's other
+// dimensions are preserved; the legacy `stars` column is recomputed as the
+// rounded mean of the given dimensions (the overall score the leaderboard uses).
 router.post('/rate/:username', requireAuth, (req, res) => {
   const target = resolveTarget(req, res);
   if (!target) return;
   if (target.id === req.user.id) {
     return res.status(400).json({ error: 'You cannot rate yourself.' });
   }
+  const dimension = req.body && req.body.dimension;
+  if (!RATING_DIMS.includes(dimension)) {
+    return res.status(400).json({ error: 'Invalid rating category.' });
+  }
   const stars = parseInt(req.body && req.body.stars, 10);
   if (!(stars >= 1 && stars <= 5)) {
     return res.status(400).json({ error: 'Rating must be between 1 and 5 stars.' });
   }
 
+  // Merge the new value into any existing row, then recompute the overall.
+  const existing = db
+    .prepare('SELECT slow, fast, creative, thoughtful FROM ratings WHERE rater_id = ? AND ratee_id = ?')
+    .get(req.user.id, target.id) || {};
+  const vals = {};
+  for (const d of RATING_DIMS) vals[d] = existing[d] != null ? existing[d] : null;
+  vals[dimension] = stars;
+
+  const given = RATING_DIMS.map((d) => vals[d]).filter((v) => v != null);
+  const overall = Math.round(given.reduce((s, x) => s + x, 0) / given.length); // 1-5 int
+
   db.prepare(
-    `INSERT INTO ratings (rater_id, ratee_id, stars, created_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(rater_id, ratee_id) DO UPDATE SET stars = excluded.stars, created_at = excluded.created_at`
-  ).run(req.user.id, target.id, stars, Date.now());
+    `INSERT INTO ratings (rater_id, ratee_id, slow, fast, creative, thoughtful, stars, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(rater_id, ratee_id) DO UPDATE SET
+       slow = excluded.slow, fast = excluded.fast,
+       creative = excluded.creative, thoughtful = excluded.thoughtful,
+       stars = excluded.stars, created_at = excluded.created_at`
+  ).run(req.user.id, target.id, vals.slow, vals.fast, vals.creative, vals.thoughtful, overall, Date.now());
 
   broadcastLeaderboardChange(); // a new/changed rating can reshuffle ranks
   res.json({ rating: ratingSummary(target.id, req.user.id) });

@@ -520,6 +520,17 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .stars [data-v]:hover { transform: scale(1.18); }
 .star.on { color: #ffc531; text-shadow: 0 0 10px rgba(255,197,49,.4); }
 
+/* Ratings card — one row per dimension (Slow / Fast / Creative / Thoughtful). */
+.rate-dim { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.rate-dim:first-child { padding-top: 0; }
+.rate-dim:last-of-type { border-bottom: none; padding-bottom: 4px; }
+.rate-dim-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.rate-dim-name { font-weight: 600; font-size: 14px; }
+.rate-dim-avg { font-weight: 700; font-size: 13px; color: var(--text); }
+.rate-dim-avg .hint { font-weight: 400; }
+.rate-dim .rate-stars { font-size: 20px; letter-spacing: 2px; }
+.rate-clear { margin-top: 10px; }
+
 /* Actions bar */
 .pro-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 16px 24px; border-top: 1px solid var(--border); background: rgba(255,255,255,.015); }
 .pro-actions #pvFriend { display: inline-flex; gap: 8px; align-items: center; }

@@ -229,6 +229,19 @@ db.exec(`
 })();
 db.exec('CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages (expires_at);');
 
+// --- Migration: multi-dimension ratings. A rating of another user now carries
+// four independent 1-5 star scores (Slow / Fast / Creative / Thoughtful), stored
+// as nullable columns on the existing ratings row. The legacy `stars` column is
+// kept as the OVERALL score (the rounded mean of the given dimensions) so the
+// leaderboard and admin queries keep working unchanged. Values are validated at
+// write time (see src/routes/social.js).
+(function migrateRatingDimensions() {
+  const cols = db.prepare('PRAGMA table_info(ratings)').all().map((c) => c.name);
+  for (const dim of ['slow', 'fast', 'creative', 'thoughtful']) {
+    if (!cols.includes(dim)) db.exec(`ALTER TABLE ratings ADD COLUMN ${dim} INTEGER;`);
+  }
+})();
+
 // --- Per-conversation "disappearing messages" setting. One row per user pair
 // (stored normalized as user_lo < user_hi). ttl_seconds is how long a message
 // lives before it self-destructs; 0 / no row means disappearing is off. Either
