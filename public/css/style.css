@@ -623,10 +623,36 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 }
 .rel-group-head .rel-emoji { font-size: 14px; }
 .rel-group-head .hint { text-transform: none; letter-spacing: 0; }
-/* A soft accent tint on the romantic groups so they stand apart at a glance. */
-.rel-girlfriend .rel-group-head, .rel-boyfriend .rel-group-head,
-.rel-wife .rel-group-head, .rel-husband .rel-group-head,
-.rel-crush .rel-group-head { color: var(--accent); border-bottom-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+
+/* Special bonds (anything other than plain friends) become highlighted,
+   colour-coded cards so they clearly stand apart from ordinary friends. Each
+   kind sets its own --rel-accent below. */
+.rel-special {
+  --rel-accent: var(--accent);
+  position: relative;
+  margin-bottom: 16px;
+  padding: 12px 14px 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--rel-accent) 40%, var(--border));
+  border-left: 3px solid var(--rel-accent);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--rel-accent) 14%, var(--bg-2)), color-mix(in srgb, var(--rel-accent) 6%, var(--bg-2)));
+  box-shadow: 0 2px 14px color-mix(in srgb, var(--rel-accent) 18%, transparent);
+}
+.rel-special .rel-group-head {
+  color: var(--rel-accent);
+  border-bottom-color: color-mix(in srgb, var(--rel-accent) 30%, var(--border));
+}
+/* The person's chip inside a special group gets a matching pill background. */
+.rel-special .friend-chip { background: color-mix(in srgb, var(--rel-accent) 10%, transparent); }
+.rel-special .friend-chip:hover { background: color-mix(in srgb, var(--rel-accent) 20%, transparent); }
+.rel-special .friend-chip .avatar { box-shadow: 0 0 0 2px color-mix(in srgb, var(--rel-accent) 55%, transparent); }
+
+/* Per-kind accent colours. */
+.rel-girlfriend, .rel-wife { --rel-accent: #ff4d7d; }   /* warm pink */
+.rel-boyfriend, .rel-husband { --rel-accent: #4d9dff; } /* blue */
+.rel-crush { --rel-accent: #b06cff; }                    /* purple */
+.rel-colleague { --rel-accent: #34c3a8; }                /* teal */
 
 .friend-row { display: flex; flex-direction: column; gap: 8px; }
 .friend-chip { display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: 12px; cursor: pointer; transition: background .15s ease; }

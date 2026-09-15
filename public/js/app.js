@@ -4029,7 +4029,10 @@
         const members = byType[t];
         if (!members || !members.length) return;
         const meta = REL_TYPES[t];
-        const group = el(`<div class="rel-group rel-${t}"></div>`);
+        // Everything other than plain friends is a "special" bond that gets a
+        // highlighted, colour-coded card so it stands out.
+        const special = t !== 'friend' ? ' rel-special' : '';
+        const group = el(`<div class="rel-group rel-${t}${special}"></div>`);
         group.appendChild(el(
           `<div class="rel-group-head"><span class="rel-emoji">${meta.emoji}</span> ${esc(meta.label)} <span class="hint">(${members.length})</span></div>`
         ));
