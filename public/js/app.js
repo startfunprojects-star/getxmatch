@@ -4024,8 +4024,10 @@
         const t = REL_TYPES[f.relType] ? f.relType : 'friend';
         (byType[t] = byType[t] || []).push(f);
       });
-      // Render one labelled block per kind, in the canonical order.
-      REL_ORDER.forEach((t) => {
+      // Render one labelled block per kind: the special bonds first (canonical
+      // order), plain friends last.
+      const displayOrder = [...REL_ORDER.filter((t) => t !== 'friend'), 'friend'];
+      displayOrder.forEach((t) => {
         const members = byType[t];
         if (!members || !members.length) return;
         const meta = REL_TYPES[t];
