@@ -1695,6 +1695,10 @@
       state.disappearing = disappearing || 0;
       if (wasted) state.wasted = wasted;
       messages.forEach((m) => appendMessage(m));
+      // Re-show shared files from this session (files aren't persisted on the
+      // server, so they live only in this tab's cache until the chat is closed).
+      const cached = (state.sharedFiles && state.sharedFiles[peer.id]) || [];
+      cached.slice().sort((a, b) => a.at - b.at).forEach((e) => appendFileBubble(e, e.mine, e.url));
     } catch (_e) {}
     updateDisappearBanner();
     updateWastedBar();
@@ -2016,6 +2020,8 @@
     if (!b) return;
     const isImg = /^image\//.test(meta.mime);
     const bubble = el(`<div class="bubble ${mine ? 'me' : 'them'}"></div>`);
+    if (meta.id) bubble.dataset.id = meta.id;
+    if (meta.from != null) bubble.dataset.from = meta.from;
     if (isImg) {
       const img = document.createElement('img');
       img.className = 'shared';
@@ -2027,9 +2033,10 @@
     // No download link: files are view-only. A non-anchor label keeps the name
     // and size without a browser "Save as…" affordance.
     bubble.appendChild(el(`<span class="file">📄 ${esc(meta.name)} (${fmtSize(meta.size)})</span>`));
-    bubble.appendChild(el(`<span class="ephemeral-note">Shared live · view-only · not stored</span>`));
+    bubble.appendChild(el(`<span class="ephemeral-note">View-only · stays until the chat is closed · not stored on the server</span>`));
     bubble.appendChild(el(`<span class="time">${fmtTime(meta.at || Date.now())}</span>`));
-    mountBubble(bubble, { mine });
+    attachFileActions(bubble, meta, mine);
+    mountBubble(bubble, { mine: mine, from: meta.from });
     // Files aren't persisted, so honour disappearing purely on the client: drop
     // the bubble after the conversation's TTL (both sides run the same timer).
     if (state.disappearing > 0) scheduleExpiry(bubble, Date.now() + state.disappearing * 1000);
@@ -2716,13 +2723,18 @@
     if (!body || !state.peer || !state.socket) return;
     input.value = '';
     clearComposerPreview();
-    // Capture and clear the reply target before the round-trip.
-    const replyTo = state.replyTo ? state.replyTo.id : null;
+    // Capture and clear the reply target before the round-trip. A reply to a
+    // shared file carries a snapshot (replyFile) since the file isn't persisted.
+    const replyingToFile = !!(state.replyTo && state.replyTo.file);
+    const replyTo = state.replyTo && !replyingToFile ? state.replyTo.id : null;
+    const replyFile = replyingToFile
+      ? { id: state.replyTo.id, from: state.replyTo.from, text: state.replyTo.text }
+      : null;
     const replySnapshot = state.replyTo
-      ? { id: state.replyTo.id, mine: state.replyTo.mine, text: state.replyTo.text }
+      ? { id: state.replyTo.id, mine: state.replyTo.mine, from: state.replyTo.from, text: state.replyTo.text }
       : null;
     cancelReply();
-    state.socket.emit('chat:message', { to: state.peer.id, body, replyTo }, (res) => {
+    state.socket.emit('chat:message', { to: state.peer.id, body, replyTo, replyFile }, (res) => {
       if (res && res.error) return notify(res.error);
       // Too wasted to speak: the server turned this into a centered narration
       // that arrives over the socket — don't also append a text bubble here.
@@ -2737,12 +2749,65 @@
   async function sendFile(file) {
     if (!state.peer || !state.socket) return;
     const buf = await file.arrayBuffer();
-    const meta = { to: state.peer.id, name: file.name, mime: file.type || 'application/octet-stream' };
-    state.socket.emit('chat:file', { ...meta, data: buf }, (res) => {
+    const fid = 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const mime = file.type || 'application/octet-stream';
+    const peerId = state.peer.id;
+    state.socket.emit('chat:file', { to: peerId, id: fid, name: file.name, mime, data: buf }, (res) => {
       if (res && res.error) return notify(res.error);
-      const url = URL.createObjectURL(new Blob([buf], { type: meta.mime }));
-      appendFileBubble({ name: file.name, mime: meta.mime, size: file.size, at: Date.now() }, true, url);
+      const url = URL.createObjectURL(new Blob([buf], { type: mime }));
+      const entry = { id: fid, from: state.me.id, mine: true, name: file.name, mime, size: file.size, at: Date.now(), url };
+      cacheSharedFile(peerId, entry);
+      appendFileBubble(entry, true, url);
     });
+  }
+
+  /* ---------- shared-file cache (client-only; kept until the chat/session is
+     closed so images don't vanish when you switch conversations and back).
+     Nothing is stored on the server; blobs live in this tab's memory only. */
+  function cacheSharedFile(peerId, entry) {
+    if (!state.sharedFiles) state.sharedFiles = {};
+    (state.sharedFiles[peerId] = state.sharedFiles[peerId] || []).push(entry);
+  }
+  function uncacheSharedFile(peerId, fid) {
+    const arr = state.sharedFiles && state.sharedFiles[peerId];
+    if (!arr) return;
+    const i = arr.findIndex((e) => e.id === fid);
+    if (i >= 0) { try { URL.revokeObjectURL(arr[i].url); } catch (_e) {} arr.splice(i, 1); }
+  }
+  function removeFileBubble(fid, from) {
+    const b = chatBody();
+    if (!b) return;
+    const bubble = b.querySelector(`.bubble[data-id="${fid}"]`);
+    if (!bubble) return;
+    if (from != null && String(bubble.dataset.from) !== String(from)) return;
+    (bubble.closest('.msg-row') || bubble).remove();
+  }
+  function startReplyToFile(meta, mine) {
+    const label = /^image\//.test(meta.mime) ? '📷 Photo' : ('📄 ' + (meta.name || 'File'));
+    state.replyTo = { id: meta.id, mine, from: meta.from, text: label, file: true };
+    renderReplyBanner();
+    const input = document.getElementById('msgInput');
+    if (input) input.focus();
+  }
+  function deleteSharedFile(fid) {
+    if (!state.peer || !state.socket) return;
+    removeFileBubble(fid, state.me.id);
+    uncacheSharedFile(state.peer.id, fid);
+    state.socket.emit('chat:file:delete', { to: state.peer.id, id: fid });
+  }
+  // Reply + (for the sender) delete controls on a shared-file bubble.
+  function attachFileActions(bubble, meta, mine) {
+    if (!meta || !meta.id) return;
+    const actions = el('<div class="bubble-actions"></div>');
+    const reply = el('<button class="act-btn" title="Reply">↩</button>');
+    reply.addEventListener('click', (e) => { e.stopPropagation(); startReplyToFile(meta, mine); });
+    actions.appendChild(reply);
+    if (mine) {
+      const del = el('<button class="act-btn" title="Delete for both">🗑</button>');
+      del.addEventListener('click', (e) => { e.stopPropagation(); deleteSharedFile(meta.id); });
+      actions.appendChild(del);
+    }
+    bubble.appendChild(actions);
   }
 
   function notify(text) {
@@ -3434,12 +3499,25 @@
     s.on('chat:file', (meta) => {
       const peerId = state.peer && state.peer.id;
       const url = URL.createObjectURL(new Blob([meta.data], { type: meta.mime }));
+      const entry = { id: meta.id, from: meta.from, mine: false, name: meta.name, mime: meta.mime, size: meta.size, at: meta.at || Date.now(), url };
+      // Cache it under the sender's conversation so it survives switching chats
+      // (and shows once the recipient opens that conversation).
+      cacheSharedFile(meta.from, entry);
       if (peerId && meta.from === peerId) {
-        appendFileBubble(meta, false, url);
+        appendFileBubble(entry, false, url);
       } else {
         rememberPeer(meta.from);
         notifyIncomingFile(meta);
       }
+    });
+
+    // The sender removed a file they shared — drop it from the view and cache.
+    s.on('chat:file:delete', (payload) => {
+      const id = payload && payload.id;
+      const from = payload && payload.from;
+      if (!id) return;
+      removeFileBubble(id, from);
+      if (from != null) uncacheSharedFile(from, id);
     });
 
     // Screen-share signaling (WebRTC; the media is peer-to-peer).

@@ -610,7 +610,15 @@ function initSocket(io) {
           .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at, expires_at) VALUES (?, ?, ?, 'text', ?, ?, ?)")
           .run(me.id, to, outBody, replyTo, now, expiresAt);
 
-        const reply = replyPreview(replyTo);
+        // Reply target: normally another persisted message. A reply to a shared
+        // FILE (which isn't in the DB) carries a client snapshot instead — the
+        // quote is rendered live from it; reply_to stays NULL in the DB.
+        let reply = replyPreview(replyTo);
+        if (!reply && payload && payload.replyFile && typeof payload.replyFile.id === 'string') {
+          const rf = payload.replyFile;
+          const from = parseInt(rf.from, 10) === to ? to : me.id;
+          reply = { id: rf.id.slice(0, 64), from, kind: 'file', text: String(rf.text || '📎 File').slice(0, 140) };
+        }
         const msg = { id: info.lastInsertRowid, from: me.id, to, body: outBody, kind: 'text', at: now, replyTo, reply, expiresAt };
 
         // Deliver to recipient's sockets and echo to sender's other tabs.
@@ -660,7 +668,15 @@ function initSocket(io) {
           return ack && ack({ error: 'Recipient is offline. Files are only delivered live and are never stored.' });
         }
 
+        // A short client-supplied id so both sides can reference the same file
+        // (for replying to it and for the sender deleting it). Still nothing is
+        // written to disk or the DB — only the live payload is relayed.
+        const fid = typeof (payload && payload.id) === 'string'
+          ? payload.id.slice(0, 64)
+          : 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
         const meta = {
+          id: fid,
           from: me.id,
           fromUsername: me.username,
           name: String(name).slice(0, 200),
@@ -671,10 +687,24 @@ function initSocket(io) {
         };
 
         io.to(`user:${to}`).emit('chat:file', meta);
-        ack && ack({ ok: true });
+        ack && ack({ ok: true, id: fid });
       } catch (e) {
         ack && ack({ error: 'Server error.' });
       }
+    });
+
+    // The sender removes a file they shared. Files aren't stored, so this simply
+    // relays a "remove that bubble" signal to the recipient's live sockets (and
+    // the sender's other tabs). `from` is set by the server so a recipient can't
+    // spoof it to wipe the sender's own copy.
+    socket.on('chat:file:delete', (payload) => {
+      try {
+        const to = parseInt(payload && payload.to, 10);
+        const id = payload && typeof payload.id === 'string' ? payload.id.slice(0, 64) : null;
+        if (!to || !id) return;
+        io.to(`user:${to}`).emit('chat:file:delete', { id, from: me.id });
+        socket.to(`user:${me.id}`).emit('chat:file:delete', { id, from: me.id });
+      } catch (_e) { /* best-effort */ }
     });
 
     // Arm / disarm disappearing messages for a conversation. seconds > 0 turns
