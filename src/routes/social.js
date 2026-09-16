@@ -4,7 +4,7 @@ const express = require('express');
 
 const db = require('../db');
 const { requireAuth } = require('../auth');
-const { friendState, ratingSummary, RATING_DIMS, photoReactionState, photoComments } = require('../profileData');
+const { friendState, ratingSummary, RATING_DIMS, photoReactionState, photoComments, commentReactionState } = require('../profileData');
 const { areBlocked } = require('../relations');
 const { GIFTS } = require('../gifts');
 const { GALLERY_REACTIONS, GALLERY_REACTION_SET } = require('../galleryReactions');
@@ -228,15 +228,30 @@ router.post('/photo/:photoId/comment', requireAuth, (req, res) => {
   if (!body) return res.status(400).json({ error: 'Comment cannot be empty.' });
   if (body.length > 500) return res.status(400).json({ error: 'Comment must be 500 characters or fewer.' });
 
+  // Optional reply: parentId must be a comment on THIS photo. Threads are kept
+  // one level deep — replying to a reply attaches to its top-level parent.
+  let parentId = null;
+  const rawParent = req.body && req.body.parentId ? parseInt(req.body.parentId, 10) : null;
+  if (rawParent) {
+    const parent = db
+      .prepare('SELECT id, photo_id, parent_id FROM gallery_comments WHERE id = ?')
+      .get(rawParent);
+    if (!parent || parent.photo_id !== photo.id) {
+      return res.status(400).json({ error: 'Invalid comment to reply to.' });
+    }
+    parentId = parent.parent_id || parent.id;
+  }
+
   const now = Date.now();
   const info = db
-    .prepare('INSERT INTO gallery_comments (photo_id, author_id, body, created_at) VALUES (?, ?, ?, ?)')
-    .run(photo.id, req.user.id, body, now);
+    .prepare('INSERT INTO gallery_comments (photo_id, author_id, body, created_at, parent_id) VALUES (?, ?, ?, ?, ?)')
+    .run(photo.id, req.user.id, body, now, parentId);
 
   const me = db.prepare('SELECT display_name, avatar FROM profiles WHERE user_id = ?').get(req.user.id);
   res.status(201).json({
     comment: {
       id: info.lastInsertRowid,
+      parentId,
       body,
       at: now,
       author: {
@@ -246,8 +261,50 @@ router.post('/photo/:photoId/comment', requireAuth, (req, res) => {
         avatar: me && me.avatar ? `/uploads/${me.avatar}` : null,
       },
       canDelete: true,
+      reactions: { reactions: [], total: 0, mine: null },
+      replies: [],
     },
   });
+});
+
+// POST /api/social/photo-comment/:id/react  { emoji } — set / toggle an emoji
+// reaction on a single gallery comment. Same emoji again clears it; a different
+// emoji replaces it (one reaction per user per comment).
+router.post('/photo-comment/:id/react', requireAuth, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid comment.' });
+  const row = db
+    .prepare(
+      `SELECT gc.id, gp.user_id AS owner_id
+       FROM gallery_comments gc
+       JOIN gallery_photos gp ON gp.id = gc.photo_id
+       WHERE gc.id = ?`
+    )
+    .get(id);
+  if (!row) return res.status(404).json({ error: 'Comment not found.' });
+  if (areBlocked(req.user.id, row.owner_id)) {
+    return res.status(403).json({ error: 'You cannot react while a block is in place.' });
+  }
+  const emoji = ((req.body && req.body.emoji) || '').trim();
+  if (!GALLERY_REACTION_SET.has(emoji)) {
+    return res.status(400).json({ error: 'Invalid reaction.' });
+  }
+
+  const existing = db
+    .prepare('SELECT emoji FROM gallery_comment_reactions WHERE comment_id = ? AND user_id = ?')
+    .get(id, req.user.id);
+  const now = Date.now();
+  if (existing && existing.emoji === emoji) {
+    db.prepare('DELETE FROM gallery_comment_reactions WHERE comment_id = ? AND user_id = ?').run(id, req.user.id);
+  } else if (existing) {
+    db.prepare('UPDATE gallery_comment_reactions SET emoji = ?, created_at = ? WHERE comment_id = ? AND user_id = ?')
+      .run(emoji, now, id, req.user.id);
+  } else {
+    db.prepare('INSERT INTO gallery_comment_reactions (comment_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?)')
+      .run(id, req.user.id, emoji, now);
+  }
+
+  res.json({ reactions: commentReactionState(id, req.user.id) });
 });
 
 // DELETE /api/social/photo-comment/:id — the comment's author or the photo

@@ -3739,17 +3739,22 @@
     /* ----- comments ----- */
     const commentsBox = box.querySelector('#pvPhotoComments');
     const renderPhotoComment = (c) => {
+      const isReply = !!c.parentId;
       const item = el(`
-        <div class="comment">
+        <div class="comment${isReply ? ' is-reply' : ''}" data-id="${c.id}">
           <img class="avatar sm" src="${avatarUrl(c.author.avatar)}" />
           <div class="c-body">
             <div class="c-head"><b class="c-author" data-u="${esc(c.author.username)}">${esc(c.author.displayName)}</b> <span class="hint">${fmtDate(c.at)}</span></div>
             <div class="c-text"></div>
+            <div class="c-reacts"></div>
+            <div class="c-actions"></div>
+            ${isReply ? '' : '<div class="c-replies"></div>'}
           </div>
         </div>
       `);
       item.querySelector('.c-text').textContent = c.body;
       item.querySelector('.c-author').addEventListener('click', () => { close(); showProfile(c.author.username); });
+
       if (c.canDelete) {
         const del = el('<button class="ghost small">Delete</button>');
         del.addEventListener('click', async () => {
@@ -3762,6 +3767,74 @@
         });
         item.querySelector('.c-head').appendChild(del);
       }
+
+      /* ----- emoji reactions on this comment ----- */
+      const reactsBox = item.querySelector('.c-reacts');
+      c.reactions = c.reactions || { reactions: [], total: 0, mine: null };
+      const paintCommentReacts = () => {
+        reactsBox.innerHTML = '';
+        (c.reactions.reactions || []).forEach((r) => {
+          const pill = el(`<button class="cr-pill${c.reactions.mine === r.emoji ? ' on' : ''}"><span>${r.emoji}</span><span class="cr-n">${r.count}</span></button>`);
+          pill.addEventListener('click', () => reactComment(r.emoji));
+          reactsBox.appendChild(pill);
+        });
+        const add = el('<button class="cr-add" title="Add a reaction">😊 ＋</button>');
+        add.addEventListener('click', () => {
+          const open = item.querySelector('.cr-picker');
+          if (open) { open.remove(); return; }
+          const picker = el('<div class="cr-picker"></div>');
+          GALLERY_REACTIONS.forEach((g) => {
+            const b = el(`<button title="${esc(g.label)}">${g.emoji}</button>`);
+            b.addEventListener('click', () => { picker.remove(); reactComment(g.emoji); });
+            picker.appendChild(b);
+          });
+          reactsBox.after(picker);
+        });
+        reactsBox.appendChild(add);
+      };
+      const reactComment = async (emoji) => {
+        try {
+          const { reactions } = await api.post('/api/social/photo-comment/' + c.id + '/react', { emoji });
+          c.reactions = reactions;
+          paintCommentReacts();
+        } catch (e) { alert(e.message); }
+      };
+      paintCommentReacts();
+
+      /* ----- reply ----- */
+      const actions = item.querySelector('.c-actions');
+      const replyBtn = el('<button class="c-reply-btn">↩ Reply</button>');
+      actions.appendChild(replyBtn);
+      replyBtn.addEventListener('click', () => {
+        const existing = item.querySelector(':scope > .c-body > .reply-form');
+        if (existing) { existing.remove(); return; }
+        const form = el(`<div class="reply-form"><input maxlength="500" placeholder="Reply to ${esc(c.author.displayName)}…" /><button class="primary small">Reply</button></div>`);
+        const input = form.querySelector('input');
+        const submit = async () => {
+          const body = input.value.trim();
+          if (!body) return;
+          try {
+            const parentId = c.parentId || c.id;
+            const { comment } = await api.post('/api/social/photo/' + photo.id + '/comment', { body, parentId });
+            form.remove();
+            const threadTop = commentsBox.querySelector('.comment[data-id="' + comment.parentId + '"]');
+            const container = threadTop && threadTop.querySelector('.c-replies');
+            if (container) container.appendChild(renderPhotoComment(comment));
+            paintReactions();
+          } catch (e) { alert(e.message); }
+        };
+        form.querySelector('button').addEventListener('click', submit);
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+        actions.after(form);
+        input.focus();
+      });
+
+      /* ----- nested replies (top-level comments only) ----- */
+      if (!isReply && c.replies && c.replies.length) {
+        const container = item.querySelector('.c-replies');
+        c.replies.forEach((rc) => container.appendChild(renderPhotoComment(rc)));
+      }
+
       return item;
     };
 

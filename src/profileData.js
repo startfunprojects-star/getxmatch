@@ -188,24 +188,47 @@ function photoReactionState(photoId, viewerId) {
   };
 }
 
-// Full comment list for a single gallery photo. The photo owner or a comment's
-// own author may delete it.
+// Aggregated emoji reactions on a single gallery COMMENT, plus the viewer's own
+// pick. Same shape as photoReactionState so the client can reuse its renderer.
+function commentReactionState(commentId, viewerId) {
+  const rows = db
+    .prepare('SELECT emoji, COUNT(*) AS n FROM gallery_comment_reactions WHERE comment_id = ? GROUP BY emoji')
+    .all(commentId);
+  let mine = null;
+  if (viewerId) {
+    const r = db
+      .prepare('SELECT emoji FROM gallery_comment_reactions WHERE comment_id = ? AND user_id = ?')
+      .get(commentId, viewerId);
+    mine = r ? r.emoji : null;
+  }
+  return {
+    reactions: rows.map((r) => ({ emoji: r.emoji, count: r.n })),
+    total: rows.reduce((sum, r) => sum + r.n, 0),
+    mine,
+  };
+}
+
+// Full comment thread for a single gallery photo. Top-level comments come newest
+// first; each carries its `replies` (oldest first) and its emoji `reactions`.
+// The photo owner or a comment's own author may delete it.
 function photoComments(photoId, viewerId) {
   const owner = db.prepare('SELECT user_id FROM gallery_photos WHERE id = ?').get(photoId);
   const ownerId = owner ? owner.user_id : null;
   const rows = db
     .prepare(
-      `SELECT c.id, c.author_id, c.body, c.created_at, u.username, p.display_name, p.avatar
+      `SELECT c.id, c.author_id, c.body, c.created_at, c.parent_id, u.username, p.display_name, p.avatar
        FROM gallery_comments c
        JOIN users u ON u.id = c.author_id
        LEFT JOIN profiles p ON p.user_id = c.author_id
        WHERE c.photo_id = ?
-       ORDER BY c.created_at DESC
-       LIMIT 200`
+       ORDER BY c.created_at ASC
+       LIMIT 500`
     )
     .all(photoId);
-  return rows.map((r) => ({
+
+  const shape = (r) => ({
     id: r.id,
+    parentId: r.parent_id || null,
     body: r.body,
     at: r.created_at,
     author: {
@@ -215,7 +238,20 @@ function photoComments(photoId, viewerId) {
       avatar: r.avatar ? `/uploads/${r.avatar}` : null,
     },
     canDelete: !!viewerId && (viewerId === r.author_id || viewerId === ownerId),
-  }));
+    reactions: commentReactionState(r.id, viewerId),
+    replies: [],
+  });
+
+  const byId = new Map();
+  rows.forEach((r) => byId.set(r.id, shape(r)));
+  const top = [];
+  rows.forEach((r) => {
+    const node = byId.get(r.id);
+    if (r.parent_id && byId.has(r.parent_id)) byId.get(r.parent_id).replies.push(node);
+    else top.push(node);
+  });
+  top.sort((a, b) => b.at - a.at); // newest thread first; replies stay oldest-first
+  return top;
 }
 
 function parseInterests(raw) {
@@ -335,5 +371,6 @@ module.exports = {
   buildGallery,
   photoReactionState,
   photoComments,
+  commentReactionState,
   parseInterests,
 };

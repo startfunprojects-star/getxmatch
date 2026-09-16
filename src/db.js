@@ -301,7 +301,33 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_gallery_reactions_photo
     ON gallery_reactions (photo_id);
+
+  -- Emoji reactions other users leave on a single gallery COMMENT (threaded
+  -- discussion under a photo). One row per (comment, user): picking a new emoji
+  -- replaces it, picking the same one again clears it — same rules as photo
+  -- reactions. Allowed emojis enforced at write time (src/galleryReactions.js).
+  CREATE TABLE IF NOT EXISTS gallery_comment_reactions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    comment_id INTEGER NOT NULL REFERENCES gallery_comments(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji      TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE (comment_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_gallery_comment_reactions_comment
+    ON gallery_comment_reactions (comment_id);
 `);
+
+// Threaded replies on gallery comments: a nullable parent_id links a reply to
+// the top-level comment it answers. NULL = a top-level comment. Added by
+// migration for databases created before threading existed.
+(function migrateGalleryCommentParent() {
+  const cols = db.prepare('PRAGMA table_info(gallery_comments)').all().map((c) => c.name);
+  if (!cols.includes('parent_id')) {
+    db.exec('ALTER TABLE gallery_comments ADD COLUMN parent_id INTEGER REFERENCES gallery_comments(id) ON DELETE CASCADE;');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_gallery_comments_parent ON gallery_comments (parent_id, created_at);');
+})();
 
 // --- WhatsApp-style polls sent inside a chat. A poll lives as its own row and
 // is referenced by a chat message (kind='poll', whose body is JSON {pollId}).

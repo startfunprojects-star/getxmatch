@@ -682,6 +682,40 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .comment-form { display: flex; gap: 8px; margin-bottom: 18px; }
 .comment-form input { flex: 1; }
 
+/* Per-comment emoji reactions + threaded replies. */
+.comment .c-reacts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.comment .cr-pill {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 12px; line-height: 1;
+  padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--bg-elev); cursor: pointer;
+}
+.comment .cr-pill.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.comment .cr-pill .cr-n { font-weight: 700; }
+.comment .cr-add {
+  font-size: 12px; line-height: 1; padding: 3px 9px; border-radius: 999px;
+  border: 1px dashed var(--border); background: transparent; cursor: pointer; opacity: .8;
+}
+.comment .cr-add:hover { opacity: 1; border-color: var(--accent); }
+.comment .cr-picker { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.comment .cr-picker button {
+  border: 1px solid var(--border); background: var(--bg-elev); border-radius: 8px;
+  padding: 3px 7px; font-size: 16px; cursor: pointer; line-height: 1;
+}
+.comment .cr-picker button:hover { border-color: var(--accent); transform: translateY(-1px); }
+.comment .c-actions { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+.comment .c-reply-btn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: var(--text-dim, inherit); opacity: .75;
+}
+.comment .c-reply-btn:hover { opacity: 1; color: var(--accent); }
+.comment .c-replies {
+  display: flex; flex-direction: column; gap: 12px; margin-top: 12px;
+  padding-left: 12px; border-left: 2px solid var(--border);
+}
+.comment.is-reply .avatar.sm { width: 28px; height: 28px; }
+.reply-form { display: flex; gap: 8px; margin-top: 8px; }
+.reply-form input { flex: 1; min-width: 0; }
+
 @media (max-width: 960px) {
   .pro-grid { grid-template-columns: 1fr; }
   .pro-rating { align-self: stretch; }
