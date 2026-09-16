@@ -34,6 +34,27 @@ function isOnline(userId) {
   return online.has(userId);
 }
 
+// The user ids of everyone `userId` has an accepted relationship with — the
+// audience for their online/offline presence.
+function friendIdsOf(userId) {
+  return db
+    .prepare(
+      `SELECT CASE WHEN requester_id = ? THEN addressee_id ELSE requester_id END AS fid
+       FROM friendships
+       WHERE (requester_id = ? OR addressee_id = ?) AND status = 'accepted'`
+    )
+    .all(userId, userId, userId)
+    .map((r) => r.fid);
+}
+
+// Tell a user's friends/relations that they just came online or went offline,
+// so open clients can flip the little presence dot live.
+function broadcastPresence(io, userId, isOnlineNow) {
+  friendIdsOf(userId).forEach((fid) => {
+    io.to(`user:${fid}`).emit('presence:update', { userId, online: isOnlineNow });
+  });
+}
+
 /* --------------------------------------------------------------------------
    Disappearing-messages helpers
 -------------------------------------------------------------------------- */
@@ -562,9 +583,13 @@ function initSocket(io) {
     // Anonymous sockets get nothing more than the viewer handlers above.
     if (!me) return;
 
+    // Detect the offline→online transition (their first live tab) so we only
+    // announce presence once, not on every extra tab they open.
+    const wasOffline = !isOnline(me.id);
     addSocket(me.id, socket.id);
     // Personal room makes it easy to target all of a user's sockets.
     socket.join(`user:${me.id}`);
+    if (wasOffline) broadcastPresence(io, me.id, true);
 
     // Owner controls for starting/stopping a broadcast of a private chat.
     registerBroadcastOwner(io, socket);
@@ -1241,6 +1266,7 @@ function initSocket(io) {
         try {
           db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), me.id);
         } catch (_e) { /* non-fatal */ }
+        broadcastPresence(io, me.id, false); // tell friends they went offline
         try {
           broadcast.stopForUser(me.id).forEach((b) => {
             const room = broadcastRoom(b.token);

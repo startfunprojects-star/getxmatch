@@ -3,6 +3,7 @@
 const db = require('./db');
 const { ageFromDob } = require('./profileFields');
 const { blockState } = require('./relations');
+const { isOnline } = require('./socket');
 
 // Compute the friendship state between the viewer and a profile owner.
 // Returns one of: 'self' | 'friends' | 'incoming' | 'outgoing' | 'none'.
@@ -40,6 +41,7 @@ function friendsOf(userId) {
     displayName: r.display_name,
     avatar: r.avatar ? `/uploads/${r.avatar}` : null,
     relType: r.rel_type || 'friend',
+    online: isOnline(r.id),
   }));
 }
 

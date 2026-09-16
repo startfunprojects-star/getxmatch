@@ -10,7 +10,7 @@ const { GIFTS } = require('../gifts');
 const { GALLERY_REACTIONS, GALLERY_REACTION_SET } = require('../galleryReactions');
 const { listActivities } = require('../activities');
 const { isValidRelType, sentText, acceptedText, relEmoji } = require('../relationships');
-const { broadcastActivity, notifyUser, broadcastLeaderboardChange } = require('../socket');
+const { broadcastActivity, notifyUser, broadcastLeaderboardChange, isOnline } = require('../socket');
 
 const router = express.Router();
 
@@ -421,6 +421,7 @@ router.get('/friends', requireAuth, (req, res) => {
     displayName: r.display_name || r.username,
     avatar: r.avatar ? `/uploads/${r.avatar}` : null,
     relType: r.rel_type || 'friend',
+    online: isOnline(r.id),
   });
 
   const accepted = db

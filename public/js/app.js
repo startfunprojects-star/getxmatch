@@ -21,7 +21,49 @@
     liveByPeer: {},      // otherUserId -> broadcast view when a chat of mine is live
     watching: null,      // token of a broadcast being watched inline, or null
     disappearing: 0,     // disappearing-messages TTL (seconds) for the open chat; 0 = off
+    online: {},          // userId -> true when a friend/relation is currently online
   };
+
+  /* ---------- online presence for friends/relations ----------
+     Populated from friend/profile payloads and kept live by 'presence:update'
+     socket events. A small green dot on a person's avatar reflects state.online.
+     Every dot carries data-uid so setOnline() can flip it in place. */
+  // We only know presence for friends/relations (the server broadcasts it just
+  // to them), so only render a dot when we actually track this user — never a
+  // misleading "offline" dot on a stranger.
+  function tracksPresence(uid) {
+    return Object.prototype.hasOwnProperty.call(state.online, uid);
+  }
+  function onlineDotHTML(uid) {
+    if (!tracksPresence(uid)) return '';
+    const on = !!state.online[uid];
+    return `<span class="online-dot${on ? ' on' : ''}" data-uid="${uid}" title="${on ? 'Online now' : 'Offline'}"></span>`;
+  }
+  // Wrap an avatar so its presence dot sits in the corner.
+  function avatarWithPresence(uid, avatar, cls) {
+    return `<span class="av-wrap"><img class="avatar ${cls || ''}" src="${avatarUrl(avatar)}" />${onlineDotHTML(uid)}</span>`;
+  }
+  // Seed friend presence once so dots are correct even before visiting the
+  // Friends tab (e.g. on the Chats list right after connecting).
+  async function seedFriendPresence() {
+    try {
+      const { friends } = await api.get('/api/social/friends');
+      seedOnline(friends);
+      (friends || []).forEach((u) => setOnline(u.id, u.online));
+    } catch (_e) { /* ignore */ }
+  }
+  // Record online flags coming from a friends/connections payload.
+  function seedOnline(list) {
+    (list || []).forEach((u) => { if (u && u.id != null && 'online' in u) state.online[u.id] = !!u.online; });
+  }
+  // Apply a live presence change everywhere that person's dot is shown.
+  function setOnline(uid, on) {
+    state.online[uid] = !!on;
+    document.querySelectorAll(`.online-dot[data-uid="${uid}"]`).forEach((d) => {
+      d.classList.toggle('on', !!on);
+      d.title = on ? 'Online now' : 'Offline';
+    });
+  }
 
   // Fetch (and cache) the naughty-gift catalog.
   async function loadGifts() {
@@ -993,7 +1035,7 @@
     items.forEach((u) => {
       const row = el(`
         <div class="list-item" data-id="${u.id}">
-          <img class="avatar" src="${avatarUrl(u.avatar)}" />
+          ${avatarWithPresence(u.id, u.avatar, '')}
           <div style="min-width:0">
             <div class="name">${esc(u.displayName || u.username)}</div>
             <div class="handle">@${esc(u.username)}</div>
@@ -1021,10 +1063,11 @@
       ));
       return;
     }
+    seedOnline(friends);
     friends.forEach((u) => {
       const row = el(`
         <div class="list-item" data-id="${u.id}">
-          <img class="avatar" src="${avatarUrl(u.avatar)}" />
+          ${avatarWithPresence(u.id, u.avatar, '')}
           <div style="min-width:0">
             <div class="name">${esc(u.displayName || u.username)}</div>
             <div class="handle">@${esc(u.username)}</div>
@@ -3583,6 +3626,15 @@
     const s = io({ withCredentials: true });
     state.socket = s;
 
+    // Learn which friends/relations are online now, and refresh on reconnect.
+    s.on('connect', () => { seedFriendPresence(); });
+
+    // A friend/relation came online or went offline — flip their dot live.
+    s.on('presence:update', (p) => {
+      if (!p || p.userId == null) return;
+      setOnline(p.userId, !!p.online);
+    });
+
     s.on('chat:message', (m) => {
       // Track the peer so it shows under "Chats".
       if (!state.chatPeers[m.from] && m.from !== state.me.id) rememberPeer(m.from);
@@ -4341,6 +4393,7 @@
       friendsBox.appendChild(el('<div class="hint">No connections yet.</div>'));
     } else {
       // Bucket each accepted connection by its relationship kind.
+      seedOnline(profile.friends.list);
       const byType = {};
       profile.friends.list.forEach((f) => {
         const t = REL_TYPES[f.relType] ? f.relType : 'friend';
@@ -4362,7 +4415,7 @@
         ));
         const row = el('<div class="friend-row"></div>');
         members.forEach((f) => {
-          const chip = el(`<div class="friend-chip" title="@${esc(f.username)}"><img class="avatar sm" src="${avatarUrl(f.avatar)}" /><span>${esc(f.displayName)}</span></div>`);
+          const chip = el(`<div class="friend-chip" title="@${esc(f.username)}">${avatarWithPresence(f.id, f.avatar, 'sm')}<span>${esc(f.displayName)}</span></div>`);
           chip.addEventListener('click', () => showProfile(f.username));
           row.appendChild(chip);
         });
