@@ -1699,10 +1699,14 @@
       state.disappearing = disappearing || 0;
       if (wasted) state.wasted = wasted;
       messages.forEach((m) => appendMessage(m));
-      // Re-show shared files from this session (files aren't persisted on the
-      // server, so they live only in this tab's cache until the chat is closed).
-      const cached = (state.sharedFiles && state.sharedFiles[peer.id]) || [];
-      cached.slice().sort((a, b) => a.at - b.at).forEach((e) => appendFileBubble(e, e.mine, e.url));
+      // Re-show shared files. These aren't stored on the server; they're kept in
+      // THIS browser's IndexedDB so they survive a refresh (per user/device).
+      // Fall back to the in-memory session cache if IndexedDB is unavailable.
+      let files = await idbLoadFiles(peer.id);
+      if (files == null) files = ((state.sharedFiles && state.sharedFiles[peer.id]) || []).slice().sort((a, b) => a.at - b.at);
+      if (state.peer && state.peer.id === peer.id) {
+        files.forEach((e) => appendFileBubble(e, e.mine, e.url));
+      }
     } catch (_e) {}
     updateDisappearBanner();
     updateWastedBar();
@@ -2784,9 +2788,11 @@
     const peerId = state.peer.id;
     state.socket.emit('chat:file', { to: peerId, id: fid, name: file.name, mime, data: buf }, (res) => {
       if (res && res.error) return notify(res.error);
-      const url = URL.createObjectURL(new Blob([buf], { type: mime }));
+      const blob = new Blob([buf], { type: mime });
+      const url = URL.createObjectURL(blob);
       const entry = { id: fid, from: state.me.id, mine: true, name: file.name, mime, size: file.size, at: Date.now(), url };
       cacheSharedFile(peerId, entry);
+      idbSaveFile(peerId, entry, blob); // survive a refresh (this browser only)
       appendFileBubble(entry, true, url);
     });
   }
@@ -2803,6 +2809,77 @@
     if (!arr) return;
     const i = arr.findIndex((e) => e.id === fid);
     if (i >= 0) { try { URL.revokeObjectURL(arr[i].url); } catch (_e) {} arr.splice(i, 1); }
+  }
+
+  /* Persist shared files in THIS browser (IndexedDB) so they survive a page
+     refresh — without ever storing them on the server. Each user keeps their own
+     copy of the blobs they sent/received, per conversation, capped so storage
+     can't grow without bound. Falls back silently to memory-only when IndexedDB
+     is unavailable (e.g. private browsing). */
+  var FILE_DB = null;
+  var FILES_PER_PEER = 80; // keep the most recent N files per conversation
+  function idb() {
+    if (FILE_DB) return FILE_DB;
+    FILE_DB = new Promise((resolve, reject) => {
+      let req;
+      try { req = indexedDB.open('gx_chat_files', 1); } catch (e) { return reject(e); }
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('files')) {
+          const os = db.createObjectStore('files', { keyPath: 'key' });
+          os.createIndex('peer', 'peerId', { unique: false });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return FILE_DB;
+  }
+  function idbKey(peerId, fid) { return peerId + ':' + fid; }
+  async function idbSaveFile(peerId, entry, blob) {
+    try {
+      const db = await idb();
+      await new Promise((res, rej) => {
+        const tx = db.transaction('files', 'readwrite');
+        tx.objectStore('files').put({
+          key: idbKey(peerId, entry.id), peerId, fid: entry.id, from: entry.from,
+          mine: entry.mine, name: entry.name, mime: entry.mime, size: entry.size, at: entry.at, blob,
+        });
+        tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+      });
+    } catch (_e) { /* IndexedDB unavailable — memory cache still applies */ }
+  }
+  async function idbDeleteFile(peerId, fid) {
+    try {
+      const db = await idb();
+      await new Promise((res, rej) => {
+        const tx = db.transaction('files', 'readwrite');
+        tx.objectStore('files').delete(idbKey(peerId, fid));
+        tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+      });
+    } catch (_e) {}
+  }
+  async function idbLoadFiles(peerId) {
+    try {
+      const db = await idb();
+      const rows = await new Promise((res, rej) => {
+        const tx = db.transaction('files', 'readonly');
+        const out = [];
+        const cur = tx.objectStore('files').index('peer').openCursor(IDBKeyRange.only(peerId));
+        cur.onsuccess = () => { const c = cur.result; if (c) { out.push(c.value); c.continue(); } else res(out); };
+        cur.onerror = () => rej(cur.error);
+      });
+      rows.sort((a, b) => a.at - b.at);
+      // Prune oldest beyond the cap (keeps storage bounded).
+      if (rows.length > FILES_PER_PEER) {
+        const drop = rows.splice(0, rows.length - FILES_PER_PEER);
+        drop.forEach((r) => idbDeleteFile(peerId, r.fid));
+      }
+      return rows.map((r) => ({
+        id: r.fid, from: r.from, mine: r.mine, name: r.name, mime: r.mime, size: r.size, at: r.at,
+        url: URL.createObjectURL(r.blob),
+      }));
+    } catch (_e) { return null; } // signal "IDB unavailable" so caller can fall back
   }
   function removeFileBubble(fid, from) {
     const b = chatBody();
@@ -2823,6 +2900,7 @@
     if (!state.peer || !state.socket) return;
     removeFileBubble(fid, state.me.id);
     uncacheSharedFile(state.peer.id, fid);
+    idbDeleteFile(state.peer.id, fid);
     state.socket.emit('chat:file:delete', { to: state.peer.id, id: fid });
   }
   // Reply + (for the sender) delete controls on a shared-file bubble.
@@ -3528,11 +3606,13 @@
 
     s.on('chat:file', (meta) => {
       const peerId = state.peer && state.peer.id;
-      const url = URL.createObjectURL(new Blob([meta.data], { type: meta.mime }));
+      const blob = new Blob([meta.data], { type: meta.mime });
+      const url = URL.createObjectURL(blob);
       const entry = { id: meta.id, from: meta.from, mine: false, name: meta.name, mime: meta.mime, size: meta.size, at: meta.at || Date.now(), url };
       // Cache it under the sender's conversation so it survives switching chats
-      // (and shows once the recipient opens that conversation).
+      // (memory) and a page refresh (IndexedDB, this browser only).
       cacheSharedFile(meta.from, entry);
+      idbSaveFile(meta.from, entry, blob);
       if (peerId && meta.from === peerId) {
         appendFileBubble(entry, false, url);
       } else {
@@ -3547,7 +3627,7 @@
       const from = payload && payload.from;
       if (!id) return;
       removeFileBubble(id, from);
-      if (from != null) uncacheSharedFile(from, id);
+      if (from != null) { uncacheSharedFile(from, id); idbDeleteFile(from, id); }
     });
 
     // Screen-share signaling (WebRTC; the media is peer-to-peer).
