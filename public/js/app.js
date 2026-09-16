@@ -1248,6 +1248,8 @@
     view.querySelector('#sendBtn').addEventListener('click', send);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
     input.addEventListener('input', () => updateComposerPreview(input.value));
+    // Put the cursor in the composer right away so the user can type at once.
+    setTimeout(() => input.focus(), 0);
 
     // Wasted picker (offer to the group, or take one yourself).
     const wastedPicker = view.querySelector('#wastedPicker');
@@ -1621,6 +1623,8 @@
       if (state.socket) state.socket.emit('chat:typing', { to: peer.id });
       updateComposerPreview(input.value);
     });
+    // Put the cursor in the composer right away so the user can type at once.
+    setTimeout(() => input.focus(), 0);
 
     const fileInput = view.querySelector('#fileInput');
     view.querySelector('#attachBtn').addEventListener('click', () => fileInput.click());
@@ -1712,7 +1716,33 @@
   }
 
   function chatBody() { return document.getElementById('chatBody'); }
-  function scrollBody() { const b = chatBody(); if (b) b.scrollTop = b.scrollHeight; }
+
+  // True when the view is already at (or very near) the newest message.
+  function isNearBottom(b, px) {
+    if (!b) return false;
+    return b.scrollHeight - b.scrollTop - b.clientHeight <= (px == null ? 140 : px);
+  }
+
+  // Keep the newest message in view. Scrolling to scrollHeight once isn't
+  // enough: avatars, shared images and link embeds finish loading *after* the
+  // message is rendered and grow the content, which would otherwise leave the
+  // last message below the fold. So we re-pin on the next frame and again as
+  // each image loads — but only while the user is still parked at the bottom,
+  // so scrolling up to read history is never yanked back down.
+  function scrollBody() {
+    const b = chatBody();
+    if (!b) return;
+    const jump = () => { b.scrollTop = b.scrollHeight; };
+    jump();
+    requestAnimationFrame(jump);
+    if (!b._pinBound) {
+      b._pinBound = true;
+      // `load` doesn't bubble, so listen in the capture phase.
+      b.addEventListener('load', (e) => {
+        if (e.target && e.target.tagName === 'IMG' && isNearBottom(b)) b.scrollTop = b.scrollHeight;
+      }, true);
+    }
+  }
 
   /* ---------- in-chat profile pictures (rotating buffer) ----------
      Each message row shows the sender's picture at the moment it was rendered,
