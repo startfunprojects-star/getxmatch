@@ -1750,14 +1750,26 @@
       const { messages, disappearing, wasted } = await api.get(`/api/users/${peer.id}/messages`);
       state.disappearing = disappearing || 0;
       if (wasted) state.wasted = wasted;
-      messages.forEach((m) => appendMessage(m));
-      // Re-show shared files. These aren't stored on the server; they're kept in
-      // THIS browser's IndexedDB so they survive a refresh (per user/device).
-      // Fall back to the in-memory session cache if IndexedDB is unavailable.
+
+      // Shared files aren't stored on the server; they're kept in THIS browser's
+      // IndexedDB so they survive a refresh (per user/device). Fall back to the
+      // in-memory session cache if IndexedDB is unavailable.
       let files = await idbLoadFiles(peer.id);
-      if (files == null) files = ((state.sharedFiles && state.sharedFiles[peer.id]) || []).slice().sort((a, b) => a.at - b.at);
+      if (files == null) files = ((state.sharedFiles && state.sharedFiles[peer.id]) || []).slice();
+
+      // Interleave persisted messages (text, gifts, links, …) with the shared
+      // files by timestamp so history stays chronological. Previously every file
+      // was appended AFTER all messages, which pushed shared media to the bottom
+      // on reload no matter when it was actually sent. Guard against the user
+      // having switched chats while the awaits above were in flight.
       if (state.peer && state.peer.id === peer.id) {
-        files.forEach((e) => appendFileBubble(e, e.mine, e.url));
+        const timeline = [];
+        messages.forEach((m) => timeline.push({ at: m.at, seq: 0, render: () => appendMessage(m) }));
+        files.forEach((e) => timeline.push({ at: e.at, seq: 1, render: () => appendFileBubble(e, e.mine, e.url) }));
+        // Sort by time; on an exact tie keep text before a file, matching the
+        // order they were first shown live. (Array.sort is stable.)
+        timeline.sort((a, b) => (a.at - b.at) || (a.seq - b.seq));
+        timeline.forEach((it) => it.render());
       }
     } catch (_e) {}
     updateDisappearBanner();
