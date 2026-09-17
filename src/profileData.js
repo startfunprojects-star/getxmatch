@@ -169,6 +169,15 @@ function buildGallery(userId, viewerId) {
   });
 }
 
+// The user's GIF "feelings" collection, newest first. Visibility gating (who
+// is allowed to see it) is applied by the caller in buildProfile().
+function buildGifs(userId) {
+  return db
+    .prepare('SELECT id, filename, caption FROM user_gifs WHERE user_id = ? ORDER BY created_at DESC')
+    .all(userId)
+    .map((g) => ({ id: g.id, url: `/uploads/${g.filename}`, caption: g.caption || '' }));
+}
+
 // Aggregated reaction state for one photo: per-emoji counts, the total, and the
 // viewer's own reaction (if any). Returned by the react endpoint and the photo
 // detail endpoint so the client can repaint without a full profile reload.
@@ -275,7 +284,8 @@ function buildProfile(userId, viewerId) {
               p.display_name, p.bio, p.avatar, p.updated_at,
               p.gender, p.date_of_birth, p.country, p.weight, p.smokes, p.drinks, p.diet,
               p.sexuality, p.interests, p.persona, p.likes_in_bed, p.bed_role,
-              p.relationship_status, p.partner_user_id, p.friends_visibility, p.hidden
+              p.relationship_status, p.partner_user_id, p.friends_visibility,
+              p.gif_visibility, p.hidden
        FROM users u JOIN profiles p ON p.user_id = u.id
        WHERE u.id = ?`
     )
@@ -285,6 +295,19 @@ function buildProfile(userId, viewerId) {
   const isMe = viewerId === row.id;
 
   const gallery = buildGallery(userId, viewerId);
+
+  // GIF "feelings" collection, gated by the owner's chosen visibility.
+  const fStateForGifs = friendState(row.id, viewerId);
+  const gifVisibility = row.gif_visibility || 'public';
+  const gifsAllowed =
+    isMe ||
+    gifVisibility === 'public' ||
+    (gifVisibility === 'friends' && fStateForGifs === 'friends');
+  const gifs = gifsAllowed ? buildGifs(userId) : [];
+  // Only flag the collection as "locked" for a viewer when it's both hidden
+  // from them AND actually has something in it.
+  const gifsHidden = !gifsAllowed &&
+    !!db.prepare('SELECT 1 FROM user_gifs WHERE user_id = ? LIMIT 1').get(userId);
 
   // Profile picture buffer (up to 10). Separate from the gallery and the single
   // display picture; the chat rotates through these.
@@ -346,6 +369,12 @@ function buildProfile(userId, viewerId) {
     relationshipStatus: row.relationship_status || null,
     partner,
     gallery,
+    gifs,
+    // The chosen audience level for the GIF collection. `gifsLocked` tells a
+    // viewer the owner has GIFs they're not allowed to see, so the UI can show
+    // a small lock hint instead of an empty section.
+    gifVisibility,
+    gifsLocked: gifsHidden,
     buffer: bufferPhotos.map((ph) => ({ id: ph.id, url: `/uploads/${ph.filename}` })),
     rating: ratingSummary(row.id, viewerId),
     comments: commentsFor(row.id, viewerId),
@@ -371,6 +400,7 @@ module.exports = {
   RATING_DIMS,
   commentsFor,
   buildGallery,
+  buildGifs,
   photoReactionState,
   photoComments,
   commentReactionState,

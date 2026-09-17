@@ -18,6 +18,12 @@ const RELATIONSHIP_STATUS = [
 ];
 const FRIENDS_VISIBILITY = ['public', 'friends', 'hidden'];
 
+// Who may see a user's GIF "feelings" collection.
+//   public  — anyone who can view the profile
+//   friends — only accepted connections
+//   private — only the owner
+const GIF_VISIBILITY = ['public', 'friends', 'private'];
+
 const INTERESTS = [
   'Movies',
   'Photography',
@@ -38,6 +44,7 @@ const INTERESTS = [
 
 const MAX_GALLERY_PHOTOS = 25;
 const MAX_BUFFER_PHOTOS = 10;
+const MAX_GIFS = 100;
 const MIN_AGE = 18;
 
 // Body weight (kg) bounds. Mandatory on the profile; drives the "Wasted" score.
@@ -66,9 +73,11 @@ module.exports = {
   BED_ROLE,
   RELATIONSHIP_STATUS,
   FRIENDS_VISIBILITY,
+  GIF_VISIBILITY,
   INTERESTS,
   MAX_GALLERY_PHOTOS,
   MAX_BUFFER_PHOTOS,
+  MAX_GIFS,
   MIN_AGE,
   MIN_WEIGHT,
   MAX_WEIGHT,

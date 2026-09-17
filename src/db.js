@@ -50,10 +50,22 @@ db.exec(`
     created_at  INTEGER NOT NULL
   );
 
+  -- A user's collection of GIFs ("feelings"). Up to 100 per user. Who may see
+  -- them is governed by profiles.gif_visibility (public | friends | private).
+  CREATE TABLE IF NOT EXISTS user_gifs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    filename   TEXT NOT NULL,           -- filename in uploads/
+    caption    TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_messages_pair
     ON messages (sender_id, recipient_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_gallery_user
     ON gallery_photos (user_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_user_gifs_user
+    ON user_gifs (user_id, created_at);
 
   -- Pending signups awaiting email OTP verification. A user row is only
   -- created once the correct code is entered. One pending row per email.
@@ -189,6 +201,8 @@ db.exec(`
     ['relationship_status', 'TEXT'],
     ['partner_user_id', 'INTEGER'],
     ['friends_visibility', "TEXT NOT NULL DEFAULT 'public'"],
+    // Who may see the user's GIF "feelings" collection: public | friends | private.
+    ['gif_visibility', "TEXT NOT NULL DEFAULT 'public'"],
     ['hidden', 'INTEGER NOT NULL DEFAULT 0'], // 1 = profile excluded from search/browse
   ];
   for (const [name, type] of additions) {

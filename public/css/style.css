@@ -633,6 +633,62 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
   .photo-viewer .pv-media img { max-height: 42vh; }
 }
 
+/* ---------- GIF "feelings" collection ---------- */
+.gal-slideshow { font-weight: 600; }
+.gif-gallery .gif-cell img { object-fit: cover; }
+.gif-cell .gif-cap {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+  padding: 10px 8px 6px; font-size: 11px; font-weight: 600; color: #fff;
+  background: linear-gradient(to top, rgba(0,0,0,.72), transparent);
+  pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gif-vis { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.gif-vis-select {
+  padding: 6px 10px; border-radius: 10px; background: var(--bg-3);
+  border: 1px solid var(--border); color: var(--text); font-size: 13px; cursor: pointer;
+}
+
+/* ---------- Full-screen slideshow (GIFs + gallery) ---------- */
+.slideshow { place-items: center; }
+.slideshow .ss-stage {
+  display: grid; place-items: center; gap: 12px;
+  max-width: 92vw; max-height: 84vh;
+}
+.slideshow .ss-img {
+  max-width: 92vw; max-height: 78vh; border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.6); background: #000;
+}
+.slideshow .ss-caption {
+  color: #fff; font-size: 14px; font-weight: 600; text-align: center;
+  max-width: 80vw; padding: 4px 10px; background: rgba(0,0,0,.4); border-radius: 999px;
+}
+.slideshow .ss-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 52px; height: 52px; border-radius: 50%;
+  background: rgba(255,255,255,.12); color: #fff; font-size: 30px; line-height: 1;
+  z-index: 3; cursor: pointer; transition: background .15s ease;
+}
+.slideshow .ss-nav:hover { background: rgba(255,255,255,.24); }
+.slideshow .ss-prev { left: 18px; }
+.slideshow .ss-next { right: 18px; }
+.slideshow .ss-bar {
+  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 12px; z-index: 3;
+  padding: 6px 14px; border-radius: 999px; background: rgba(0,0,0,.55);
+}
+.slideshow .ss-play {
+  width: 34px; height: 34px; border-radius: 50%;
+  background: rgba(255,255,255,.14); color: #fff; font-size: 15px; cursor: pointer;
+}
+.slideshow .ss-play.on { background: var(--accent); }
+.slideshow .ss-count { color: #fff; font-size: 13px; font-weight: 700; letter-spacing: .5px; }
+
+@media (max-width: 620px) {
+  .slideshow .ss-nav { width: 42px; height: 42px; font-size: 24px; }
+  .slideshow .ss-prev { left: 6px; }
+  .slideshow .ss-next { right: 6px; }
+}
+
 /* Connections, grouped into a block per relationship kind */
 .rel-group { margin-bottom: 14px; }
 .rel-group:last-child { margin-bottom: 0; }

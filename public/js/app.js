@@ -350,6 +350,15 @@
   };
   const MAX_GALLERY = 25;
   const MAX_BUFFER = 10;
+  const MAX_GIFS = 100;
+
+  // Labels for the GIF collection's visibility settings. Mirrors GIF_VISIBILITY
+  // in src/profileFields.js.
+  const GIF_VISIBILITY = [
+    { value: 'public', label: '🌍 Everyone' },
+    { value: 'friends', label: '👥 Connections only' },
+    { value: 'private', label: '🔒 Only me' },
+  ];
 
   // Emoji "likes" a user can leave on a gallery photo. Mirrors the server-side
   // allow-list in src/galleryReactions.js — keep the two in sync.
@@ -3904,6 +3913,98 @@
     document.body.appendChild(box);
   }
 
+  // Full-screen slideshow over a list of images. `items` is an array of
+  // { url, caption? }; `startIndex` is where to begin. The viewer can slide to
+  // the next/previous item with the on-screen arrows, the keyboard (←/→), a
+  // swipe on touch, or auto-play. Used by both the GIF "feelings" collection
+  // and the photo gallery.
+  function openSlideshow(items, startIndex, opts) {
+    items = (items || []).filter(Boolean);
+    if (!items.length) return;
+    opts = opts || {};
+    let i = Math.max(0, Math.min(startIndex || 0, items.length - 1));
+    let timer = null;
+
+    const box = el(`
+      <div class="lightbox slideshow">
+        <button class="lb-close" title="Close">✕</button>
+        <button class="ss-nav ss-prev" title="Previous (←)" aria-label="Previous">‹</button>
+        <div class="ss-stage">
+          <img class="ss-img" alt="" />
+          <div class="ss-caption"></div>
+        </div>
+        <button class="ss-nav ss-next" title="Next (→)" aria-label="Next">›</button>
+        <div class="ss-bar">
+          <button class="ss-play" title="Play / pause slideshow">▶</button>
+          <span class="ss-count"></span>
+        </div>
+      </div>
+    `);
+
+    const img = box.querySelector('.ss-img');
+    const cap = box.querySelector('.ss-caption');
+    const count = box.querySelector('.ss-count');
+    const playBtn = box.querySelector('.ss-play');
+
+    const paint = () => {
+      const it = items[i];
+      img.src = it.url;
+      cap.textContent = it.caption || '';
+      cap.style.display = it.caption ? '' : 'none';
+      count.textContent = `${i + 1} / ${items.length}`;
+    };
+    const go = (delta) => {
+      i = (i + delta + items.length) % items.length;
+      paint();
+    };
+
+    const stopAuto = () => {
+      if (timer) { clearInterval(timer); timer = null; }
+      playBtn.textContent = '▶';
+      playBtn.classList.remove('on');
+    };
+    const startAuto = () => {
+      if (items.length < 2) return;
+      timer = setInterval(() => go(1), 2500);
+      playBtn.textContent = '⏸';
+      playBtn.classList.add('on');
+    };
+    const toggleAuto = () => { timer ? stopAuto() : startAuto(); };
+
+    const close = () => {
+      stopAuto();
+      box.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+    function onKey(e) {
+      if (e.key === 'Escape') close();
+      else if (e.key === 'ArrowRight') { stopAuto(); go(1); }
+      else if (e.key === 'ArrowLeft') { stopAuto(); go(-1); }
+      else if (e.key === ' ') { e.preventDefault(); toggleAuto(); }
+    }
+
+    box.querySelector('.lb-close').addEventListener('click', close);
+    box.querySelector('.ss-prev').addEventListener('click', () => { stopAuto(); go(-1); });
+    box.querySelector('.ss-next').addEventListener('click', () => { stopAuto(); go(1); });
+    playBtn.addEventListener('click', toggleAuto);
+    box.addEventListener('click', (e) => { if (e.target === box || e.target.classList.contains('ss-stage')) close(); });
+    document.addEventListener('keydown', onKey);
+
+    // Touch swipe to change slides.
+    let sx = null;
+    box.querySelector('.ss-stage').addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; }, { passive: true });
+    box.querySelector('.ss-stage').addEventListener('touchend', (e) => {
+      if (sx == null) return;
+      const dx = e.changedTouches[0].clientX - sx;
+      if (Math.abs(dx) > 40) { stopAuto(); go(dx < 0 ? 1 : -1); }
+      sx = null;
+    });
+
+    document.body.appendChild(box);
+    paint();
+    if (opts.autoplay) startAuto();
+  }
+
   // Rich gallery-photo viewer: the full-size image alongside emoji reactions
   // ("likes") and a comment thread. `opts.isOwner` disables reacting/commenting
   // on your own photos (you can still read reactions and delete comments).
@@ -4122,6 +4223,136 @@
     })();
   }
 
+  // Render the GIF "feelings" collection into an already-built profile view.
+  // Non-owners see the GIFs they're allowed to (subject to the owner's chosen
+  // visibility); the owner additionally gets a visibility selector and upload +
+  // delete controls. Clicking any GIF opens the slideshow at that GIF.
+  function renderGifSection(view, profile, isMe) {
+    const gifBox = view.querySelector('#pvGifs');
+    const gifCount = view.querySelector('#gifCount');
+    const gifSlideBtn = view.querySelector('#gifSlideshow');
+    const visBox = view.querySelector('#pvGifVisibility');
+    if (!gifBox) return;
+
+    const gifItems = () =>
+      Array.from(gifBox.querySelectorAll('.cell img')).map((im) => ({ url: im.src, caption: im.dataset.caption || '' }));
+    const updateGifCount = () => {
+      const n = gifBox.querySelectorAll('.cell').length;
+      gifCount.textContent = isMe ? `(${n}/${MAX_GIFS})` : (n ? `(${n})` : '');
+    };
+    const syncGifSlideBtn = () => {
+      if (gifSlideBtn) gifSlideBtn.style.display = gifBox.querySelector('.cell') ? '' : 'none';
+    };
+
+    const makeGifCell = (g) => {
+      const cell = el(`<div class="cell gif-cell">
+        <img src="${esc(g.url)}" loading="lazy" data-caption="${esc(g.caption || '')}" />
+        <span class="cell-zoom">⤢</span>
+        ${g.caption ? `<span class="gif-cap"></span>` : ''}
+      </div>`);
+      if (g.caption) cell.querySelector('.gif-cap').textContent = g.caption;
+      const open = () => {
+        const cells = Array.from(gifBox.querySelectorAll('.cell'));
+        openSlideshow(gifItems(), cells.indexOf(cell), { autoplay: false });
+      };
+      cell.querySelector('img').addEventListener('click', open);
+      cell.querySelector('.cell-zoom').addEventListener('click', open);
+      if (isMe) {
+        const del = el('<button class="del" title="Delete GIF">✕</button>');
+        del.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          if (!confirm('Delete this GIF?')) return;
+          try {
+            await api.del('/api/profile/gifs/' + g.id);
+            cell.remove();
+            updateGifCount();
+            refreshGifAddBtn();
+            syncGifSlideBtn();
+            if (!gifBox.querySelector('.cell')) gifBox.appendChild(el('<div class="hint">No GIFs yet.</div>'));
+          } catch (e) { alert(e.message); }
+        });
+        cell.appendChild(del);
+      }
+      return cell;
+    };
+
+    // Populate the grid (or an appropriate empty/locked hint).
+    const gifs = profile.gifs || [];
+    if (gifs.length) {
+      gifs.forEach((g) => gifBox.appendChild(makeGifCell(g)));
+    } else if (profile.gifsLocked) {
+      const why = profile.gifVisibility === 'friends'
+        ? 'Only their connections can see these GIFs.'
+        : 'These GIFs are private.';
+      gifBox.appendChild(el(`<div class="hint">🔒 ${why}</div>`));
+    } else {
+      gifBox.appendChild(el('<div class="hint">No GIFs yet.</div>'));
+    }
+    updateGifCount();
+    syncGifSlideBtn();
+
+    if (gifSlideBtn) {
+      gifSlideBtn.addEventListener('click', () => openSlideshow(gifItems(), 0, { autoplay: true }));
+    }
+
+    // Owner-only: visibility selector + uploader.
+    let gifAddBtn = null;
+    function refreshGifAddBtn() {
+      if (!gifAddBtn) return;
+      const full = gifBox.querySelectorAll('.cell').length >= MAX_GIFS;
+      gifAddBtn.disabled = full;
+      gifAddBtn.textContent = full ? `Collection full (${MAX_GIFS})` : '＋ Add GIF';
+    }
+    if (!isMe) return;
+
+    // Visibility selector.
+    const sel = el('<select class="gif-vis-select" title="Who can see your GIFs"></select>');
+    GIF_VISIBILITY.forEach((o) => {
+      const opt = el(`<option value="${o.value}">${o.label}</option>`);
+      if ((profile.gifVisibility || 'public') === o.value) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    const visWrap = el('<div class="gif-vis"><span class="hint">Who can see these:</span></div>');
+    visWrap.appendChild(sel);
+    visBox.appendChild(visWrap);
+    sel.addEventListener('change', async () => {
+      const prev = sel.dataset.prev || profile.gifVisibility || 'public';
+      try {
+        await api.put('/api/profile/gifs/visibility', { visibility: sel.value });
+        sel.dataset.prev = sel.value;
+        notifyToast('GIF visibility updated.');
+      } catch (e) { alert(e.message); sel.value = prev; }
+    });
+    sel.dataset.prev = profile.gifVisibility || 'public';
+
+    // Uploader — GIF files only; no cropping, so animation is preserved.
+    gifAddBtn = el('<button class="ghost small" style="margin-top:12px">＋ Add GIF</button>');
+    const gifIn = el('<input type="file" accept="image/gif" class="hidden" />');
+    gifAddBtn.addEventListener('click', () => gifIn.click());
+    gifIn.addEventListener('change', async () => {
+      const picked = gifIn.files[0];
+      gifIn.value = '';
+      if (!picked) return;
+      if (!/image\/gif/i.test(picked.type)) { alert('Please choose a GIF file.'); return; }
+      const caption = (prompt('Add a short caption for this GIF (optional):', '') || '').trim().slice(0, 80);
+      const fd = new FormData();
+      fd.append('gif', picked);
+      if (caption) fd.append('caption', caption);
+      try {
+        const { gif } = await api.postForm('/api/profile/gifs', fd);
+        const hint = gifBox.querySelector('.hint');
+        if (hint) hint.remove();
+        gifBox.prepend(makeGifCell(gif));
+        updateGifCount();
+        refreshGifAddBtn();
+        syncGifSlideBtn();
+      } catch (e) { alert(e.message); }
+    });
+    view.appendChild(gifIn);
+    gifBox.after(gifAddBtn);
+    refreshGifAddBtn();
+  }
+
   async function showProfile(username) {
     document.getElementById('shell').classList.add('viewing-main');
     const main = document.getElementById('main');
@@ -4204,8 +4435,18 @@
             ${profile.persona ? card('✨', 'What kind of person they are', `<p class="rich">${esc(profile.persona)}</p>`) : ''}
             ${profile.likesInBed ? card('🔥', 'In the bedroom', `<p class="rich">${esc(profile.likesInBed)}</p>`) : ''}
             <section class="card">
-              <h3 class="card-title">📷 Gallery <span class="hint" id="galCount"></span></h3>
+              <h3 class="card-title">📷 Gallery <span class="hint" id="galCount"></span>
+                <button class="ghost small gal-slideshow" id="galSlideshow" title="Play as slideshow" style="float:right">▶ Slideshow</button>
+              </h3>
               <div class="gallery" id="pvGallery"></div>
+            </section>
+            <section class="card">
+              <h3 class="card-title">🎞️ GIF feelings <span class="hint" id="gifCount"></span>
+                <button class="ghost small gal-slideshow" id="gifSlideshow" title="Play as slideshow" style="float:right">▶ Slideshow</button>
+              </h3>
+              <p class="hint" style="margin:-4px 0 10px">GIFs that capture a mood. ${isMe ? `Up to ${MAX_GIFS}. Choose who can see them below.` : 'Open one to slide through them.'}</p>
+              <div id="pvGifVisibility"></div>
+              <div class="gallery gif-gallery" id="pvGifs"></div>
             </section>
             ${isMe ? `<section class="card">
               <h3 class="card-title">🎞️ Profile picture buffer <span class="hint" id="bufCount"></span></h3>
@@ -4285,7 +4526,7 @@
         del.addEventListener('click', async (ev) => {
           ev.stopPropagation();
           if (!confirm('Delete this photo?')) return;
-          try { await api.del('/api/profile/gallery/' + ph.id); cell.remove(); updateCount(); refreshAddBtn(); }
+          try { await api.del('/api/profile/gallery/' + ph.id); cell.remove(); updateCount(); refreshAddBtn(); syncGalSlideBtn(); }
           catch (e) { alert(e.message); }
         });
         cell.appendChild(del);
@@ -4295,6 +4536,18 @@
     if (!profile.gallery.length) gal.appendChild(el('<div class="hint">No photos yet.</div>'));
     else profile.gallery.forEach((ph) => gal.appendChild(makeCell(ph)));
     updateCount();
+
+    /* ----- gallery slideshow ----- */
+    const galSlideBtn = view.querySelector('#galSlideshow');
+    const galItems = () =>
+      Array.from(gal.querySelectorAll('.cell img')).map((im) => ({ url: im.src }));
+    const syncGalSlideBtn = () => {
+      if (galSlideBtn) galSlideBtn.style.display = gal.querySelector('.cell') ? '' : 'none';
+    };
+    if (galSlideBtn) {
+      galSlideBtn.addEventListener('click', () => openSlideshow(galItems(), 0, { autoplay: true }));
+      syncGalSlideBtn();
+    }
 
     let addBtn = null;
     function refreshAddBtn() {
@@ -4322,6 +4575,7 @@
           gal.prepend(makeCell(photo));
           updateCount();
           refreshAddBtn();
+          syncGalSlideBtn();
         } catch (e) { alert(e.message); }
         fileIn.value = '';
       });
@@ -4329,6 +4583,9 @@
       gal.after(addBtn);
       refreshAddBtn();
     }
+
+    /* ----- GIF "feelings" collection ----- */
+    renderGifSection(view, profile, isMe);
 
     /* ----- profile picture buffer (own profile only) ----- */
     if (isMe) {
