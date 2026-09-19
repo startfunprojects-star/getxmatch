@@ -5243,7 +5243,125 @@
       });
       if (fb) actionSlot.appendChild(fb);
     }
+
+    /* ----- likes + comments (any registered user) ----- */
+    const likes = p.likes || { count: 0, mine: false };
+    const foot = el(`
+      <div class="hw-foot">
+        <button class="hw-like${likes.mine ? ' on' : ''}" type="button" title="Like this post">
+          <span class="hw-like-ico">${likes.mine ? '❤️' : '🤍'}</span>
+          <span class="hw-like-n">${likes.count || ''}</span>
+        </button>
+        <button class="hw-comment-toggle" type="button" title="Show comments">
+          💬 <span class="hw-comment-n">${p.commentCount || ''}</span>
+        </button>
+      </div>
+    `);
+    card.appendChild(foot);
+    const commentsBox = el('<div class="hw-comments" hidden></div>');
+    card.appendChild(commentsBox);
+
+    const setCommentCount = (n) => {
+      foot.querySelector('.hw-comment-n').textContent = n || '';
+    };
+
+    const likeBtn = foot.querySelector('.hw-like');
+    let likeBusy = false;
+    likeBtn.addEventListener('click', async () => {
+      if (likeBusy) return;
+      likeBusy = true;
+      try {
+        const { likes: st } = await api.post('/api/highway/' + p.id + '/like', {});
+        likeBtn.classList.toggle('on', st.mine);
+        likeBtn.querySelector('.hw-like-ico').textContent = st.mine ? '❤️' : '🤍';
+        likeBtn.querySelector('.hw-like-n').textContent = st.count || '';
+      } catch (e) { alert(e.message); }
+      finally { likeBusy = false; }
+    });
+
+    const cToggle = foot.querySelector('.hw-comment-toggle');
+    let loaded = false;
+    cToggle.addEventListener('click', async () => {
+      commentsBox.hidden = !commentsBox.hidden;
+      if (commentsBox.hidden || loaded) return;
+      loaded = true;
+      await loadHighwayComments(commentsBox, p, setCommentCount);
+    });
+
     return card;
+  }
+
+  // Build one Highway comment row. `onCount(n)` keeps the post's counter in sync.
+  function highwayCommentEl(c, listEl, onCount) {
+    const item = el(`
+      <div class="hw-comment" data-id="${c.id}">
+        <img class="avatar sm" src="${avatarUrl(c.author.avatar)}" alt="" />
+        <div class="hw-comment-body">
+          <div class="hw-comment-head">
+            <b class="hw-comment-author"></b>
+            <span class="hint">${fmtDate(c.at)} · ${fmtTime(c.at)}</span>
+          </div>
+          <div class="hw-comment-text"></div>
+        </div>
+      </div>
+    `);
+    const author = item.querySelector('.hw-comment-author');
+    author.textContent = c.author.displayName;
+    author.style.cursor = 'pointer';
+    author.addEventListener('click', () => showProfile(c.author.username));
+    item.querySelector('.hw-comment-text').textContent = c.body;
+    if (c.canDelete) {
+      const del = el('<button class="ghost small hw-comment-del" title="Delete comment">✕</button>');
+      del.addEventListener('click', async () => {
+        try {
+          const res = await api.del('/api/highway/comment/' + c.id);
+          item.remove();
+          if (!listEl.querySelector('.hw-comment')) listEl.appendChild(el('<div class="hint">No comments yet.</div>'));
+          if (res && typeof res.commentCount === 'number') onCount(res.commentCount);
+        } catch (e) { alert(e.message); }
+      });
+      item.querySelector('.hw-comment-head').appendChild(del);
+    }
+    return item;
+  }
+
+  // Populate a post's comments panel: the thread + an add-a-comment box.
+  async function loadHighwayComments(box, p, onCount) {
+    box.innerHTML = `
+      <div class="hw-comment-list"><div class="hint">Loading…</div></div>
+      <div class="hw-comment-form">
+        <input class="hw-comment-input" maxlength="500" placeholder="Write a comment…" />
+        <button class="primary small hw-comment-send" type="button">Post</button>
+      </div>`;
+    const list = box.querySelector('.hw-comment-list');
+    const input = box.querySelector('.hw-comment-input');
+    const sendBtn = box.querySelector('.hw-comment-send');
+
+    const send = async () => {
+      const body = input.value.trim();
+      if (!body) return;
+      sendBtn.disabled = true;
+      try {
+        const res = await api.post('/api/highway/' + p.id + '/comment', { body });
+        input.value = '';
+        const hint = list.querySelector('.hint');
+        if (hint) hint.remove();
+        list.appendChild(highwayCommentEl(res.comment, list, onCount));
+        if (typeof res.commentCount === 'number') onCount(res.commentCount);
+      } catch (e) { alert(e.message); }
+      finally { sendBtn.disabled = false; }
+    };
+    sendBtn.addEventListener('click', send);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+
+    try {
+      const { comments } = await api.get('/api/highway/' + p.id + '/comments');
+      list.innerHTML = '';
+      if (!comments.length) list.appendChild(el('<div class="hint">No comments yet.</div>'));
+      else comments.forEach((c) => list.appendChild(highwayCommentEl(c, list, onCount)));
+    } catch (e) {
+      list.innerHTML = `<div class="hint">${esc(e.message)}</div>`;
+    }
   }
 
   function prependHighwayPost(feed, post) {

@@ -898,6 +898,28 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .hw-body .msg-embed { width: 100%; max-width: 480px; }
 .hw-body .msg-img, .hw-body .msg-video { max-width: 360px; }
 .hw-image { display: block; margin-top: 12px; max-width: 100%; max-height: 460px; border-radius: 12px; border: 1px solid var(--border); cursor: zoom-in; }
+/* Highway likes + comments */
+.hw-foot { display: flex; gap: 8px; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.hw-like, .hw-comment-toggle {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg-3); color: var(--muted);
+  font-weight: 600; font-size: 13px; cursor: pointer; transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+.hw-like:hover, .hw-comment-toggle:hover { border-color: var(--accent); color: var(--text); }
+.hw-like.on { color: var(--text); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+.hw-like-n, .hw-comment-n { font-variant-numeric: tabular-nums; }
+.hw-comments { margin-top: 12px; }
+.hw-comment-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
+.hw-comment { display: flex; gap: 10px; }
+.hw-comment .avatar.sm { flex: none; }
+.hw-comment-body { flex: 1; min-width: 0; }
+.hw-comment-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hw-comment-author:hover { color: var(--accent); }
+.hw-comment-text { margin-top: 2px; overflow-wrap: anywhere; line-height: 1.5; }
+.hw-comment-del { margin-left: auto; }
+.hw-comment-form { display: flex; gap: 8px; }
+.hw-comment-input { flex: 1; min-width: 0; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-3); color: var(--text); }
+.hw-comment-send { flex: none; }
 
 /* ---------- Quiz ---------- */
 .quiz-form { display: flex; flex-direction: column; gap: 18px; }

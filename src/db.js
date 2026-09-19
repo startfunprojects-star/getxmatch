@@ -686,6 +686,28 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_highway_recent ON highway_posts (created_at);
 `);
 
+// Highway post engagement: one "like" per user per post, plus flat comments.
+// Both cascade-delete with their post (pruned or removed by its author).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS highway_likes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id    INTEGER NOT NULL REFERENCES highway_posts(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    UNIQUE (post_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_highway_likes_post ON highway_likes (post_id);
+
+  CREATE TABLE IF NOT EXISTS highway_comments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id    INTEGER NOT NULL REFERENCES highway_posts(id) ON DELETE CASCADE,
+    author_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_highway_comments_post ON highway_comments (post_id, created_at);
+`);
+
 // Admin pinning for Highway: a pinned post is exempt from the 100-post prune and
 // is shown ahead of the rest, ordered by pin_rank (1..10). Added idempotently.
 {
