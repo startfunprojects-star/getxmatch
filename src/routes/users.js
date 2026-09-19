@@ -6,6 +6,7 @@ const { requireAuth } = require('../auth');
 const { getGift } = require('../gifts');
 const wasted = require('../wasted');
 const polls = require('../polls');
+const chatQuiz = require('../chatQuiz');
 
 // Build the compact quoted-message preview attached to a reply. Mirrors
 // replyPreview() in src/socket.js so live and historical replies render alike.
@@ -17,6 +18,10 @@ function buildReplyPreview(row) {
     text = g ? `${g.emoji} ${g.name}` : 'a gift';
   } else if (row.reply_kind === 'narration') {
     text = '🎭 Roleplay';
+  } else if (row.reply_kind === 'poll') {
+    text = polls.pollLabel(polls.pollIdFromBody(row.reply_body));
+  } else if (row.reply_kind === 'quiz') {
+    text = chatQuiz.quizLabel(chatQuiz.chatQuizIdFromBody(row.reply_body));
   }
   return { id: row.reply_id, from: row.reply_sender, kind: row.reply_kind || 'text', text: String(text).slice(0, 140) };
 }
@@ -131,6 +136,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       reactions: reactionsByMsg.get(m.id) || [],
       expiresAt: m.expires_at || null,
       poll: m.kind === 'poll' ? polls.pollPayload(polls.pollIdFromBody(m.body), req.user.id) : undefined,
+      quiz: m.kind === 'quiz' ? chatQuiz.sessionPayload(chatQuiz.chatQuizIdFromBody(m.body), req.user.id) : undefined,
     })),
   });
 });

@@ -10,6 +10,7 @@ const wasted = require('./wasted');
 const roleplay = require('./roleplay');
 const broadcast = require('./broadcast');
 const polls = require('./polls');
+const chatQuiz = require('./chatQuiz');
 
 // Emoji reactions a user may place on a message/gift. Server-side allow-list so
 // clients can't store arbitrary strings.
@@ -260,6 +261,8 @@ function replyPreview(replyToId) {
     text = '🥂 Wasted';
   } else if (row.kind === 'poll') {
     text = polls.pollLabel(polls.pollIdFromBody(row.body));
+  } else if (row.kind === 'quiz') {
+    text = chatQuiz.quizLabel(chatQuiz.chatQuizIdFromBody(row.body));
   }
   return { id: row.id, from: row.sender_id, kind: row.kind || 'text', text: String(text).slice(0, 140) };
 }
@@ -894,6 +897,66 @@ function initSocket(io) {
           io.to(`user:${uid}`).emit('poll:update', { pollId, poll: polls.pollPayload(pollId, uid) }));
 
         ack && ack({ ok: true, poll: polls.pollPayload(pollId, me.id) });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    /* -------------------- Quizzes (attempt together) -------------------- */
+
+    // Start a quiz in a 1:1 chat ({ to, quizId }). Delivered as a kind='quiz'
+    // chat message; both participants then answer it and, once both are done,
+    // see a compatibility result.
+    socket.on('quiz:start', (payload, ack) => {
+      try {
+        const to = parseInt(payload && payload.to, 10);
+        const quizId = parseInt(payload && payload.quizId, 10);
+        if (!to || !quizId) return ack && ack({ error: 'Invalid quiz.' });
+        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
+        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
+        if (areBlocked(me.id, to)) {
+          return ack && ack({ error: 'You cannot start a quiz with this user — a block is in place.' });
+        }
+        const quiz = db.prepare('SELECT id, questions FROM quizzes WHERE id = ?').get(quizId);
+        if (!quiz) return ack && ack({ error: 'Quiz not found.' });
+        let qcount = 0;
+        try { qcount = (JSON.parse(quiz.questions) || []).length; } catch (_e) {}
+        if (!qcount) return ack && ack({ error: 'This quiz has no questions.' });
+
+        const chatQuizId = chatQuiz.startSession({ quizId, creatorId: me.id, dmA: me.id, dmB: to });
+        const now = Date.now();
+        const info = db
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'quiz', ?, NULL)")
+          .run(me.id, to, JSON.stringify({ chatQuizId }), now);
+        chatQuiz.attachMessage(chatQuizId, info.lastInsertRowid);
+
+        const base = { id: info.lastInsertRowid, from: me.id, to, kind: 'quiz', at: now };
+        io.to(`user:${to}`).emit('chat:message', { ...base, mine: false, quiz: chatQuiz.sessionPayload(chatQuizId, to) });
+        io.to(`user:${me.id}`).emit('chat:message', { ...base, mine: true, quiz: chatQuiz.sessionPayload(chatQuizId, me.id) });
+
+        mirrorLiveMessage(io, me.id, to, 'quiz', JSON.stringify({ chatQuizId }), now);
+        ack && ack({ ok: true });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // Submit my answers for a chat quiz. Pushes an updated (viewer-tailored)
+    // payload to both participants — revealing the comparison once both are in.
+    socket.on('quiz:answer', (payload, ack) => {
+      try {
+        const chatQuizId = parseInt(payload && payload.chatQuizId, 10);
+        const session = chatQuiz.getSession(chatQuizId);
+        if (!session) return ack && ack({ error: 'Quiz not found.' });
+        if (!chatQuiz.canParticipate(session, me.id)) return ack && ack({ error: 'You cannot answer this quiz.' });
+
+        const out = chatQuiz.submitAnswers(session, me.id, payload && payload.answers);
+        if (out.error) return ack && ack({ error: out.error });
+
+        [session.dm_a, session.dm_b].forEach((uid) =>
+          io.to(`user:${uid}`).emit('quiz:update', { chatQuizId, quiz: chatQuiz.sessionPayload(chatQuizId, uid) }));
+
+        ack && ack({ ok: true, quiz: chatQuiz.sessionPayload(chatQuizId, me.id) });
       } catch (e) {
         ack && ack({ error: 'Server error.' });
       }

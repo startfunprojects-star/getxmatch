@@ -373,6 +373,30 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_chat_poll_votes_poll ON chat_poll_votes (poll_id);
 `);
 
+// --- Quizzes attempted together inside a 1:1 chat. A session references an
+// admin-authored quiz and is carried by a chat message (kind='quiz', body JSON
+// {chatQuizId}). Each of the two participants submits their answers once; when
+// both have, a compatibility result (how many answers matched) is revealed.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_quizzes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    quiz_id     INTEGER NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
+    dm_a        INTEGER NOT NULL,          -- lower participant user id
+    dm_b        INTEGER NOT NULL,          -- higher participant user id
+    creator_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    message_id  INTEGER,                   -- messages.id that carries it
+    created_at  INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS chat_quiz_answers (
+    chat_quiz_id INTEGER NOT NULL REFERENCES chat_quizzes(id) ON DELETE CASCADE,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    answers      TEXT NOT NULL,            -- JSON array of chosen option indices
+    submitted_at INTEGER NOT NULL,
+    UNIQUE (chat_quiz_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_quiz_answers_quiz ON chat_quiz_answers (chat_quiz_id);
+`);
+
 // --- Profile picture buffer: a pool of up to 10 images per user, separate from
 // the single display picture (profiles.avatar) and the photo gallery. In chat,
 // the picture shown for a user is drawn at random from this buffer and rotates

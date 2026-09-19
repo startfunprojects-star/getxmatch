@@ -1630,6 +1630,7 @@
           <button class="icon-btn" id="rpBtn" title="Start a roleplay story">🎭</button>
           <button class="icon-btn" id="wastedBtn" title="Offer a drink or substance — get Wasted">🥂</button>
           <button class="icon-btn" id="pollBtn" title="Create a poll">📊</button>
+          <button class="icon-btn" id="quizBtn" title="Take a quiz together">🧩</button>
           <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" />
           <button class="primary" id="sendBtn">Send</button>
         </div>
@@ -1742,6 +1743,8 @@
 
     // Poll builder.
     view.querySelector('#pollBtn').addEventListener('click', () => openPollBuilder({ to: peer.id }));
+    // Quiz picker — start a quiz to attempt together.
+    view.querySelector('#quizBtn').addEventListener('click', () => openQuizPicker(peer.id));
 
     // Load persisted history (text + gifts + roleplay narration).
     adState.counters.chat = 0; // restart the every-20-messages ad cadence per chat
@@ -2125,7 +2128,10 @@
       img.className = 'shared';
       img.src = objectUrl;
       img.draggable = false;
+      img.title = 'Tap to view full size';
       img.addEventListener('contextmenu', (e) => e.preventDefault());
+      // Tap the thumbnail to see the picture at its original size.
+      img.addEventListener('click', () => openLightbox(objectUrl));
       bubble.appendChild(img);
     }
     // No download link: files are view-only. A non-anchor label keeps the name
@@ -2145,13 +2151,14 @@
   function appendMessage(m) {
     if (m.kind === 'gift') appendGiftBubble(m);
     else if (m.kind === 'poll') appendPollBubble(m);
+    else if (m.kind === 'quiz') appendQuizBubble(m);
     else if (m.kind === 'narration') appendNarrationBubble(m.body, m.at);
     else if (m.kind === 'offer') appendOfferBubble(m);
     else if (m.kind === 'wasted') appendWastedSentence(m);
     else if (m.kind === 'voice') return; // legacy voice notes (feature removed)
     else appendTextBubble(m);
     // Advertisement after every 20 exchanged messages (text + gifts).
-    if (m.kind !== 'narration' && m.kind !== 'voice' && m.kind !== 'offer' && m.kind !== 'wasted' && m.kind !== 'poll') {
+    if (m.kind !== 'narration' && m.kind !== 'voice' && m.kind !== 'offer' && m.kind !== 'wasted' && m.kind !== 'poll' && m.kind !== 'quiz') {
       maybeInsertStreamAd(chatBody(), 'chat_inline', 'chat', 20);
     }
   }
@@ -2607,6 +2614,139 @@
     if (!card) return;
     card._poll = poll;
     renderPollInner(card);
+  }
+
+  /* ---------- Quizzes attempted together (in chat) ---------- */
+
+  // Picker: list the available quizzes; choosing one starts it in this chat.
+  async function openQuizPicker(toId) {
+    const { card, close } = openModal('Take a quiz together', `
+      <div class="quiz-picker"><div class="hint">Loading quizzes…</div></div>
+    `);
+    const box = card.querySelector('.quiz-picker');
+    let quizzes = [];
+    try { quizzes = (await api.get('/api/content/quizzes')).quizzes || []; }
+    catch (_e) { box.innerHTML = '<div class="hint">Could not load quizzes.</div>'; return; }
+    if (!quizzes.length) { box.innerHTML = '<div class="hint">No quizzes are available yet.</div>'; return; }
+    box.innerHTML = '<div class="pb-label">Pick a quiz — you’ll both answer it, then see how much you match.</div>';
+    quizzes.forEach((q) => {
+      const item = el(`
+        <button class="quiz-pick" type="button">
+          <span class="quiz-pick-title"></span>
+          <span class="quiz-pick-sub">${q.questionCount} question${q.questionCount === 1 ? '' : 's'}</span>
+        </button>`);
+      item.querySelector('.quiz-pick-title').textContent = q.title;
+      item.addEventListener('click', () => {
+        if (!state.socket) return;
+        item.disabled = true;
+        state.socket.emit('quiz:start', { to: toId, quizId: q.id }, (res) => {
+          if (res && res.error) { item.disabled = false; return notify(res.error); }
+          close();
+        });
+      });
+      box.appendChild(item);
+    });
+  }
+
+  // A quiz appears as a centered card in the chat (like polls).
+  function appendQuizBubble(m) {
+    const b = chatBody();
+    if (!b || !m.quiz) return;
+    const card = el('<div class="quiz-card"></div>');
+    card.dataset.quizId = m.quiz.id;
+    card._quiz = m.quiz;
+    card._at = m.at;
+    card._draft = (m.quiz.myAnswers || m.quiz.questions.map(() => -1)).slice();
+    renderQuizInner(card);
+    b.appendChild(card);
+    scrollBody();
+  }
+
+  function renderQuizInner(card) {
+    const q = card._quiz;
+    card.innerHTML = `
+      <div class="quiz-head"><span class="quiz-ico">🧩</span> <span class="quiz-title"></span></div>
+      <div class="quiz-body"></div>
+      <span class="time">${fmtTime(card._at)}</span>
+    `;
+    card.querySelector('.quiz-title').textContent = q.title;
+    const body = card.querySelector('.quiz-body');
+
+    if (q.bothDone && q.result) {
+      // ----- result: compatibility + per-question comparison -----
+      const r = q.result;
+      body.appendChild(el(`
+        <div class="quiz-result">
+          <div class="quiz-score">${r.percent}%</div>
+          <div class="quiz-score-sub">${r.matches} of ${r.total} answers matched</div>
+        </div>`));
+      q.questions.forEach((qq, i) => {
+        const pq = r.perQuestion[i];
+        const row = el(`<div class="quiz-cmp${pq.same ? ' match' : ''}"></div>`);
+        row.appendChild(el('<div class="quiz-cmp-q"></div>')).textContent = qq.prompt;
+        const you = qq.options[pq.mine] != null ? qq.options[pq.mine] : '—';
+        const them = qq.options[pq.theirs] != null ? qq.options[pq.theirs] : '—';
+        const line = el(`<div class="quiz-cmp-a"><span class="qc-you"></span><span class="qc-sep">${pq.same ? '✓' : 'vs'}</span><span class="qc-them"></span></div>`);
+        line.querySelector('.qc-you').textContent = 'You: ' + you;
+        line.querySelector('.qc-them').textContent = them + ' :Them';
+        row.appendChild(line);
+        body.appendChild(row);
+      });
+      return;
+    }
+
+    if (q.iSubmitted) {
+      // ----- answered, waiting for the other person -----
+      body.appendChild(el(
+        `<div class="quiz-wait">✓ You’re done — waiting for ${esc(peerLabel())} to finish the quiz…</div>`
+      ));
+      return;
+    }
+
+    // ----- answer form -----
+    body.appendChild(el('<div class="quiz-sub">Answer together — pick your response to each. You’ll both see how well you match once you’re both done.</div>'));
+    q.questions.forEach((qq, i) => {
+      const block = el('<div class="quiz-q"></div>');
+      block.appendChild(el('<div class="quiz-q-prompt"></div>')).textContent = (i + 1) + '. ' + qq.prompt;
+      const opts = el('<div class="quiz-q-opts"></div>');
+      qq.options.forEach((optText, oi) => {
+        const btn = el(`<button class="quiz-opt${card._draft[i] === oi ? ' sel' : ''}" type="button"></button>`);
+        btn.textContent = optText;
+        btn.addEventListener('click', () => {
+          card._draft[i] = oi;
+          opts.querySelectorAll('.quiz-opt').forEach((b, bi) => b.classList.toggle('sel', bi === oi));
+          const done = card._draft.every((a) => a >= 0);
+          const sub = card.querySelector('.quiz-submit');
+          if (sub) sub.disabled = !done;
+        });
+        opts.appendChild(btn);
+      });
+      block.appendChild(opts);
+      body.appendChild(block);
+    });
+    const allDone = card._draft.every((a) => a >= 0);
+    const submit = el(`<button class="primary quiz-submit" type="button"${allDone ? '' : ' disabled'}>Submit my answers</button>`);
+    submit.addEventListener('click', () => {
+      if (!state.socket) return;
+      if (!card._draft.every((a) => a >= 0)) return;
+      submit.disabled = true;
+      state.socket.emit('quiz:answer', { chatQuizId: q.id, answers: card._draft }, (res) => {
+        if (res && res.error) { submit.disabled = false; return notify(res.error); }
+        if (res && res.quiz) updateQuizCard(res.quiz);
+      });
+    });
+    body.appendChild(submit);
+  }
+
+  // Repaint a quiz card from a fresh payload (own submit ack or 'quiz:update').
+  function updateQuizCard(quiz) {
+    const b = chatBody();
+    if (!b || !quiz) return;
+    const card = b.querySelector(`.quiz-card[data-quiz-id="${quiz.id}"]`);
+    if (!card) return;
+    card._quiz = quiz;
+    if (!card._draft) card._draft = (quiz.myAnswers || quiz.questions.map(() => -1)).slice();
+    renderQuizInner(card);
   }
 
   // Paint the intoxication meter for the current viewer from state.wasted.
@@ -3725,6 +3865,7 @@
 
     // A poll's tallies changed (someone voted) — repaint the card in place.
     s.on('poll:update', (e) => { if (e && e.poll) updatePollCard(e.poll); });
+    s.on('quiz:update', (e) => { if (e && e.quiz) updateQuizCard(e.quiz); });
 
     // A group I'm in changed (created / invited / joined / left).
     s.on('group:changed', ({ groupId }) => {
@@ -4022,17 +4163,29 @@
   // on your own photos (you can still read reactions and delete comments).
   // `opts.onUpdate({ reactionCount, commentCount, myReaction })` lets the
   // originating gallery cell keep its little activity badges in sync.
-  function openPhotoViewer(photo, opts) {
+  function openPhotoViewer(startPhoto, opts) {
     opts = opts || {};
     const isOwner = !!opts.isOwner;
     const onUpdate = typeof opts.onUpdate === 'function' ? opts.onUpdate : function () {};
 
+    // The viewer doubles as a slider: when `opts.items` (the full gallery) is
+    // supplied it can page between photos with the arrows, keyboard or a swipe,
+    // reloading each photo's reactions + comments. `photo` is reassigned on
+    // navigation, so the react/comment closures below read it at call time.
+    let items = (opts.items && opts.items.length) ? opts.items.filter(Boolean) : [startPhoto];
+    let idx = items.indexOf(startPhoto);
+    if (idx < 0) idx = 0;
+    let photo = items[idx];
+    const multi = items.length > 1;
+
     const box = el(`
-      <div class="lightbox photo-viewer">
+      <div class="lightbox photo-viewer${multi ? ' pv-multi' : ''}">
         <button class="lb-close" title="Close">✕</button>
+        <button class="pv-nav pv-prev" title="Previous (←)" aria-label="Previous">‹</button>
         <div class="pv-shell">
-          <div class="pv-media"><img src="${esc(photo.url)}" alt="" /></div>
+          <div class="pv-media"><img alt="" /></div>
           <div class="pv-panel">
+            <div class="pv-count hint"></div>
             <div class="pv-reactions" id="pvReactions"></div>
             <div class="pv-comments-wrap">
               <div class="comments" id="pvPhotoComments"><div class="hint">Loading…</div></div>
@@ -4040,11 +4193,18 @@
             <div id="pvPhotoForm"></div>
           </div>
         </div>
+        <button class="pv-nav pv-next" title="Next (→)" aria-label="Next">›</button>
       </div>
     `);
+    const mediaImg = box.querySelector('.pv-media img');
+    const countEl = box.querySelector('.pv-count');
 
     const close = () => { box.remove(); document.removeEventListener('keydown', onKey); };
-    function onKey(e) { if (e.key === 'Escape') close(); }
+    function onKey(e) {
+      if (e.key === 'Escape') close();
+      else if (multi && e.key === 'ArrowRight') go(1);
+      else if (multi && e.key === 'ArrowLeft') go(-1);
+    }
     box.addEventListener('click', (e) => {
       if (e.target === box || e.target.classList.contains('lb-close') || e.target.classList.contains('pv-shell')) close();
     });
@@ -4053,9 +4213,8 @@
 
     /* ----- reactions ----- */
     const reactBar = box.querySelector('#pvReactions');
-    let myReaction = photo.myReaction || null;
+    let myReaction = null;
     let counts = {}; // emoji -> count
-    (photo.reactions || []).forEach((r) => { counts[r.emoji] = r.count; });
 
     function totalReactions() {
       return Object.values(counts).reduce((a, b) => a + b, 0);
@@ -4077,7 +4236,7 @@
         }
         reactBar.appendChild(btn);
       });
-      onUpdate({ reactionCount: totalReactions(), commentCount: commentsBox.querySelectorAll('.comment').length, myReaction });
+      onUpdate({ reactionCount: totalReactions(), commentCount: commentsBox.querySelectorAll('.comment').length, myReaction }, photo);
     }
     async function react(emoji) {
       try {
@@ -4216,10 +4375,48 @@
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
     }
 
-    // Load the authoritative detail (comments + reaction counts) up front.
-    (async () => {
+    /* ----- slider navigation ----- */
+    function go(delta) {
+      if (!multi) return;
+      idx = (idx + delta + items.length) % items.length;
+      photo = items[idx];
+      loadPhoto();
+    }
+    if (multi) {
+      box.querySelector('.pv-prev').addEventListener('click', () => go(-1));
+      box.querySelector('.pv-next').addEventListener('click', () => go(1));
+      // Swipe on the image to page between photos.
+      let sx = null;
+      const media = box.querySelector('.pv-media');
+      media.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; }, { passive: true });
+      media.addEventListener('touchend', (e) => {
+        if (sx == null) return;
+        const dx = e.changedTouches[0].clientX - sx;
+        if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1);
+        sx = null;
+      });
+    }
+
+    // Paint the currently-selected photo, then load its authoritative detail
+    // (comments + reaction counts) from the server.
+    function loadPhoto() {
+      mediaImg.src = photo.url;
+      countEl.textContent = multi ? `${idx + 1} / ${items.length}` : '';
+      countEl.style.display = multi ? '' : 'none';
+      counts = {};
+      (photo.reactions || []).forEach((r) => { counts[r.emoji] = r.count; });
+      myReaction = photo.myReaction || null;
+      const ci = box.querySelector('#pcInput');
+      if (ci) ci.value = '';
+      commentsBox.innerHTML = '<div class="hint">Loading…</div>';
+      paintReactions();
+      loadDetail();
+    }
+    async function loadDetail() {
+      const target = photo; // guard against navigating away mid-request
       try {
-        const detail = await api.get('/api/social/photo/' + photo.id);
+        const detail = await api.get('/api/social/photo/' + target.id);
+        if (photo !== target) return;
         counts = {};
         detail.reactions.reactions.forEach((r) => { counts[r.emoji] = r.count; });
         myReaction = detail.reactions.mine;
@@ -4228,11 +4425,14 @@
         else detail.comments.forEach((c) => commentsBox.appendChild(renderPhotoComment(c)));
         paintReactions();
       } catch (e) {
+        if (photo !== target) return;
         commentsBox.innerHTML = '';
         commentsBox.appendChild(el(`<div class="hint">${esc(e.message)}</div>`));
         paintReactions();
       }
-    })();
+    }
+
+    loadPhoto();
   }
 
   // Render the GIF "feelings" collection into an already-built profile view.
@@ -4508,10 +4708,15 @@
       const n = gal.querySelectorAll('.cell').length;
       galCount.textContent = isMe ? `(${n}/${MAX_GALLERY})` : `(${n})`;
     };
+    // The photos currently in the grid, in DOM order — the slider pages through
+    // exactly these. Each cell keeps a reference to its photo + meta repainter.
+    const galleryPhotos = () => Array.from(gal.querySelectorAll('.cell')).map((c) => c._photo).filter(Boolean);
+    const metaUpdaters = new Map(); // photoId -> (state) => repaint that cell's badges
     const makeCell = (ph) => {
       ph.reactionCount = ph.reactionCount || 0;
       ph.commentCount = ph.commentCount || 0;
       const cell = el(`<div class="cell"><img src="${ph.url}" loading="lazy" /><span class="cell-zoom">⤢</span><span class="cell-meta"></span></div>`);
+      cell._photo = ph;
       const meta = cell.querySelector('.cell-meta');
       const paintMeta = () => {
         const bits = [];
@@ -4521,14 +4726,19 @@
         meta.style.display = bits.length ? '' : 'none';
       };
       paintMeta();
+      metaUpdaters.set(ph.id, (s) => {
+        ph.reactionCount = s.reactionCount;
+        ph.commentCount = s.commentCount;
+        ph.myReaction = s.myReaction;
+        paintMeta();
+      });
       const open = () => openPhotoViewer(ph, {
         isOwner: isMe,
         ownerUsername: profile.username,
-        onUpdate: (s) => {
-          ph.reactionCount = s.reactionCount;
-          ph.commentCount = s.commentCount;
-          ph.myReaction = s.myReaction;
-          paintMeta();
+        items: galleryPhotos(),
+        onUpdate: (s, forPhoto) => {
+          const fn = metaUpdaters.get((forPhoto || ph).id);
+          if (fn) fn(s);
         },
       });
       cell.querySelector('img').addEventListener('click', open);
@@ -4538,7 +4748,7 @@
         del.addEventListener('click', async (ev) => {
           ev.stopPropagation();
           if (!confirm('Delete this photo?')) return;
-          try { await api.del('/api/profile/gallery/' + ph.id); cell.remove(); updateCount(); refreshAddBtn(); syncGalSlideBtn(); }
+          try { await api.del('/api/profile/gallery/' + ph.id); metaUpdaters.delete(ph.id); cell.remove(); updateCount(); refreshAddBtn(); syncGalSlideBtn(); }
           catch (e) { alert(e.message); }
         });
         cell.appendChild(del);
@@ -5367,7 +5577,9 @@
     catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
     if (!polls.length) { body.innerHTML = '<div class="empty-main">No polls yet.</div>'; return; }
     body.innerHTML = '';
-    polls.forEach((p) => body.appendChild(pollCard(p)));
+    const grid = el('<div class="card-grid polls-grid"></div>');
+    polls.forEach((p) => grid.appendChild(pollCard(p)));
+    body.appendChild(grid);
     decorateSectionWithAds(main);
   }
 

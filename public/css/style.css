@@ -204,7 +204,7 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .bubble.me { align-self: flex-end; background: var(--grad); color: #fff; border-bottom-right-radius: 4px; box-shadow: var(--glow); }
 .bubble .time { display: block; font-size: 11px; opacity: .65; margin-top: 4px; }
 .bubble .file { display: flex; align-items: center; gap: 8px; }
-.bubble img.shared { max-width: 240px; max-height: 240px; border-radius: 10px; display: block; margin-bottom: 4px; }
+.bubble img.shared { max-width: 240px; max-height: 240px; border-radius: 10px; display: block; margin-bottom: 4px; cursor: zoom-in; }
 .ephemeral-note { font-size: 11px; opacity: .7; font-style: italic; }
 .typing { align-self: flex-start; color: var(--muted); font-size: 13px; padding: 4px 8px; }
 
@@ -626,11 +626,27 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .photo-viewer .pv-comments-wrap { flex: 1; min-height: 0; overflow-y: auto; }
 .photo-viewer .pv-comments-wrap .comments { padding-right: 2px; }
 .photo-viewer .comment-form { margin-bottom: 0; margin-top: 4px; }
+.photo-viewer .pv-count { font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--muted); }
+/* Slider arrows — only shown when the viewer is paging a multi-photo gallery. */
+.photo-viewer .pv-nav {
+  position: fixed; top: 50%; transform: translateY(-50%); z-index: 2;
+  display: none; align-items: center; justify-content: center;
+  width: 52px; height: 52px; border-radius: 999px; border: 0;
+  background: rgba(255,255,255,.14); color: #fff; font-size: 30px; line-height: 1;
+  cursor: pointer; transition: background .15s ease;
+}
+.photo-viewer.pv-multi .pv-nav { display: flex; }
+.photo-viewer .pv-nav:hover { background: rgba(255,255,255,.26); }
+.photo-viewer .pv-prev { left: 18px; }
+.photo-viewer .pv-next { right: 18px; }
 
 @media (max-width: 760px) {
   .photo-viewer .pv-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); width: 96vw; }
   .photo-viewer .pv-media { max-height: 42vh; }
   .photo-viewer .pv-media img { max-height: 42vh; }
+  .photo-viewer .pv-nav { width: 42px; height: 42px; font-size: 24px; }
+  .photo-viewer .pv-prev { left: 6px; }
+  .photo-viewer .pv-next { right: 6px; }
 }
 
 /* ---------- GIF "feelings" collection ---------- */
@@ -900,6 +916,10 @@ table.users tbody tr:hover { background: var(--bg-3); }
 
 /* ---------- Polls ---------- */
 .poll-card h3 { margin-bottom: 12px; }
+/* In the Polls section the cards are tiles laid out in a responsive grid, so
+   drop the in-chat poll card's centered fixed width and let the grid size them. */
+.polls-grid { align-items: start; }
+.polls-grid .poll-card { width: auto; max-width: none; align-self: stretch; margin: 0; }
 .poll-opts { display: flex; flex-direction: column; gap: 8px; }
 .poll-opt { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; background: var(--bg-3); }
 .poll-opt.mine { border-color: var(--accent); }
