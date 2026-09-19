@@ -5413,18 +5413,24 @@
     body.innerHTML = '';
     const grid = el('<div class="card-grid"></div>');
     quizzes.forEach((q) => {
+      // Clicking a quiz opens its own page in a new tab, where a registered user
+      // takes it (a logged-out visitor is prompted to register).
+      const url = '/quizzes/' + q.id;
       const card = el(`
-        <div class="tile">
+        <div class="tile quiz-tile-link" role="link" tabindex="0" title="Open this quiz in a new tab">
           <h3>${esc(q.title)}</h3>
           <p class="rich">${esc(q.description || '')}</p>
           <div class="tile-meta">
             <span class="pill">${q.questionCount} question${q.questionCount === 1 ? '' : 's'}</span>
             <span class="pill">${q.matches} match${q.matches === 1 ? '' : 'es'}</span>
           </div>
-          <button class="primary small" data-take="${q.id}">Start & share →</button>
+          <button class="primary small" data-take="${q.id}">Attempt &amp; share ↗</button>
         </div>
       `);
-      card.querySelector('[data-take]').addEventListener('click', () => openQuiz(q.id));
+      const open = () => window.open(url, '_blank', 'noopener');
+      card.querySelector('[data-take]').addEventListener('click', (e) => { e.stopPropagation(); open(); });
+      card.addEventListener('click', open);
+      card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
       grid.appendChild(card);
     });
     body.appendChild(grid);
@@ -5584,33 +5590,32 @@
   }
 
   function pollCard(p) {
-    const card = el(`<div class="tile poll-card"><h3>${esc(p.question)}</h3>${p.closed ? '<span class="pill">Closed</span>' : ''}<div class="poll-opts"></div></div>`);
+    // Clicking a poll opens its own page in a new tab, where a registered user
+    // votes (a logged-out visitor is prompted to register). The card here shows
+    // a read-only preview of the current tallies.
+    const url = '/polls/' + p.id;
+    const card = el(`<div class="tile poll-card poll-card-link" role="link" tabindex="0" title="Open this poll in a new tab">
+      <h3>${esc(p.question)}</h3>${p.closed ? '<span class="pill">Closed</span>' : ''}
+      <div class="poll-opts"></div>
+      <div class="poll-open">${p.closed ? 'See results ↗' : 'Open &amp; vote ↗'}</div>
+    </div>`);
     const optsBox = card.querySelector('.poll-opts');
-    const render = (poll) => {
-      optsBox.innerHTML = '';
-      poll.options.forEach((opt, oi) => {
-        const count = poll.counts[oi] || 0;
-        const pct = poll.total ? Math.round((count / poll.total) * 100) : 0;
-        const mine = poll.myVote === oi;
-        const row = el(`
-          <div class="poll-opt${mine ? ' mine' : ''}" data-i="${oi}">
-            <div class="poll-bar" style="width:${pct}%"></div>
-            <span class="poll-label">${esc(opt)}${mine ? ' ✓' : ''}</span>
-            <span class="poll-pct">${pct}% · ${count}</span>
-          </div>
-        `);
-        if (!poll.closed) {
-          row.style.cursor = 'pointer';
-          row.addEventListener('click', async () => {
-            try { const out = await api.post('/api/content/polls/' + poll.id + '/vote', { option: oi }); render(out.poll); }
-            catch (e) { alert(e.message); }
-          });
-        }
-        optsBox.appendChild(row);
-      });
-      optsBox.appendChild(el(`<div class="hint" style="margin-top:8px">${poll.total} vote${poll.total === 1 ? '' : 's'}</div>`));
-    };
-    render(p);
+    p.options.forEach((opt, oi) => {
+      const count = p.counts[oi] || 0;
+      const pct = p.total ? Math.round((count / p.total) * 100) : 0;
+      const mine = p.myVote === oi;
+      optsBox.appendChild(el(`
+        <div class="poll-opt${mine ? ' mine' : ''}" data-i="${oi}">
+          <div class="poll-bar" style="width:${pct}%"></div>
+          <span class="poll-label">${esc(opt)}${mine ? ' ✓' : ''}</span>
+          <span class="poll-pct">${pct}% · ${count}</span>
+        </div>
+      `));
+    });
+    optsBox.appendChild(el(`<div class="hint" style="margin-top:8px">${p.total} vote${p.total === 1 ? '' : 's'}</div>`));
+    const open = () => window.open(url, '_blank', 'noopener');
+    card.addEventListener('click', open);
+    card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
     return card;
   }
 

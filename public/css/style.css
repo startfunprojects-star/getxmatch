@@ -920,6 +920,10 @@ table.users tbody tr:hover { background: var(--bg-3); }
    drop the in-chat poll card's centered fixed width and let the grid size them. */
 .polls-grid { align-items: start; }
 .polls-grid .poll-card { width: auto; max-width: none; align-self: stretch; margin: 0; }
+/* Poll/quiz cards in the dashboard open their own page in a new tab. */
+.poll-card-link, .quiz-tile-link { cursor: pointer; }
+.poll-card-link .poll-opt { cursor: inherit; }
+.poll-open { margin-top: 10px; font-weight: 700; color: var(--accent); font-size: 13px; }
 .poll-opts { display: flex; flex-direction: column; gap: 8px; }
 .poll-opt { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; background: var(--bg-3); }
 .poll-opt.mine { border-color: var(--accent); }

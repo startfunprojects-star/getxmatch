@@ -17,6 +17,8 @@ const seo = require('../seo');
 const settings = require('../settings');
 const ads = require('../ads');
 const hw = require('../highway');
+const ogImage = require('../ogImage');
+const { optionalAuth } = require('../auth');
 
 const router = express.Router();
 
@@ -162,6 +164,66 @@ function canonicalCheck(base, req, id, slugSource) {
   return { canonical };
 }
 
+// Interactive attempt UI shared by the public poll + quiz pages. The behaviour
+// lives in /js/attempt.js (an external file, because the pages' CSP forbids
+// inline scripts); the styles are inline (inline styles are allowed).
+const ATTEMPT_SCRIPT = '<script src="/js/attempt.js" defer></script>';
+const ATTEMPT_STYLE = `<style>
+.gx-attempt { margin: 18px 0 8px; }
+.gx-opts { display: flex; flex-direction: column; gap: 10px; }
+.gx-opt { position: relative; overflow: hidden; display: block; width: 100%; text-align: left;
+  border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; cursor: pointer;
+  background: var(--bg2); color: var(--text); font: inherit; transition: border-color .15s ease, transform .05s ease; }
+.gx-opt:hover:not(:disabled) { border-color: var(--accent); }
+.gx-opt:active:not(:disabled) { transform: scale(.995); }
+.gx-opt.mine { border-color: var(--accent); }
+.gx-opt:disabled { cursor: default; opacity: .9; }
+.gx-opt-bar { position: absolute; inset: 0 auto 0 0; width: 0; background: color-mix(in srgb, var(--accent) 20%, transparent); transition: width .3s ease; }
+.gx-opt-main { position: relative; z-index: 1; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.gx-opt-label { font-weight: 600; overflow-wrap: anywhere; }
+.gx-opt-meta { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.gx-opt.mine .gx-opt-label::after { content: ' ✓'; color: var(--accent); }
+.gx-hint { color: var(--muted); font-size: 14px; margin: 12px 0 0; }
+.gx-note { margin: 16px 0 0; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--text); }
+.gx-note .cta { margin: 10px 0 0; }
+.gx-q { border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; margin: 0 0 14px; background: var(--bg2); }
+.gx-q legend { font-weight: 700; padding: 0 6px; }
+.gx-qopt { display: flex; align-items: center; gap: 10px; padding: 9px 8px; border-radius: 8px; cursor: pointer; color: var(--text); }
+.gx-qopt:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.gx-qopt input { accent-color: var(--accent); width: auto; }
+.gx-submit { margin-top: 6px; }
+.gx-result { margin-top: 16px; }
+.gx-share { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.gx-share input { flex: 1; min-width: 220px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg2); color: var(--text); }
+</style>`;
+
+/* ===========================================================================
+   Dynamic social "feature" images (Open Graph). /og/poll/:id.png and
+   /og/quiz/:id.png render the poll question / quiz title onto a branded card so
+   a shared link unfurls with the heading as its preview image.
+=========================================================================== */
+
+function sendOg(res, png) {
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'public, max-age=86400'); // 1 day
+  res.send(png);
+}
+
+router.get('/og/poll/:id.png', (req, res, next) => {
+  const row = db.prepare('SELECT id, question, updated_at, created_at FROM polls WHERE id = ?').get(req.params.id);
+  if (!row) return next();
+  const key = `poll:${row.id}:${row.updated_at || row.created_at || ''}`;
+  sendOg(res, ogImage.renderCard('Poll', row.question, key));
+});
+
+router.get('/og/quiz/:id.png', (req, res, next) => {
+  const row = db.prepare('SELECT id, title, updated_at, created_at FROM quizzes WHERE id = ?').get(req.params.id);
+  if (!row) return next();
+  const key = `quiz:${row.id}:${row.updated_at || row.created_at || ''}`;
+  sendOg(res, ogImage.renderCard('Quiz', row.title, key));
+});
+
 /* ===========================================================================
    Quizzes
 =========================================================================== */
@@ -204,24 +266,32 @@ ${cards}`;
   sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
 
-router.get('/quizzes/:id/:slug?', (req, res, next) => {
+router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
   const row = db.prepare('SELECT id, title, description, questions, seo, created_at, updated_at FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return notFound(res, req.path.split('/')[1].replace(/s$/,''));
   const s = parseJson(row.seo, {});
   const chk = canonicalCheck('quizzes', req, row.id, s.slug || row.title);
   if (chk.redirect) return res.redirect(301, chk.redirect);
 
+  const loggedIn = !!req.user;
   const questions = parseJson(row.questions, []);
-  const qHtml = questions.map((q, i) => `
-    <div class="q">
-      <p class="prompt">${i + 1}. ${esc(q.prompt)}</p>
-      <ul>${(Array.isArray(q.options) ? q.options : []).map((o) => `<li>${esc(o)}</li>`).join('')}</ul>
-    </div>`).join('');
+  const qHtml = questions.map((q, i) => {
+    const opts = Array.isArray(q.options) ? q.options : [];
+    const optHtml = opts.map((o, oi) =>
+      `<label class="gx-qopt"><input type="radio" name="q${i}" value="${oi}" /><span>${esc(o)}</span></label>`
+    ).join('');
+    return `
+    <fieldset class="gx-q" data-q="${i}">
+      <legend>${i + 1}. ${esc(q.prompt)}</legend>
+      ${optHtml}
+    </fieldset>`;
+  }).join('');
 
   const seoDescriptor = resolveSeo(s, {
     canonicalPath: chk.canonical,
     title: row.title,
     description: row.description || `Take the "${row.title}" compatibility quiz on ${SITE_NAME}.`,
+    image: `/og/quiz/${row.id}.png`,
     type: 'article',
   });
   const jsonLd = [
@@ -237,15 +307,28 @@ router.get('/quizzes/:id/:slug?', (req, res, next) => {
       })),
     },
   ];
+  const hasQuestions = questions.length > 0;
+  const hint = !hasQuestions ? ''
+    : (loggedIn
+        ? 'Answer every question, then submit to get a private link to compare with someone.'
+        : 'Answer every question — you’ll be asked to register when you submit.');
   const bodyHtml = `
 ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Quizzes', path: '/quizzes' }, { name: row.title, path: chk.canonical }])}
 <h1>${esc(row.title)}</h1>
 ${row.description ? `<p class="lede">${esc(row.description)}</p>` : ''}
-<a class="cta" href="/">Take this quiz in the app →</a>
-<h2>Questions</h2>
-${qHtml || '<p class="empty">This quiz has no questions yet.</p>'}
+${ATTEMPT_STYLE}
+${hasQuestions ? `
+<div id="gxAttempt" class="gx-attempt" data-kind="quiz" data-id="${row.id}" data-logged="${loggedIn ? 1 : 0}">
+  <form id="gxQuizForm">
+    ${qHtml}
+    <button type="submit" class="cta gx-submit">Submit my answers</button>
+  </form>
+  <p class="gx-hint">${hint}</p>
+  <div class="gx-result" hidden></div>
+  <div class="gx-note" hidden></div>
+</div>` : '<p class="empty">This quiz has no questions yet.</p>'}
 ${ads.slotHtml('content_inline')}
-<a class="cta" href="/">Find your match — open getxmatch →</a>`;
+${ATTEMPT_SCRIPT}`;
   sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
 
@@ -297,7 +380,7 @@ ${cards}`;
   sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
 
-router.get('/polls/:id/:slug?', (req, res, next) => {
+router.get('/polls/:id/:slug?', optionalAuth, (req, res, next) => {
   const row = db.prepare('SELECT id, question, options, closed, seo, created_at FROM polls WHERE id = ?').get(req.params.id);
   if (!row) return notFound(res, req.path.split('/')[1].replace(/s$/,''));
   const s = parseJson(row.seo, {});
@@ -306,20 +389,33 @@ router.get('/polls/:id/:slug?', (req, res, next) => {
 
   const options = parseJson(row.options, []);
   const { counts, total } = pollTally(row.id, options);
+
+  const loggedIn = !!req.user;
+  let myVote = null;
+  if (loggedIn) {
+    const v = db.prepare('SELECT option_index FROM poll_votes WHERE poll_id = ? AND user_id = ?').get(row.id, req.user.id);
+    if (v) myVote = v.option_index;
+  }
+
   const optHtml = options.map((o, i) => {
     const n = counts[i] || 0;
     const pct = total ? Math.round((n / total) * 100) : 0;
     return `
-      <div class="opt-wrap">
-        <div class="opt"><span>${esc(o)}</span><span class="meta">${pct}% · ${n} vote${n === 1 ? '' : 's'}</span></div>
-        <div class="bar" style="width:${pct}%"></div>
-      </div>`;
+      <button type="button" class="gx-opt${myVote === i ? ' mine' : ''}" data-i="${i}"${row.closed ? ' disabled' : ''}>
+        <span class="gx-opt-bar" style="width:${pct}%"></span>
+        <span class="gx-opt-main"><span class="gx-opt-label">${esc(o)}</span><span class="gx-opt-meta">${pct}% · ${n}</span></span>
+      </button>`;
   }).join('');
+
+  const hint = row.closed
+    ? 'This poll is closed.'
+    : (loggedIn ? 'Tap an option to cast or change your vote.' : 'Tap an option — you’ll be asked to register to vote.');
 
   const seoDescriptor = resolveSeo(s, {
     canonicalPath: chk.canonical,
     title: row.question,
     description: row.question ? `Vote: ${summarize(row.question, 150)} — join the poll on ${SITE_NAME}.` : undefined,
+    image: `/og/poll/${row.id}.png`,
     type: 'article',
   });
   const jsonLd = [
@@ -333,10 +429,15 @@ router.get('/polls/:id/:slug?', (req, res, next) => {
   const bodyHtml = `
 ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Polls', path: '/polls' }, { name: row.question, path: chk.canonical }])}
 <h1>${esc(row.question)}</h1>
-<p class="lede">${total} vote${total === 1 ? '' : 's'} so far${row.closed ? ' · this poll is closed' : ''}.</p>
-${optHtml}
+<p class="lede gx-total">${total} vote${total === 1 ? '' : 's'} so far${row.closed ? ' · this poll is closed' : ''}.</p>
+${ATTEMPT_STYLE}
+<div id="gxAttempt" class="gx-attempt" data-kind="poll" data-id="${row.id}" data-logged="${loggedIn ? 1 : 0}"${row.closed ? ' data-closed="1"' : ''}>
+  <div class="gx-opts">${optHtml}</div>
+  <p class="gx-hint">${hint}</p>
+  <div class="gx-note" hidden></div>
+</div>
 ${ads.slotHtml('content_inline')}
-<a class="cta" href="/">${row.closed ? 'See more polls in the app →' : 'Cast your vote in the app →'}</a>`;
+${ATTEMPT_SCRIPT}`;
   sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
 
