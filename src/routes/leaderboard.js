@@ -25,7 +25,10 @@ router.get('/', requireAuth, (req, res) => {
               (SELECT COUNT(*) FROM friendships f
                  WHERE (f.requester_id = u.id OR f.addressee_id = u.id)
                    AND f.status = 'accepted')                                  AS friends,
-              (SELECT COUNT(*) FROM quiz_attempts q WHERE q.user_id = u.id)    AS quizzes
+              (SELECT COUNT(*) FROM quiz_attempts q WHERE q.user_id = u.id)    AS quizzes,
+              (SELECT COUNT(*) FROM highway_likes hl
+                 JOIN highway_posts hp ON hp.id = hl.post_id
+                WHERE hp.user_id = u.id)                                       AS likes
        FROM users u
        JOIN profiles p ON p.user_id = u.id`
     )
@@ -33,8 +36,8 @@ router.get('/', requireAuth, (req, res) => {
 
   const scored = rows.map((r) => {
     const avg = r.rating_avg || 0;
-    // Weighted score: rating quality × volume, plus social + quiz activity.
-    const score = Math.round(avg * 20 + r.rating_count * 5 + r.friends * 8 + r.quizzes * 3);
+    // Weighted score: rating quality × volume, plus social + quiz + likes activity.
+    const score = Math.round(avg * 20 + r.rating_count * 5 + r.friends * 8 + r.quizzes * 3 + r.likes * 4);
     return {
       id: r.id,
       username: r.username,
@@ -45,6 +48,7 @@ router.get('/', requireAuth, (req, res) => {
       ratingCount: r.rating_count,
       friends: r.friends,
       quizzes: r.quizzes,
+      likes: r.likes,
       score,
       isMe: r.id === me,
       friendState: friendState(r.id, me),

@@ -283,6 +283,33 @@ function broadcastHighway(payload) {
   if (ioRef) ioRef.emit('highway:new', payload);
 }
 
+// Someone liked/commented on a Highway post that was shared from a conversation.
+// Surface it inside THAT chat for both participants as a persistent system card
+// (kind='hwevent'), and push it live. `event` = { postId, image, origin:{a,b},
+// action:'like'|'comment', byId, byName, text? }. No-op if the post isn't linked
+// to a conversation.
+function notifyHighwayEvent(event) {
+  const o = event && event.origin;
+  if (!o || !o.a || !o.b) return;
+  const now = Date.now();
+  const body = JSON.stringify({
+    action: event.action,
+    postId: event.postId,
+    image: event.image || null,
+    byId: event.byId,
+    byName: event.byName || 'Someone',
+    text: event.text || '',
+  });
+  const info = db
+    .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'hwevent', ?, NULL)")
+    .run(o.a, o.b, body, now);
+  const msg = { id: info.lastInsertRowid, from: o.a, to: o.b, body, kind: 'hwevent', at: now };
+  if (ioRef) {
+    ioRef.to(`user:${o.a}`).emit('chat:message', { ...msg, mine: true });
+    ioRef.to(`user:${o.b}`).emit('chat:message', { ...msg, mine: false });
+  }
+}
+
 // Tell the given users that a group they're in changed (created, invited,
 // joined, left) so their UI can refetch. Used by the groups HTTP routes.
 function notifyGroup(userIds, groupId) {
@@ -1176,17 +1203,16 @@ function initSocket(io) {
       }
     });
 
-    // A player typed inside a stage's speech/thought bubble. The value is shared:
-    // persist it on the session and mirror it live to both partners so the card
-    // stays in sync. Only the two players of an active session may write.
+    // A player edited a stage's speech/thought bubble — typed text and/or dragged
+    // or rotated it. Whatever fields are present are shared: persisted on the
+    // session and mirrored live to both partners so the card stays in sync. Only
+    // the two players of an active session may write.
     socket.on('roleplay:caption', (payload, ack) => {
       try {
         const sessionId = parseInt(payload && payload.sessionId, 10);
         const stage = parseInt(payload && payload.stage, 10);
         const index = parseInt(payload && payload.index, 10);
-        let text = payload && typeof payload.text === 'string' ? payload.text : '';
         if (!sessionId || !(stage >= 0) || !(index >= 0)) return ack && ack({ error: 'Invalid caption.' });
-        text = text.slice(0, 500);
 
         const session = roleplay.sessionForParticipant(sessionId, me.id);
         if (!session) return ack && ack({ error: 'Not your roleplay.' });
@@ -1196,8 +1222,17 @@ function initSocket(io) {
         const caps = stageRow ? roleplay.parseCaptions(stageRow.captions) : [];
         if (index >= caps.length) return ack && ack({ error: 'Unknown caption.' });
 
-        roleplay.setCaptionText(sessionId, stage, index, text, me.id);
-        const out = { sessionId, stage, index, text, by: me.id };
+        const clampPct = (n) => Math.min(100, Math.max(0, n));
+        const clampRot = (n) => { let v = ((n % 360) + 360) % 360; return v > 180 ? v - 360 : v; };
+        const fields = {};
+        const out = { sessionId, stage, index, by: me.id };
+        if (typeof payload.text === 'string') { fields.text = payload.text.slice(0, 500); out.text = fields.text; }
+        if (payload.x !== undefined && Number.isFinite(+payload.x)) { fields.x = clampPct(+payload.x); out.x = fields.x; }
+        if (payload.y !== undefined && Number.isFinite(+payload.y)) { fields.y = clampPct(+payload.y); out.y = fields.y; }
+        if (payload.rot !== undefined && Number.isFinite(+payload.rot)) { fields.rot = clampRot(+payload.rot); out.rot = fields.rot; }
+        if (!Object.keys(fields).length) return ack && ack({ error: 'Nothing to update.' });
+
+        roleplay.setCaptionState(sessionId, stage, index, fields, me.id);
         io.to(`user:${session.user_lo}`).emit('roleplay:caption', out);
         io.to(`user:${session.user_hi}`).emit('roleplay:caption', out);
         ack && ack({ ok: true });
@@ -1402,4 +1437,4 @@ function initSocket(io) {
   });
 }
 
-module.exports = { initSocket, isOnline, broadcastActivity, broadcastHighway, notifyGroup, notifyUser, broadcastLeaderboardChange };
+module.exports = { initSocket, isOnline, broadcastActivity, broadcastHighway, notifyHighwayEvent, notifyGroup, notifyUser, broadcastLeaderboardChange };

@@ -2140,6 +2140,12 @@
     // and size without a browser "Save as…" affordance.
     bubble.appendChild(el(`<span class="file">📄 ${esc(meta.name)} (${fmtSize(meta.size)})</span>`));
     bubble.appendChild(el(`<span class="ephemeral-note">View-only · stays until the chat is closed · not stored on the server</span>`));
+    // Share an image/gif from this chat to the Highway (1-on-1 chats only).
+    if (isImg && state.peer) {
+      const share = el('<button class="ghost small hw-share-btn" type="button">🌊 Share to Highway</button>');
+      share.addEventListener('click', () => shareChatImageToHighway(share, objectUrl, meta));
+      bubble.appendChild(share);
+    }
     bubble.appendChild(el(`<span class="time">${fmtTime(meta.at || Date.now())}</span>`));
     attachFileActions(bubble, meta, mine);
     mountBubble(bubble, { mine: mine, from: meta.from });
@@ -2147,6 +2153,28 @@
     // the bubble after the conversation's TTL (both sides run the same timer).
     if (state.disappearing > 0) scheduleExpiry(bubble, Date.now() + state.disappearing * 1000);
     scrollBody();
+  }
+
+  // Upload a chat image/gif (held only in this browser) to the Highway, linked
+  // back to this conversation so its likes/comments surface here.
+  async function shareChatImageToHighway(btn, objectUrl, meta) {
+    if (!state.peer) return;
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Sharing…';
+    try {
+      const blob = await (await fetch(objectUrl)).blob();
+      const fd = new FormData();
+      fd.append('image', blob, meta.name || 'image');
+      fd.append('originPeer', String(state.peer.id));
+      await api.postForm('/api/highway', fd);
+      btn.textContent = '✓ Shared to Highway';
+      notify('Shared to the Highway.');
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = original;
+      notify((e && e.message) || 'Could not share.');
+    }
   }
 
   // Route a message object (from history or live) to the right bubble.
@@ -2157,10 +2185,11 @@
     else if (m.kind === 'narration') appendNarrationBubble(m.body, m.at);
     else if (m.kind === 'offer') appendOfferBubble(m);
     else if (m.kind === 'wasted') appendWastedSentence(m);
+    else if (m.kind === 'hwevent') appendHighwayEventBubble(m);
     else if (m.kind === 'voice') return; // legacy voice notes (feature removed)
     else appendTextBubble(m);
     // Advertisement after every 20 exchanged messages (text + gifts).
-    if (m.kind !== 'narration' && m.kind !== 'voice' && m.kind !== 'offer' && m.kind !== 'wasted' && m.kind !== 'poll' && m.kind !== 'quiz') {
+    if (m.kind !== 'narration' && m.kind !== 'voice' && m.kind !== 'offer' && m.kind !== 'wasted' && m.kind !== 'poll' && m.kind !== 'quiz' && m.kind !== 'hwevent') {
       maybeInsertStreamAd(chatBody(), 'chat_inline', 'chat', 20);
     }
   }
@@ -2186,6 +2215,7 @@
               : '<img class="narration-img" loading="lazy" />')
           : ''}
         <div class="narration-text"></div>
+        <div class="narration-foot"></div>
         <div class="time">${fmtTime(at)}</div>
       </div>
     `);
@@ -2200,6 +2230,53 @@
       if (!hasCaptions) img.addEventListener('click', () => openLightbox(p.image));
     }
     if (hasCaptions) renderStageCaptions(card, p, captions);
+
+    // Share the captioned image/gif to the Highway (participants only).
+    if (p.image && p.sid && !p.final) {
+      const foot = card.querySelector('.narration-foot');
+      const share = el('<button class="ghost small rp-share-btn" type="button">🌊 Share to Highway</button>');
+      share.addEventListener('click', () => shareRoleplayCaption(share, p.sid, p.stage || 0));
+      foot.appendChild(share);
+    }
+    b.appendChild(card);
+    scrollBody();
+  }
+
+  // Post the current captioned stage image to the Highway. The server bakes in
+  // the live caption text/positions and links the post back to this chat.
+  function shareRoleplayCaption(btn, sid, stage) {
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Sharing…';
+    api.post('/api/roleplay/share', { sessionId: sid, stage })
+      .then(() => { btn.textContent = '✓ Shared to Highway'; notify('Shared to the Highway.'); })
+      .catch((e) => { btn.disabled = false; btn.textContent = original; notify(e.message || 'Could not share.'); });
+  }
+
+  // A like/comment on a picture this conversation shared to the Highway. Shown as
+  // a centered system card with the picture's thumbnail.
+  function appendHighwayEventBubble(m) {
+    const b = chatBody();
+    if (!b) return;
+    let p = {};
+    try { p = typeof m.body === 'string' ? JSON.parse(m.body) : (m.body || {}); } catch (_e) { p = {}; }
+    const who = esc(p.byName || 'Someone');
+    const line = p.action === 'comment'
+      ? `💬 <b>${who}</b> commented on your shared image`
+      : `❤️ <b>${who}</b> liked your shared image`;
+    const card = el(`
+      <div class="hwevent-card">
+        ${p.image ? `<img class="hwevent-thumb" src="${esc(p.image)}" loading="lazy" alt="" />` : ''}
+        <div class="hwevent-body">
+          <div class="hwevent-line">${line}</div>
+          ${p.action === 'comment' && p.text ? `<div class="hwevent-text"></div>` : ''}
+          <div class="time">${fmtTime(m.at)} · on the Highway 🌊</div>
+        </div>
+      </div>
+    `);
+    if (p.action === 'comment' && p.text) card.querySelector('.hwevent-text').textContent = '“' + p.text + '”';
+    const thumb = card.querySelector('.hwevent-thumb');
+    if (thumb && p.image) thumb.addEventListener('click', () => openLightbox(p.image));
     b.appendChild(card);
     scrollBody();
   }
@@ -2217,46 +2294,142 @@
 
     captions.forEach((cap, i) => {
       const type = cap.type === 'thinking' ? 'thinking' : 'saying';
+      // Working copy of this caption's geometry (mutated by drag/rotate).
+      const geo = { x: +cap.x || 0, y: +cap.y || 0, rot: +cap.rot || 0 };
       const bubble = el(`
         <div class="rp-caption ${type}${cap.flip ? ' flip' : ''}"
-             style="left:${+cap.x || 0}%;top:${+cap.y || 0}%;transform:rotate(${+cap.rot || 0}deg)">
+             style="left:${geo.x}%;top:${geo.y}%;transform:rotate(${geo.rot}deg)">
           <div class="rp-cap-inner"><div class="rp-cap-body" ${editable ? 'contenteditable="true"' : ''}
                data-ph="${type === 'thinking' ? 'thinking…' : 'saying…'}"></div></div>
+          ${editable ? '<button type="button" class="rp-cap-grip rp-cap-move" title="Drag to move">✥</button>'
+                     + '<button type="button" class="rp-cap-grip rp-cap-rot" title="Drag to rotate">⟳</button>' : ''}
         </div>
       `);
       const body = bubble.querySelector('.rp-cap-body');
+      const applyGeo = () => {
+        bubble.style.left = geo.x + '%';
+        bubble.style.top = geo.y + '%';
+        bubble.style.transform = `rotate(${geo.rot}deg)`;
+      };
       if (editable) {
         const key = sid + ':' + stage + ':' + i;
-        state.captionEls[key] = body;
+        state.captionEls[key] = { bubble, body, geo, applyGeo };
         let timer = null;
         body.addEventListener('input', () => {
           syncCaptionFill(body);
           if (timer) clearTimeout(timer);
-          timer = setTimeout(() => sendCaption(sid, stage, i, body.textContent || ''), 250);
+          timer = setTimeout(() => sendCaption(sid, stage, i, { text: body.textContent || '' }), 250);
         });
-        // Flush immediately on blur so a quick edit isn't lost to the debounce.
         body.addEventListener('blur', () => {
           if (timer) { clearTimeout(timer); timer = null; }
-          sendCaption(sid, stage, i, body.textContent || '');
+          sendCaption(sid, stage, i, { text: body.textContent || '' });
         });
+        enableCaptionMove(canvas, bubble, geo, applyGeo, (f) => sendCaption(sid, stage, i, f));
+        enableCaptionRotate(canvas, bubble, geo, applyGeo, (f) => sendCaption(sid, stage, i, f));
       }
       canvas.appendChild(bubble);
     });
 
-    // Paint whatever's already been written (survives reload / late join).
+    // Paint whatever's already been written / moved (survives reload / late join).
     if (editable) {
       api.get(`/api/roleplay/captions/${sid}?stage=${stage}`)
-        .then(({ texts }) => {
-          Object.keys(texts || {}).forEach((idx) => {
-            const bodyEl = state.captionEls[sid + ':' + stage + ':' + idx];
-            if (bodyEl && document.activeElement !== bodyEl) {
-              bodyEl.textContent = texts[idx];
-              syncCaptionFill(bodyEl);
+        .then(({ captions: st }) => {
+          Object.keys(st || {}).forEach((idx) => {
+            const entry = state.captionEls[sid + ':' + stage + ':' + idx];
+            if (!entry) return;
+            const s = st[idx];
+            if (document.activeElement !== entry.body && typeof s.text === 'string') {
+              entry.body.textContent = s.text;
+              syncCaptionFill(entry.body);
             }
+            if (s.x != null) entry.geo.x = s.x;
+            if (s.y != null) entry.geo.y = s.y;
+            if (s.rot != null) entry.geo.rot = s.rot;
+            entry.applyGeo();
           });
         })
         .catch(() => { /* ignore — bubbles just start empty */ });
     }
+  }
+
+  // Drag the ✥ grip to reposition a caption; the tail keeps pointing where the
+  // bubble sits. Geometry is throttled to the partner and saved.
+  function enableCaptionMove(canvas, bubble, geo, applyGeo, send) {
+    const grip = bubble.querySelector('.rp-cap-move');
+    if (!grip) return;
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      grip.setPointerCapture(e.pointerId);
+      const rect = canvas.getBoundingClientRect();
+      const sx = e.clientX; const sy = e.clientY; const ox = geo.x; const oy = geo.y;
+      let last = 0;
+      const move = (ev) => {
+        if (!rect.width || !rect.height) return;
+        geo.x = Math.min(100, Math.max(0, ox + ((ev.clientX - sx) / rect.width) * 100));
+        geo.y = Math.min(100, Math.max(0, oy + ((ev.clientY - sy) / rect.height) * 100));
+        applyGeo();
+        const now = Date.now();
+        if (now - last > 60) { last = now; send({ x: geo.x, y: geo.y }); }
+      };
+      const up = (ev) => {
+        grip.releasePointerCapture(ev.pointerId);
+        grip.removeEventListener('pointermove', move);
+        grip.removeEventListener('pointerup', up);
+        send({ x: geo.x, y: geo.y });
+      };
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('pointerup', up);
+    });
+  }
+
+  // Drag the ⟳ grip to rotate a caption around its anchor point.
+  function enableCaptionRotate(canvas, bubble, geo, applyGeo, send) {
+    const grip = bubble.querySelector('.rp-cap-rot');
+    if (!grip) return;
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      grip.setPointerCapture(e.pointerId);
+      const rect = canvas.getBoundingClientRect();
+      const ax = rect.left + (geo.x / 100) * rect.width;
+      const ay = rect.top + (geo.y / 100) * rect.height;
+      const ang = (ev) => Math.atan2(ev.clientY - ay, ev.clientX - ax) * 180 / Math.PI;
+      const start = ang(e); const orig = geo.rot;
+      let last = 0;
+      const move = (ev) => {
+        let r = orig + (ang(ev) - start);
+        r = ((r % 360) + 360) % 360; if (r > 180) r -= 360;
+        geo.rot = Math.round(r);
+        applyGeo();
+        const now = Date.now();
+        if (now - last > 60) { last = now; send({ rot: geo.rot }); }
+      };
+      const up = (ev) => {
+        grip.releasePointerCapture(ev.pointerId);
+        grip.removeEventListener('pointermove', move);
+        grip.removeEventListener('pointerup', up);
+        send({ rot: geo.rot });
+      };
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('pointerup', up);
+    });
+  }
+
+  // Render read-only caption bubbles (with their baked text) onto a canvas — used
+  // for a captioned image shared to the Highway. `captions` carry {type,x,y,rot,
+  // flip,text}.
+  function renderReadonlyCaptions(canvas, captions) {
+    (captions || []).forEach((cap) => {
+      if (!cap || !(cap.text || '').trim()) return; // skip blank bubbles on the share
+      const type = cap.type === 'thinking' ? 'thinking' : 'saying';
+      const bubble = el(`
+        <div class="rp-caption ${type}${cap.flip ? ' flip' : ''}"
+             style="left:${+cap.x || 0}%;top:${+cap.y || 0}%;transform:rotate(${+cap.rot || 0}deg)">
+          <div class="rp-cap-inner"><div class="rp-cap-body filled"></div></div>
+        </div>
+      `);
+      bubble.querySelector('.rp-cap-body').textContent = cap.text || '';
+      canvas.appendChild(bubble);
+    });
   }
 
   // Toggle a "filled" class so an empty bubble shows its placeholder hint and a
@@ -2265,9 +2438,10 @@
     body.classList.toggle('filled', !!(body.textContent || '').trim());
   }
 
-  function sendCaption(sid, stage, index, text) {
+  // `fields` is any of { text, x, y, rot } — only what changed is sent.
+  function sendCaption(sid, stage, index, fields) {
     if (!state.socket) return;
-    state.socket.emit('roleplay:caption', { sessionId: sid, stage, index, text }, () => {});
+    state.socket.emit('roleplay:caption', Object.assign({ sessionId: sid, stage, index }, fields), () => {});
   }
 
   // Populate the roleplay picker with the catalog.
@@ -4103,15 +4277,22 @@
       if (input && state.peer && e && e.from === state.peer.id) input.focus();
     });
 
-    // The partner (or another of my tabs) typed inside a shared caption bubble.
-    // Mirror the text unless I'm the one editing that very bubble right now.
+    // The partner (or another of my tabs) edited a shared caption — text and/or
+    // position/rotation. Mirror whatever changed, but don't clobber text I'm
+    // actively typing into that very bubble.
     s.on('roleplay:caption', (e) => {
       if (!e || e.sessionId == null) return;
-      const body = state.captionEls[e.sessionId + ':' + e.stage + ':' + e.index];
-      if (!body || document.activeElement === body) return;
-      if (body.textContent === e.text) return;
-      body.textContent = e.text || '';
-      body.classList.toggle('filled', !!(e.text || '').trim());
+      const entry = state.captionEls[e.sessionId + ':' + e.stage + ':' + e.index];
+      if (!entry) return;
+      if (typeof e.text === 'string' && document.activeElement !== entry.body && entry.body.textContent !== e.text) {
+        entry.body.textContent = e.text;
+        entry.body.classList.toggle('filled', !!e.text.trim());
+      }
+      let moved = false;
+      if (typeof e.x === 'number') { entry.geo.x = e.x; moved = true; }
+      if (typeof e.y === 'number') { entry.geo.y = e.y; moved = true; }
+      if (typeof e.rot === 'number') { entry.geo.rot = e.rot; moved = true; }
+      if (moved) entry.applyGeo();
     });
 
     // ----- broadcast ("live chat") events -----
@@ -4784,6 +4965,7 @@
               <div class="pro-score">${score}</div>
               <div class="stars">${starsHtml(profile.rating.average, false)}</div>
               <div class="pro-rcount">${profile.rating.count} rating${profile.rating.count === 1 ? '' : 's'}</div>
+              <div class="pro-likes" title="Likes received on the Highway (counts toward leaderboard rank)">❤️ ${profile.likes || 0} like${(profile.likes || 0) === 1 ? '' : 's'}</div>
             </div>
           </div>
           <div class="pro-actions pv-actions">
@@ -5373,10 +5555,21 @@
     const bodyEl = card.querySelector('.hw-body');
     if (p.body) appendRichText(bodyEl, p.body); else bodyEl.remove();
     if (p.image) {
-      const img = el('<img class="hw-image" loading="lazy" alt="shared image" />');
-      img.src = p.image;
-      img.addEventListener('click', () => openLightbox(p.image));
-      card.appendChild(img);
+      const captions = Array.isArray(p.captions) ? p.captions : [];
+      if (captions.length) {
+        // Captioned share: image is a positioning surface for read-only bubbles.
+        const canvas = el('<div class="narration-canvas hw-canvas"></div>');
+        const img = el('<img class="hw-image" loading="lazy" alt="shared image" />');
+        img.src = p.image;
+        canvas.appendChild(img);
+        renderReadonlyCaptions(canvas, captions);
+        card.appendChild(canvas);
+      } else {
+        const img = el('<img class="hw-image" loading="lazy" alt="shared image" />');
+        img.src = p.image;
+        img.addEventListener('click', () => openLightbox(p.image));
+        card.appendChild(img);
+      }
     }
 
     const actionSlot = card.querySelector('.hw-action');
@@ -5542,8 +5735,8 @@
     if (!highwayFeed || !document.body.contains(highwayFeed)) { highwayFeed = null; return; }
     const mine = !!(state.me && payload.author && payload.author.id === state.me.id);
     prependHighwayPost(highwayFeed, {
-      id: payload.id, body: payload.body, image: payload.image, createdAt: payload.createdAt,
-      author: payload.author, mine, friendState: mine ? 'self' : 'none',
+      id: payload.id, body: payload.body, image: payload.image, captions: payload.captions || [],
+      createdAt: payload.createdAt, author: payload.author, mine, friendState: mine ? 'self' : 'none',
     });
     trimHighwayFeed(highwayFeed);
   }
@@ -5963,6 +6156,7 @@
           </div>
           <div class="lb-stats">
             <span title="Average rating">⭐ ${r.ratingAvg || '—'}</span>
+            <span title="Likes received on the Highway">❤️ ${r.likes || 0}</span>
             <span title="Friends">👥 ${r.friends}</span>
             <span title="Quizzes">🧠 ${r.quizzes}</span>
             <span class="lb-score" title="Score">${r.score}</span>

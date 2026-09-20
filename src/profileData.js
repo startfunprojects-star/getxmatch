@@ -377,6 +377,11 @@ function buildProfile(userId, viewerId) {
     gifsLocked: gifsHidden,
     buffer: bufferPhotos.map((ph) => ({ id: ph.id, url: `/uploads/${ph.filename}` })),
     rating: ratingSummary(row.id, viewerId),
+    // Total likes this user has received on their Highway posts (shared images
+    // included). Shown on the profile and factored into leaderboard ranking.
+    likes: db
+      .prepare('SELECT COUNT(*) AS n FROM highway_likes hl JOIN highway_posts hp ON hp.id = hl.post_id WHERE hp.user_id = ?')
+      .get(row.id).n,
     comments: commentsFor(row.id, viewerId),
     friends: {
       count: friendList.length,

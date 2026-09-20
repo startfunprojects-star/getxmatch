@@ -203,26 +203,62 @@ function sessionForParticipant(sessionId, userId) {
   return s.user_lo === userId || s.user_hi === userId ? s : null;
 }
 
-// All caption texts written so far for a stage of a session, as
-// { [captionIndex]: text }. Powers the initial paint when a card loads.
-function getCaptionTexts(sessionId, stageIndex) {
+// Per-caption shared state for a stage of a session, as
+// { [captionIndex]: { text, x, y, rot } } where x/y/rot are null unless a player
+// has dragged/rotated that caption. Powers the initial paint when a card loads.
+function getCaptionState(sessionId, stageIndex) {
   const rows = db
-    .prepare('SELECT caption_index, text FROM roleplay_caption_texts WHERE session_id = ? AND stage_index = ?')
+    .prepare('SELECT caption_index, text, x, y, rot FROM roleplay_caption_texts WHERE session_id = ? AND stage_index = ?')
     .all(sessionId, stageIndex);
   const out = {};
-  rows.forEach((r) => { out[r.caption_index] = r.text; });
+  rows.forEach((r) => { out[r.caption_index] = { text: r.text, x: r.x, y: r.y, rot: r.rot }; });
   return out;
 }
 
-// Upsert one shared caption value (last writer wins). Text is trimmed to a
-// sane length by the caller.
-function setCaptionText(sessionId, stageIndex, captionIndex, text, userId) {
+// Upsert one shared caption's state (last writer wins). Only the provided fields
+// of `fields` ({ text?, x?, y?, rot? }) are changed; the rest are preserved by
+// reading the existing row first, then writing the merged values.
+function setCaptionState(sessionId, stageIndex, captionIndex, fields, userId) {
+  const cur = db
+    .prepare('SELECT text, x, y, rot FROM roleplay_caption_texts WHERE session_id = ? AND stage_index = ? AND caption_index = ?')
+    .get(sessionId, stageIndex, captionIndex) || { text: '', x: null, y: null, rot: null };
+
+  const num = (v, fallback) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
+  const text = typeof fields.text === 'string' ? fields.text : cur.text;
+  const x = fields.x !== undefined ? num(fields.x, cur.x) : cur.x;
+  const y = fields.y !== undefined ? num(fields.y, cur.y) : cur.y;
+  const rot = fields.rot !== undefined ? num(fields.rot, cur.rot) : cur.rot;
+
   db.prepare(
-    `INSERT INTO roleplay_caption_texts (session_id, stage_index, caption_index, text, updated_by, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO roleplay_caption_texts (session_id, stage_index, caption_index, text, x, y, rot, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id, stage_index, caption_index)
-       DO UPDATE SET text = excluded.text, updated_by = excluded.updated_by, updated_at = excluded.updated_at`
-  ).run(sessionId, stageIndex, captionIndex, text, userId, Date.now());
+       DO UPDATE SET text = excluded.text, x = excluded.x, y = excluded.y, rot = excluded.rot,
+                     updated_by = excluded.updated_by, updated_at = excluded.updated_at`
+  ).run(sessionId, stageIndex, captionIndex, text, x, y, rot, userId, Date.now());
+}
+
+// Merge a stage's admin-authored caption definitions with a session's overrides
+// (position/rotation/text) into the final overlay to bake onto a shared Highway
+// post. Returns { image, captions:[{type,x,y,rot,flip,text}] } or null if the
+// stage has no image.
+function captionsForShare(session, stageIndex) {
+  const stage = getStage(session.roleplay_id, stageIndex);
+  if (!stage || !stage.image) return null;
+  const defs = parseCaptions(stage.captions);
+  const state = getCaptionState(session.id, stageIndex);
+  const captions = defs.map((d, i) => {
+    const s = state[i] || {};
+    return {
+      type: d.type,
+      x: s.x != null ? clampPct(s.x) : d.x,
+      y: s.y != null ? clampPct(s.y) : d.y,
+      rot: s.rot != null ? clampRot(s.rot) : d.rot,
+      flip: d.flip,
+      text: s.text || '',
+    };
+  });
+  return { image: stage.image, captions };
 }
 
 module.exports = {
@@ -238,6 +274,7 @@ module.exports = {
   stopSession,
   advanceSession,
   sessionForParticipant,
-  getCaptionTexts,
-  setCaptionText,
+  getCaptionState,
+  setCaptionState,
+  captionsForShare,
 };

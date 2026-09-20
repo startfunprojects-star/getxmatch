@@ -10,11 +10,37 @@ const db = require('./db');
 const MAX_POSTS = 100;
 
 const SELECT =
-  `SELECT h.id, h.user_id, h.body, h.image, h.pinned, h.pin_rank, h.created_at,
+  `SELECT h.id, h.user_id, h.body, h.image, h.captions, h.origin_kind, h.origin_a, h.origin_b,
+          h.pinned, h.pin_rank, h.created_at,
           u.username, p.display_name, p.avatar
      FROM highway_posts h
      JOIN users u ON u.id = h.user_id
      LEFT JOIN profiles p ON p.user_id = h.user_id`;
+
+// Create a Highway post and prune the pool back to the cap. `opts.captions` is a
+// JSON string of the baked caption overlay (or '[]'); `opts.origin` is
+// { kind, a, b } linking the post to a conversation, or null. Returns
+// { id, prunedImages } — the caller broadcasts and unlinks the pruned images.
+function createPost(opts) {
+  const now = Date.now();
+  const info = db
+    .prepare(
+      `INSERT INTO highway_posts (user_id, body, image, captions, origin_kind, origin_a, origin_b, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      opts.userId,
+      opts.body || '',
+      opts.image || null,
+      opts.captions || '[]',
+      opts.origin ? opts.origin.kind : null,
+      opts.origin ? opts.origin.a : null,
+      opts.origin ? opts.origin.b : null,
+      now
+    );
+  const prunedImages = prune().filter(Boolean);
+  return { id: info.lastInsertRowid, prunedImages };
+}
 
 // Sort a set of rows into display order.
 function orderRows(rows) {
@@ -48,4 +74,4 @@ function prune() {
   return stale.map((s) => s.image).filter(Boolean);
 }
 
-module.exports = { MAX_POSTS, SELECT, orderRows, allOrdered, byId, prune };
+module.exports = { MAX_POSTS, SELECT, orderRows, allOrdered, byId, prune, createPost };

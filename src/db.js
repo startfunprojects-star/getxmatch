@@ -540,6 +540,9 @@ db.exec(`
     stage_index   INTEGER NOT NULL,
     caption_index INTEGER NOT NULL,
     text          TEXT NOT NULL DEFAULT '',
+    x             REAL,     -- per-session position/rotation overrides (players can drag/rotate);
+    y             REAL,     -- NULL means "use the admin-authored default from the stage".
+    rot           REAL,
     updated_by    INTEGER,
     updated_at    INTEGER NOT NULL,
     PRIMARY KEY (session_id, stage_index, caption_index)
@@ -574,6 +577,26 @@ db.exec(`
   if (!cols.includes('title')) {
     db.exec("ALTER TABLE roleplay_stages ADD COLUMN title TEXT NOT NULL DEFAULT ''");
   }
+}
+
+// Per-session caption position/rotation overrides (players can drag/rotate a
+// caption while playing). Added idempotently.
+{
+  const cols = db.prepare('PRAGMA table_info(roleplay_caption_texts)').all().map((c) => c.name);
+  if (!cols.includes('x')) db.exec('ALTER TABLE roleplay_caption_texts ADD COLUMN x REAL');
+  if (!cols.includes('y')) db.exec('ALTER TABLE roleplay_caption_texts ADD COLUMN y REAL');
+  if (!cols.includes('rot')) db.exec('ALTER TABLE roleplay_caption_texts ADD COLUMN rot REAL');
+}
+
+// Highway posts can carry a baked caption overlay (shared roleplay images) and a
+// link back to the conversation they were shared from (so likes/comments on them
+// can surface in that chat). Added idempotently.
+{
+  const cols = db.prepare('PRAGMA table_info(highway_posts)').all().map((c) => c.name);
+  if (!cols.includes('captions')) db.exec("ALTER TABLE highway_posts ADD COLUMN captions TEXT NOT NULL DEFAULT '[]'");
+  if (!cols.includes('origin_kind')) db.exec('ALTER TABLE highway_posts ADD COLUMN origin_kind TEXT');
+  if (!cols.includes('origin_a')) db.exec('ALTER TABLE highway_posts ADD COLUMN origin_a INTEGER');
+  if (!cols.includes('origin_b')) db.exec('ALTER TABLE highway_posts ADD COLUMN origin_b INTEGER');
 }
 
 // Admin-authored "fake" activity used to make the recent-activity feed feel
@@ -705,11 +728,15 @@ db.exec(`
 // ones arrive (see src/routes/highway.js).
 db.exec(`
   CREATE TABLE IF NOT EXISTS highway_posts (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    body       TEXT NOT NULL DEFAULT '',
-    image      TEXT,                     -- optional filename in uploads/
-    created_at INTEGER NOT NULL
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body        TEXT NOT NULL DEFAULT '',
+    image       TEXT,                     -- optional filename in uploads/
+    captions    TEXT NOT NULL DEFAULT '[]', -- baked caption-studio overlay (shared roleplay images)
+    origin_kind TEXT,                     -- 'roleplay' | 'chat' when shared from a conversation
+    origin_a    INTEGER,                  -- the two chat participants to notify on like/comment
+    origin_b    INTEGER,
+    created_at  INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_highway_recent ON highway_posts (created_at);
 `);

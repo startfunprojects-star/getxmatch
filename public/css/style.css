@@ -1244,6 +1244,40 @@ table.users tbody tr:hover { background: var(--bg-3); }
 }
 .rp-cap-body:not(.filled):focus::before { opacity: .5; }
 
+/* Play-side move/rotate grips on an editable caption (sit by the tail anchor). */
+.rp-cap-grip {
+  position: absolute; width: 22px; height: 22px; padding: 0; z-index: 4;
+  border-radius: 50%; border: 2px solid #14181f; background: #fff; color: #14181f;
+  font-size: 12px; line-height: 18px; text-align: center; cursor: grab;
+  touch-action: none; opacity: .9;
+}
+.rp-cap-grip:active { cursor: grabbing; }
+.rp-cap-move { left: -26px; top: -8px; }
+.rp-cap-rot  { left: -26px; top: -34px; }
+
+/* Highway canvas re-uses the shared caption model but is read-only. */
+.hw-canvas { margin: 6px 0; border-radius: 12px; overflow: visible; }
+.hw-canvas .hw-image { display: block; max-width: 100%; border-radius: 12px; cursor: default; }
+
+/* Roleplay/chat "Share to Highway" buttons. */
+.rp-share-btn, .hw-share-btn { margin-top: 8px; }
+.narration-foot { margin-top: 4px; }
+
+/* A like/comment on a shared picture, echoed into the chat. */
+.hwevent-card {
+  align-self: center; max-width: 92%; display: flex; gap: 10px; align-items: center;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px;
+  padding: 8px 12px; margin: 6px auto;
+}
+.hwevent-thumb { width: 46px; height: 46px; object-fit: cover; border-radius: 8px; cursor: zoom-in; flex: 0 0 auto; }
+.hwevent-body { min-width: 0; }
+.hwevent-line { font-size: 13px; }
+.hwevent-text { font-size: 13px; color: var(--muted); font-style: italic; margin-top: 2px; overflow-wrap: anywhere; }
+.hwevent-card .time { display: block; font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+/* Likes on a profile. */
+.pro-likes { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
 /* Admin editor chrome. */
 .rp-cap-editor { margin: 8px 0 4px; }
 .rp-cap-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
