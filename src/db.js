@@ -151,6 +151,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_reports_reported ON reports (reported_id);
   CREATE INDEX IF NOT EXISTS idx_reports_reporter ON reports (reporter_id, created_at);
 
+  -- Chat lifecycle: whether each side of a 1-on-1 conversation currently has the
+  -- chat open. Once BOTH have closed it, both_closed_since is stamped; a sweep
+  -- deletes all messages between the pair 12h later (see src/chatlife.js). Images
+  -- already shared to the Highway live elsewhere and are never touched.
+  CREATE TABLE IF NOT EXISTS chat_close_state (
+    user_lo           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_hi           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    open_lo           INTEGER NOT NULL DEFAULT 0,
+    open_hi           INTEGER NOT NULL DEFAULT 0,
+    both_closed_since INTEGER,
+    PRIMARY KEY (user_lo, user_hi)
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_close_sweep ON chat_close_state (both_closed_since);
+
   -- Single admin account (id is always 1). password_hash is null until the
   -- admin sets it via an emailed link.
   CREATE TABLE IF NOT EXISTS admin_account (

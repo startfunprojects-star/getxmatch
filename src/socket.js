@@ -8,6 +8,7 @@ const { areBlocked } = require('./relations');
 const { getGift } = require('./gifts');
 const wasted = require('./wasted');
 const roleplay = require('./roleplay');
+const chatlife = require('./chatlife');
 const broadcast = require('./broadcast');
 const polls = require('./polls');
 const chatQuiz = require('./chatQuiz');
@@ -122,8 +123,13 @@ function purgeRoleplayChat(io, session) {
     .all(session.created_at, a, b, b, a);
   const ids = rows.map((r) => r.id);
   if (!ids.length) return;
-  const del = db.prepare('DELETE FROM messages WHERE id = ?');
-  db.transaction((list) => list.forEach((id) => del.run(id)))(ids);
+  // Single statement matching the same rows we just selected (no per-row loop —
+  // node:sqlite's DatabaseSync has no transaction() helper).
+  db.prepare(
+    `DELETE FROM messages
+      WHERE created_at >= ?
+        AND ((sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?))`
+  ).run(session.created_at, a, b, b, a);
   io.to(`user:${a}`).emit('chat:expire', { ids });
   io.to(`user:${b}`).emit('chat:expire', { ids });
 }
@@ -612,9 +618,26 @@ function startExpirySweeper(io) {
   }, 2000);
 }
 
+// Periodically delete conversations that both users closed at least 12h ago, and
+// tell any online participants to drop the vanished bubbles. Runs every 15 min.
+function startChatCloseSweeper(io) {
+  const run = () => {
+    try {
+      chatlife.sweep().forEach(({ lo, hi, ids }) => {
+        if (!ids.length) return;
+        io.to(`user:${lo}`).emit('chat:expire', { ids });
+        io.to(`user:${hi}`).emit('chat:expire', { ids });
+      });
+    } catch (_e) { /* non-fatal */ }
+  };
+  run(); // catch anything already past its window at startup
+  setInterval(run, 15 * 60 * 1000);
+}
+
 function initSocket(io) {
   ioRef = io;
   startExpirySweeper(io);
+  startChatCloseSweeper(io);
   // Attach the user from the httpOnly auth cookie when present, but DO NOT
   // reject anonymous sockets: logged-out visitors need a live socket to watch
   // and comment on public broadcasts. socket.user is null for them, and every
@@ -1327,6 +1350,18 @@ function initSocket(io) {
       if (to) io.to(`user:${to}`).emit('chat:typing', { from: me.id });
     });
 
+    // Chat lifecycle: a user opened a 1-on-1 chat (tab open / re-synced on
+    // reconnect) or closed it. When both sides are closed a 12h deletion timer
+    // starts; reopening cancels it.
+    socket.on('chat:open', (payload) => {
+      const to = parseInt(payload && payload.to, 10);
+      if (to) { try { chatlife.markOpen(me.id, to); } catch (_e) { /* non-fatal */ } }
+    });
+    socket.on('chat:close', (payload) => {
+      const to = parseInt(payload && payload.to, 10);
+      if (to) { try { chatlife.markClosed(me.id, to); } catch (_e) { /* non-fatal */ } }
+    });
+
     /* ----------------------------------------------------------------
        Screen sharing (browser-tab only) — WebRTC signaling relay.
 
@@ -1457,6 +1492,9 @@ function initSocket(io) {
         try {
           db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), me.id);
         } catch (_e) { /* non-fatal */ }
+        // Going fully offline counts as closing every chat they still had open,
+        // starting the 12h both-closed countdown where applicable.
+        try { chatlife.closeAllFor(me.id); } catch (_e) { /* non-fatal */ }
         broadcastPresence(io, me.id, false); // tell friends they went offline
         try {
           broadcast.stopForUser(me.id).forEach((b) => {

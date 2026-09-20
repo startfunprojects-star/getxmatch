@@ -1396,6 +1396,9 @@
     const wasActive = tabIsActive(state.openChats[idx]);
     state.openChats.splice(idx, 1);
     delete state.unread[id];
+    // Closing a 1-on-1 chat tab: tell the server. Once both sides close it, the
+    // conversation is deleted after 12h (Highway shares are kept).
+    if (typeof id === 'number' && state.socket) state.socket.emit('chat:close', { to: id });
     if (!wasActive) { renderChatTabs(); return; }
     const next = state.openChats[idx] || state.openChats[idx - 1];
     if (next) return openTab(next);
@@ -1611,6 +1614,8 @@
     const existing = state.openChats.findIndex((p) => p.id === peer.id);
     if (existing === -1) state.openChats.push(peer);
     else state.openChats[existing] = peer;
+    // Mark the chat open so the "both closed → delete in 12h" timer is cleared.
+    if (state.socket) state.socket.emit('chat:open', { to: peer.id });
     document.querySelectorAll('.list-item').forEach((r) =>
       r.classList.toggle('active', Number(r.dataset.id) === peer.id));
     document.getElementById('shell').classList.add('viewing-main');
@@ -4126,7 +4131,12 @@
     state.socket = s;
 
     // Learn which friends/relations are online now, and refresh on reconnect.
-    s.on('connect', () => { seedFriendPresence(); });
+    // Also re-assert which 1-on-1 chats are open so a reconnect doesn't leave the
+    // server thinking they were closed (which would start the 12h delete timer).
+    s.on('connect', () => {
+      seedFriendPresence();
+      state.openChats.forEach((p) => { if (typeof p.id === 'number') s.emit('chat:open', { to: p.id }); });
+    });
 
     // A friend/relation came online or went offline — flip their dot live.
     s.on('presence:update', (p) => {
