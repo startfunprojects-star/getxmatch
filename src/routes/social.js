@@ -6,6 +6,7 @@ const db = require('../db');
 const { requireAuth } = require('../auth');
 const { friendState, ratingSummary, RATING_DIMS, photoReactionState, photoComments, commentReactionState } = require('../profileData');
 const { areBlocked } = require('../relations');
+const moderation = require('../moderation');
 const { GIFTS } = require('../gifts');
 const { GALLERY_REACTIONS, GALLERY_REACTION_SET } = require('../galleryReactions');
 const { listActivities } = require('../activities');
@@ -523,6 +524,66 @@ router.get('/blocked', requireAuth, (req, res) => {
       displayName: r.display_name || r.username,
       avatar: r.avatar ? `/uploads/${r.avatar}` : null,
     })),
+  });
+});
+
+/* ---------------------------------------------------------------------------
+   Ignore (one-way mute) + Report
+--------------------------------------------------------------------------- */
+
+// POST /api/social/ignore/:username — hide this user's Highway posts from my
+// feed. Softer than a block: it doesn't tear down friendships.
+router.post('/ignore/:username', requireAuth, (req, res) => {
+  const target = resolveTarget(req, res);
+  if (!target) return;
+  if (target.id === req.user.id) return res.status(400).json({ error: 'You cannot ignore yourself.' });
+  db.prepare(
+    `INSERT INTO ignores (ignorer_id, ignored_id, created_at) VALUES (?, ?, ?)
+     ON CONFLICT(ignorer_id, ignored_id) DO NOTHING`
+  ).run(req.user.id, target.id, Date.now());
+  res.json({ state: 'ignored' });
+});
+
+// DELETE /api/social/ignore/:username — stop ignoring a user.
+router.delete('/ignore/:username', requireAuth, (req, res) => {
+  const target = resolveTarget(req, res);
+  if (!target) return;
+  db.prepare('DELETE FROM ignores WHERE ignorer_id = ? AND ignored_id = ?').run(req.user.id, target.id);
+  res.json({ state: 'none' });
+});
+
+// GET /api/social/ignored — the ids I'm ignoring (to filter live feeds).
+router.get('/ignored', requireAuth, (req, res) => {
+  const ids = db.prepare('SELECT ignored_id FROM ignores WHERE ignorer_id = ?').all(req.user.id).map((r) => r.ignored_id);
+  res.json({ ids });
+});
+
+// POST /api/social/report/:username  { reason? } — report a profile. Reports are
+// deduped per reporter; crossing the thresholds suspends the reported profile
+// (mass reports) or a report-spamming reporter.
+router.post('/report/:username', requireAuth, (req, res) => {
+  const target = resolveTarget(req, res);
+  if (!target) return;
+  if (target.id === req.user.id) return res.status(400).json({ error: 'You cannot report yourself.' });
+
+  const reason = String((req.body && req.body.reason) || '').trim();
+  const out = moderation.recordReport(req.user.id, target.id, reason);
+
+  if (out.reportedSuspended && target.id) {
+    // Boot the now-suspended user out of every live session.
+    try { notifyUser(target.id, 'account:suspended', { until: Date.now() + moderation.SUSPEND_MS }); } catch (_e) {}
+  }
+  if (out.reporterSuspended) {
+    return res.status(403).json({
+      error: 'You have reported too many profiles in a short time and your account is now suspended for 7 days.',
+      suspended: true,
+    });
+  }
+
+  res.json({
+    state: 'reported',
+    already: !out.created,
+    message: out.created ? 'Thanks — this profile has been reported.' : 'You have already reported this profile.',
   });
 });
 

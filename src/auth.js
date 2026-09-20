@@ -25,13 +25,15 @@ function clearAuthCookie(res) {
   res.clearCookie(config.cookieName);
 }
 
-// Verify a raw token string. Returns the user row or null.
+// Verify a raw token string. Returns the user row (incl. suspension fields) or
+// null. Suspension is enforced by the callers, not here, so socket/optional
+// paths can decide how to treat a suspended session.
 function userFromToken(token) {
   if (!token) return null;
   try {
     const payload = jwt.verify(token, config.jwtSecret);
     const user = db
-      .prepare('SELECT id, username, email, created_at FROM users WHERE id = ?')
+      .prepare('SELECT id, username, email, created_at, suspended_until, suspended_reason FROM users WHERE id = ?')
       .get(payload.uid);
     return user || null;
   } catch (_e) {
@@ -39,21 +41,40 @@ function userFromToken(token) {
   }
 }
 
-// Express middleware: attaches req.user or returns 401.
+// Remaining suspension in ms for a user row (0 = active). Kept here to avoid a
+// circular require between auth and moderation.
+function suspensionRemaining(user) {
+  if (!user || !user.suspended_until) return 0;
+  const remaining = user.suspended_until - Date.now();
+  return remaining > 0 ? remaining : 0;
+}
+
+// Express middleware: attaches req.user or returns 401. A suspended account is
+// rejected with 403 and the time its suspension ends.
 function requireAuth(req, res, next) {
   const token = req.cookies ? req.cookies[config.cookieName] : null;
   const user = userFromToken(token);
   if (!user) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
+  const remaining = suspensionRemaining(user);
+  if (remaining > 0) {
+    return res.status(403).json({
+      error: 'Your account is suspended.',
+      suspended: true,
+      suspendedUntil: user.suspended_until,
+      reason: user.suspended_reason || null,
+    });
+  }
   req.user = user;
   next();
 }
 
-// Express middleware: attaches req.user if present, never blocks.
+// Express middleware: attaches req.user if present, never blocks. A suspended
+// account is treated as logged-out for public/optional routes.
 function optionalAuth(req, res, next) {
-  const token = req.cookies ? req.cookies[config.cookieName] : null;
-  req.user = userFromToken(token);
+  const user = userFromToken(req.cookies ? req.cookies[config.cookieName] : null);
+  req.user = user && suspensionRemaining(user) === 0 ? user : null;
   next();
 }
 
@@ -97,6 +118,7 @@ module.exports = {
   setAuthCookie,
   clearAuthCookie,
   userFromToken,
+  suspensionRemaining,
   requireAuth,
   optionalAuth,
   ADMIN_COOKIE,

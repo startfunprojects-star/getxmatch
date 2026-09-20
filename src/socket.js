@@ -3,7 +3,7 @@
 const cookie = require('cookie');
 const db = require('./db');
 const config = require('./config');
-const { userFromToken } = require('./auth');
+const { userFromToken, suspensionRemaining } = require('./auth');
 const { areBlocked } = require('./relations');
 const { getGift } = require('./gifts');
 const wasted = require('./wasted');
@@ -105,7 +105,32 @@ function emitRoleplayProgress(io, a, b, session) {
   io.to(`user:${b}`).emit('roleplay:progress', roleplay.progressState(session, b));
 }
 
-// Act on a start/advance outcome: reveal narration + push progress.
+// Wipe the chat messages exchanged during a roleplay session (everything
+// between the pair from when the session started onward) and tell both clients
+// to drop those bubbles. Highway shares live in their own table with copied
+// image files, so they are untouched. Returns nothing.
+function purgeRoleplayChat(io, session) {
+  if (!session) return;
+  const a = session.user_lo;
+  const b = session.user_hi;
+  const rows = db
+    .prepare(
+      `SELECT id FROM messages
+        WHERE created_at >= ?
+          AND ((sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?))`
+    )
+    .all(session.created_at, a, b, b, a);
+  const ids = rows.map((r) => r.id);
+  if (!ids.length) return;
+  const del = db.prepare('DELETE FROM messages WHERE id = ?');
+  db.transaction((list) => list.forEach((id) => del.run(id)))(ids);
+  io.to(`user:${a}`).emit('chat:expire', { ids });
+  io.to(`user:${b}`).emit('chat:expire', { ids });
+}
+
+// Act on a start/advance outcome: reveal narration + push progress. On the final
+// stage the whole play chat is cleared first, then a single "The End" card is
+// left as closure (it survives the purge as it's created afterwards).
 function applyRoleplayOutcome(io, senderId, otherId, outcome) {
   if (!outcome) return;
   if (outcome.type === 'advance') {
@@ -113,6 +138,7 @@ function applyRoleplayOutcome(io, senderId, otherId, outcome) {
       roleplay.stagePayload(outcome.roleplay, outcome.stageRow, outcome.stageIndex, outcome.total, false, outcome.session.id));
     emitRoleplayProgress(io, senderId, otherId, outcome.session);
   } else if (outcome.type === 'complete') {
+    purgeRoleplayChat(io, outcome.session);
     deliverNarration(io, senderId, otherId,
       roleplay.stagePayload(outcome.roleplay, null, outcome.total, outcome.total, true, outcome.session.id));
     emitRoleplayProgress(io, senderId, otherId, outcome.session);
@@ -597,7 +623,9 @@ function initSocket(io) {
     try {
       const raw = socket.handshake.headers.cookie || '';
       const parsed = cookie.parse(raw);
-      socket.user = userFromToken(parsed[config.cookieName]) || null;
+      const user = userFromToken(parsed[config.cookieName]) || null;
+      // A suspended account gets an anonymous socket (no private-chat handlers).
+      socket.user = user && suspensionRemaining(user) === 0 ? user : null;
     } catch (_e) {
       socket.user = null;
     }
@@ -1247,7 +1275,14 @@ function initSocket(io) {
         const to = parseInt(payload && payload.to, 10);
         if (!to) return ack && ack({ error: 'Invalid request.' });
         const session = roleplay.stopSession(me.id, to);
-        if (session) emitRoleplayProgress(io, me.id, to, session);
+        if (session) {
+          // Ending a roleplay finishes it: clear the play chat, leave a short
+          // marker, then push the ended state so both banners close.
+          purgeRoleplayChat(io, session);
+          deliverWastedSentence(io, session.user_lo, session.user_hi,
+            '🎭 Roleplay ended — the play chat was cleared. Anything shared to the Highway stays there.');
+          emitRoleplayProgress(io, me.id, to, session);
+        }
         ack && ack({ ok: true });
       } catch (e) {
         ack && ack({ error: 'Server error.' });

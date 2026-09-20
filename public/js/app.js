@@ -23,6 +23,7 @@
     disappearing: 0,     // disappearing-messages TTL (seconds) for the open chat; 0 = off
     online: {},          // userId -> true when a friend/relation is currently online
     captionEls: {},      // "sid:stage:index" -> the editable caption bubble on screen
+    ignored: {},         // userId -> true for people I've ignored (hide their Highway posts)
   };
 
   /* ---------- online presence for friends/relations ----------
@@ -518,9 +519,38 @@
       if (!hasProfile) return renderProfileEditor(true);
       return enterApp();
     } catch (e) {
+      if (e.data && e.data.suspended) return showSuspendedScreen(e.data);
       return renderAuth(wantSignup ? 'signup' : 'login');
     }
   }
+
+  // Full-screen notice for a suspended account. Shown at boot for a suspended
+  // session, or live if a suspension lands mid-session (report-abuse).
+  let suspendedShown = false;
+  function showSuspendedScreen(data) {
+    if (suspendedShown) return;
+    suspendedShown = true;
+    try { if (state.socket) state.socket.disconnect(); } catch (_e) { /* ignore */ }
+    const until = data && data.suspendedUntil ? new Date(data.suspendedUntil).toLocaleString() : null;
+    root.innerHTML = '';
+    root.appendChild(el(`
+      <div class="auth-split">
+        <div class="auth-card" style="max-width:460px;margin:10vh auto;text-align:center">
+          <div style="font-size:40px">⛔</div>
+          <h2>Account suspended</h2>
+          <p class="auth-sub">${esc((data && data.error) || 'Your account is temporarily suspended.')}</p>
+          ${until ? `<p class="hint">Access returns on <b>${esc(until)}</b>.</p>` : ''}
+          <button class="ghost" id="suspLogout" style="margin-top:14px">Log out</button>
+        </div>
+      </div>
+    `));
+    const lo = document.getElementById('suspLogout');
+    if (lo) lo.addEventListener('click', async () => {
+      try { await api.post('/api/auth/logout', {}); } catch (_e) { /* ignore */ }
+      location.reload();
+    });
+  }
+  window.__onSuspended = showSuspendedScreen;
 
   /* ======================================================================
      AUTH
@@ -946,6 +976,7 @@
     renderMainHome(); // chat box shows the recent-activity feed by default
     refreshRequestBadge();
     loadGifts(); // preload so live gifts render with the right emoji/name
+    loadIgnored(); // so live Highway pushes from ignored users are filtered
 
     // Honor a "chat with X" deep link from a shared quiz result page.
     if (pendingChatUser) {
@@ -4268,6 +4299,9 @@
       if (peerId && p && p.peerId === peerId) updateRoleplayBar(p);
     });
 
+    // My account was just suspended (e.g. mass-reported) — show the notice.
+    s.on('account:suspended', (e) => { showSuspendedScreen({ suspended: true, suspendedUntil: e && e.until, error: 'Your account has been suspended.' }); });
+
     // My partner tapped "Partner" — they want me to type in the main chat.
     s.on('roleplay:nudge', (e) => {
       playNudgeSound();
@@ -5335,6 +5369,33 @@
       ));
       slot.appendChild(btn);
     }
+
+    // Ignore (one-way mute of their Highway posts) — independent of blocking.
+    const ig = profile.ignore || {};
+    if (ig.iIgnore) {
+      const un = el('<button class="ghost small" title="Stop ignoring">🔕 Ignoring — undo</button>');
+      un.addEventListener('click', () => act(() => api.del('/api/social/ignore/' + u)));
+      slot.appendChild(un);
+    } else if (!b.iBlocked) {
+      const ib = el('<button class="ghost small" title="Hide their Highway posts from your feed">🔕 Ignore</button>');
+      ib.addEventListener('click', () => act(() => api.post('/api/social/ignore/' + u)));
+      slot.appendChild(ib);
+    }
+
+    // Report — always available (except on yourself, which never reaches here).
+    const rep = el('<button class="ghost small" title="Report this profile">🚩 Report</button>');
+    rep.addEventListener('click', async () => {
+      const reason = prompt('Report @' + profile.username + '?\nOptionally add a reason:', '');
+      if (reason === null) return; // cancelled
+      try {
+        const res = await api.post('/api/social/report/' + u, { reason: reason || '' });
+        notify(res.message || 'Reported.');
+      } catch (e) {
+        if (e.data && e.data.suspended) return; // handled by the global suspended notice
+        alert(e.message);
+      }
+    });
+    slot.appendChild(rep);
   }
 
   // A "Relationship request" dropdown. Picking one of the 7 options sends that
@@ -5730,9 +5791,19 @@
     }
   }
 
+  // Load the set of users I ignore, so live feeds can filter their content.
+  async function loadIgnored() {
+    try {
+      const { ids } = await api.get('/api/social/ignored');
+      state.ignored = {};
+      (ids || []).forEach((id) => { state.ignored[id] = true; });
+    } catch (_e) { /* ignore */ }
+  }
+
   // Live socket push: a new post from anyone. Fill in viewer-specific fields.
   function pushHighwayPost(payload) {
     if (!highwayFeed || !document.body.contains(highwayFeed)) { highwayFeed = null; return; }
+    if (payload.author && state.ignored[payload.author.id]) return; // muted author
     const mine = !!(state.me && payload.author && payload.author.id === state.me.id);
     prependHighwayPost(highwayFeed, {
       id: payload.id, body: payload.body, image: payload.image, captions: payload.captions || [],

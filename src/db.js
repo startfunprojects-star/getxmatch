@@ -126,6 +126,31 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks (blocked_id);
 
+  -- Ignores. A one-way mute: ignorer_id hides ignored_id's Highway posts from
+  -- their own feed. Unlike a block, it doesn't tear down friendships or stop the
+  -- other person seeing them.
+  CREATE TABLE IF NOT EXISTS ignores (
+    ignorer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ignored_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (ignorer_id, ignored_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ignores_ignored ON ignores (ignored_id);
+
+  -- Profile reports. One report per reporter per reported user (a re-report is a
+  -- no-op). 50 reports on a profile suspends it for 7 days; 50 reports filed by
+  -- one user within 12h suspends the reporter (see src/moderation.js).
+  CREATE TABLE IF NOT EXISTS reports (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reported_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reason      TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL,
+    UNIQUE (reporter_id, reported_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_reports_reported ON reports (reported_id);
+  CREATE INDEX IF NOT EXISTS idx_reports_reporter ON reports (reporter_id, created_at);
+
   -- Single admin account (id is always 1). password_hash is null until the
   -- admin sets it via an emailed link.
   CREATE TABLE IF NOT EXISTS admin_account (
@@ -778,6 +803,14 @@ db.exec(`
   if (!cols.includes('rel_type')) {
     db.exec("ALTER TABLE friendships ADD COLUMN rel_type TEXT NOT NULL DEFAULT 'friend'");
   }
+}
+
+// Account suspension: when set and in the future, the user cannot use their
+// account (mass-reported profiles, or report-spam abusers). Added idempotently.
+{
+  const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!cols.includes('suspended_until')) db.exec('ALTER TABLE users ADD COLUMN suspended_until INTEGER');
+  if (!cols.includes('suspended_reason')) db.exec('ALTER TABLE users ADD COLUMN suspended_reason TEXT');
 }
 
 // Heal any user that has no profile row — e.g. accounts admin-created before a

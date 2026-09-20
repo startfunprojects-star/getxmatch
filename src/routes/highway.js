@@ -16,7 +16,7 @@ const config = require('../config');
 const { requireAuth } = require('../auth');
 const { imageUpload } = require('../upload');
 const { friendState } = require('../profileData');
-const { areBlocked } = require('../relations');
+const { areBlocked, ignoredIds } = require('../relations');
 const { broadcastHighway, notifyHighwayEvent, broadcastLeaderboardChange } = require('../socket');
 const hw = require('../highway');
 
@@ -113,9 +113,14 @@ function shapePost(r, viewerId) {
   };
 }
 
-// GET /api/highway — the pool in display order (pinned first, then newest).
+// GET /api/highway — the pool in display order (pinned first, then newest),
+// with posts from users the viewer ignores filtered out.
 router.get('/', requireAuth, (req, res) => {
-  res.json({ posts: hw.allOrdered().map((r) => shapePost(r, req.user.id)), max: hw.MAX_POSTS });
+  const muted = new Set(ignoredIds(req.user.id));
+  const posts = hw.allOrdered()
+    .filter((r) => !muted.has(r.user_id))
+    .map((r) => shapePost(r, req.user.id));
+  res.json({ posts, max: hw.MAX_POSTS });
 });
 
 // POST /api/highway — create a post (text and/or image), then prune to 100. An

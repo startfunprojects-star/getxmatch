@@ -16,6 +16,11 @@ window.api = (function () {
     if (!res.ok) {
       const err = new Error((data && data.error) || `Request failed (${res.status})`);
       err.status = res.status;
+      err.data = data || null;
+      // A suspended account: let the app show a full-screen notice once.
+      if (res.status === 403 && data && data.suspended && typeof window.__onSuspended === 'function') {
+        try { window.__onSuspended(data); } catch (_e) { /* ignore */ }
+      }
       throw err;
     }
     return data;

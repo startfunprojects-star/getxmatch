@@ -146,6 +146,16 @@ router.post('/login', authLimiter, (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials.' });
   }
 
+  // Suspended accounts can authenticate but not enter.
+  if (user.suspended_until && user.suspended_until > Date.now()) {
+    const until = new Date(user.suspended_until).toLocaleString();
+    return res.status(403).json({
+      error: `Your account is suspended until ${until}.`,
+      suspended: true,
+      suspendedUntil: user.suspended_until,
+    });
+  }
+
   const token = signToken(user);
   setAuthCookie(res, token);
 

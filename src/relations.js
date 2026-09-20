@@ -30,4 +30,22 @@ function blockState(ownerId, viewerId) {
   return { iBlocked, blockedMe };
 }
 
-module.exports = { areBlocked, blockState };
+// True if `viewerId` is ignoring `otherId` (one-way mute).
+function isIgnoring(viewerId, otherId) {
+  if (!viewerId || viewerId === otherId) return false;
+  return !!db.prepare('SELECT 1 FROM ignores WHERE ignorer_id = ? AND ignored_id = ?').get(viewerId, otherId);
+}
+
+// The ids a user is ignoring (for filtering their feeds).
+function ignoredIds(viewerId) {
+  if (!viewerId) return [];
+  return db.prepare('SELECT ignored_id FROM ignores WHERE ignorer_id = ?').all(viewerId).map((r) => r.ignored_id);
+}
+
+// Ignore state between a profile owner and a viewer (only the viewer's own mute
+// is meaningful/visible).
+function ignoreState(ownerId, viewerId) {
+  return { iIgnore: isIgnoring(viewerId, ownerId) };
+}
+
+module.exports = { areBlocked, blockState, isIgnoring, ignoredIds, ignoreState };

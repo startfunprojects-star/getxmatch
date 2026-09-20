@@ -2,7 +2,7 @@
 
 const db = require('./db');
 const { ageFromDob } = require('./profileFields');
-const { blockState } = require('./relations');
+const { blockState, ignoreState } = require('./relations');
 const { isOnline } = require('./socket');
 
 // Compute the friendship state between the viewer and a profile owner.
@@ -390,6 +390,7 @@ function buildProfile(userId, viewerId) {
       relType,
     },
     blocked,
+    ignore: ignoreState(row.id, viewerId),
     isMe,
     // "Hidden from search" is a private setting — only the owner sees its state.
     hidden: isMe ? !!row.hidden : undefined,
