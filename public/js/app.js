@@ -499,6 +499,8 @@
   ====================================================================== */
   // Deep-link intent from a shared quiz result page (/?chat=<username>&signup=1).
   let pendingChatUser = null;
+  // Deep-link intent from a shared profile link (/?view=<username>[&signup=1]).
+  let pendingViewUser = null;
 
   async function openChatByUsername(username) {
     if (!username) return;
@@ -512,6 +514,7 @@
     const params = new URLSearchParams(location.search);
     const wantSignup = params.get('signup') === '1';
     pendingChatUser = params.get('chat');
+    pendingViewUser = params.get('view');
     if (location.search) history.replaceState(null, '', location.pathname); // tidy the URL
     try {
       const { user, hasProfile } = await api.get('/api/auth/me');
@@ -978,8 +981,14 @@
     loadGifts(); // preload so live gifts render with the right emoji/name
     loadIgnored(); // so live Highway pushes from ignored users are filtered
 
-    // Honor a "chat with X" deep link from a shared quiz result page.
-    if (pendingChatUser) {
+    // Honor a "view X's profile" deep link from a shared profile link — the
+    // recipient lands straight on that member's profile after signing up / in.
+    if (pendingViewUser) {
+      const u = pendingViewUser;
+      pendingViewUser = null;
+      showProfile(u);
+    } else if (pendingChatUser) {
+      // Honor a "chat with X" deep link from a shared quiz result page.
       const u = pendingChatUser;
       pendingChatUser = null;
       openChatByUsername(u);
@@ -5017,6 +5026,7 @@
             ${!isMe ? `<span id="pvFriend"></span>` : ''}
             ${!isMe ? `<span id="pvBlock"></span>` : ''}
             ${isMe ? '<button class="ghost" id="pvEdit">✎ Edit profile</button>' : ''}
+            <button class="ghost" id="pvShare" title="Copy a shareable link to this profile">🔗 Share</button>
           </div>
         </div>
 
@@ -5342,6 +5352,21 @@
     });
     const editBtn = view.querySelector('#pvEdit');
     if (editBtn) editBtn.addEventListener('click', () => renderProfileEditor(false));
+
+    // Shareable profile link. Anyone who opens it lands on this member's
+    // profile; signing up is required before they can do anything.
+    const shareBtn = view.querySelector('#pvShare');
+    if (shareBtn) {
+      const link = location.origin + '/u/' + encodeURIComponent(profile.username);
+      shareBtn.addEventListener('click', async () => {
+        if (navigator.share) {
+          try { await navigator.share({ title: profile.displayName, url: link }); return; }
+          catch (_e) { /* user cancelled or unsupported — fall back to copy */ }
+        }
+        try { await navigator.clipboard.writeText(link); notifyToast('Profile link copied to share'); }
+        catch (_e) { prompt('Copy this link to share:', link); }
+      });
+    }
     const chatBtn = view.querySelector('#pvChat');
     if (chatBtn) {
       if (anyBlock) {

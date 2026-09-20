@@ -18,6 +18,7 @@ const settings = require('../settings');
 const ads = require('../ads');
 const hw = require('../highway');
 const ogImage = require('../ogImage');
+const { ageFromDob } = require('../profileFields');
 const { optionalAuth } = require('../auth');
 
 const router = express.Router();
@@ -575,6 +576,108 @@ ${cards}`;
 });
 
 /* ===========================================================================
+   Public profile share pages — /u/<username>
+
+   Every profile gets a shareable link. The link unfurls (Open Graph / Twitter
+   card) with the member's profile picture and their age · gender · sexuality,
+   so recipients preview who it is. A logged-in visitor is sent straight to the
+   profile inside the app; a logged-out visitor sees a preview card and must
+   sign up to open the full profile or do anything (message, rate, connect).
+   These pages are noindex — members share them deliberately, not for search.
+=========================================================================== */
+
+function genderGlyph(g) {
+  return g === 'Female' ? '♀' : g === 'Male' ? '♂' : '⚧';
+}
+
+router.get('/u/:username', optionalAuth, (req, res) => {
+  const row = db
+    .prepare(
+      `SELECT u.id, u.username, p.display_name, p.avatar, p.gender, p.date_of_birth, p.sexuality
+       FROM users u JOIN profiles p ON p.user_id = u.id
+       WHERE u.username = ? COLLATE NOCASE`
+    )
+    .get(req.params.username);
+  if (!row) return notFound(res, 'profile');
+
+  // A logged-in member lands straight on the profile inside the app.
+  if (req.user) return res.redirect(302, '/?view=' + encodeURIComponent(row.username));
+
+  const age = ageFromDob(row.date_of_birth);
+  const name = row.display_name || row.username;
+  const avatar = row.avatar ? `/uploads/${row.avatar}` : null;
+
+  // The three facts a shared link must surface: age · gender · sexuality.
+  const factLine = [age != null ? `${age}` : null, row.gender || null, row.sexuality || null]
+    .filter(Boolean)
+    .join(' · ');
+  const description =
+    `${name}${factLine ? ` — ${factLine}` : ''} on ${SITE_NAME}. ` +
+    `Sign up to view ${name}'s full profile, gallery and chat.`;
+
+  const seoDescriptor = resolveSeo({ noindex: true }, {
+    canonicalPath: '/u/' + row.username,
+    title: `${name}${age != null ? `, ${age}` : ''}`,
+    description,
+    image: avatar || undefined, // the profile picture is the share image
+    type: 'profile',
+  });
+
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'ProfilePage',
+    mainEntity: {
+      '@type': 'Person',
+      name,
+      url: absUrl('/u/' + row.username),
+      image: avatar ? absUrl(avatar) : undefined,
+      gender: row.gender || undefined,
+    },
+  };
+
+  const signupHref = '/?view=' + encodeURIComponent(row.username) + '&signup=1';
+  const loginHref = '/?view=' + encodeURIComponent(row.username);
+
+  const badges = [
+    age != null ? `<span class="pf-badge">🎂 ${age}</span>` : '',
+    row.gender ? `<span class="pf-badge">${genderGlyph(row.gender)} ${esc(row.gender)}</span>` : '',
+    row.sexuality ? `<span class="pf-badge">🌈 ${esc(row.sexuality)}</span>` : '',
+  ].filter(Boolean).join('');
+
+  const avatarHtml = avatar
+    ? `<img class="pf-avatar" src="${escAttr(avatar)}" alt="${escAttr(name)}" />`
+    : '<div class="pf-avatar pf-avatar-ph">👤</div>';
+
+  const bodyHtml = `
+<style>
+.pf-card { max-width: 460px; margin: 24px auto; text-align: center; background: var(--bg2);
+  border: 1px solid var(--border); border-radius: 18px; padding: 28px 24px; }
+.pf-avatar { width: 168px; height: 168px; border-radius: 50%; object-fit: cover;
+  border: 3px solid var(--accent); display: block; margin: 0 auto 16px; background: var(--bg); }
+.pf-avatar-ph { display: flex; align-items: center; justify-content: center; font-size: 72px; }
+.pf-name { font-size: 26px; font-weight: 800; margin: 0 0 4px; }
+.pf-handle { color: var(--muted); margin: 0 0 14px; }
+.pf-badges { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 0 0 18px; }
+.pf-badge { border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; font-weight: 600; background: var(--bg); }
+.pf-gate { color: var(--muted); font-size: 14px; margin: 14px 0 18px; }
+.pf-card .cta { display: block; margin: 0 0 10px; }
+.pf-login { color: var(--accent); }
+</style>
+${breadcrumbHtml([{ name: 'Home', path: '/' }, { name, path: '/u/' + row.username }])}
+<div class="pf-card">
+  ${avatarHtml}
+  <h1 class="pf-name">${esc(name)}</h1>
+  <p class="pf-handle">@${esc(row.username)}</p>
+  ${badges ? `<div class="pf-badges">${badges}</div>` : ''}
+  <p class="pf-gate">You must sign up to view ${esc(name)}'s full profile and to message, rate or connect.</p>
+  <a class="cta" href="${escAttr(signupHref)}">Sign up to view ${esc(name)}'s profile →</a>
+  <p>Already a member? <a class="pf-login" href="${escAttr(loginHref)}">Log in</a></p>
+</div>`;
+
+  res.send(renderDocument({ seoDescriptor, jsonLd, bodyHtml }));
+});
+
+/* ===========================================================================
    Static informational & legal pages
 
    Server-rendered, crawlable pages that give search engines real, trustworthy
@@ -835,6 +938,7 @@ Disallow: /admin
 Disallow: /m/
 Disallow: /search
 Disallow: /live/
+Disallow: /u/
 
 Sitemap: ${absUrl('/sitemap.xml')}
 `
