@@ -1308,7 +1308,7 @@
         <div class="wasted-picker hidden" id="wastedPicker"></div>
         <div class="composer-preview hidden" id="composerPreview"></div>
         <div class="composer">
-          <input type="text" id="msgInput" placeholder="Message the group…" autocomplete="off" />
+          <input type="text" id="msgInput" placeholder="Message the group…" autocomplete="off" dir="auto" />
           <button class="icon-btn" id="wastedBtn" title="Offer a drink or substance — get Wasted">🥂</button>
           <button class="icon-btn" id="pollBtn" title="Create a poll">📊</button>
           <button class="primary" id="sendBtn">Send</button>
@@ -1678,7 +1678,7 @@
           <button class="icon-btn" id="wastedBtn" title="Offer a drink or substance — get Wasted">🥂</button>
           <button class="icon-btn" id="pollBtn" title="Create a poll">📊</button>
           <button class="icon-btn" id="quizBtn" title="Take a quiz together">🧩</button>
-          <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" />
+          <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" dir="auto" />
           <button class="primary" id="sendBtn">Send</button>
         </div>
       </div>
