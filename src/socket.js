@@ -110,11 +110,11 @@ function applyRoleplayOutcome(io, senderId, otherId, outcome) {
   if (!outcome) return;
   if (outcome.type === 'advance') {
     deliverNarration(io, senderId, otherId,
-      roleplay.stagePayload(outcome.roleplay, outcome.stageRow, outcome.stageIndex, outcome.total, false));
+      roleplay.stagePayload(outcome.roleplay, outcome.stageRow, outcome.stageIndex, outcome.total, false, outcome.session.id));
     emitRoleplayProgress(io, senderId, otherId, outcome.session);
   } else if (outcome.type === 'complete') {
     deliverNarration(io, senderId, otherId,
-      roleplay.stagePayload(outcome.roleplay, null, outcome.total, outcome.total, true));
+      roleplay.stagePayload(outcome.roleplay, null, outcome.total, outcome.total, true, outcome.session.id));
     emitRoleplayProgress(io, senderId, otherId, outcome.session);
   } else if (outcome.type === 'progress') {
     emitRoleplayProgress(io, senderId, otherId, outcome.session);
@@ -1171,9 +1171,39 @@ function initSocket(io) {
         if (started.error) return ack && ack({ error: started.error });
 
         deliverNarration(io, me.id, to,
-          roleplay.stagePayload(started.roleplay, started.stageRow, 0, started.total, false));
+          roleplay.stagePayload(started.roleplay, started.stageRow, 0, started.total, false, started.session.id));
         emitRoleplayProgress(io, me.id, to, started.session);
 
+        ack && ack({ ok: true });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // A player typed inside a stage's speech/thought bubble. The value is shared:
+    // persist it on the session and mirror it live to both partners so the card
+    // stays in sync. Only the two players of an active session may write.
+    socket.on('roleplay:caption', (payload, ack) => {
+      try {
+        const sessionId = parseInt(payload && payload.sessionId, 10);
+        const stage = parseInt(payload && payload.stage, 10);
+        const index = parseInt(payload && payload.index, 10);
+        let text = payload && typeof payload.text === 'string' ? payload.text : '';
+        if (!sessionId || !(stage >= 0) || !(index >= 0)) return ack && ack({ error: 'Invalid caption.' });
+        text = text.slice(0, 500);
+
+        const session = roleplay.sessionForParticipant(sessionId, me.id);
+        if (!session) return ack && ack({ error: 'Not your roleplay.' });
+        if (session.status !== 'active') return ack && ack({ error: 'This roleplay has ended.' });
+
+        const stageRow = roleplay.getStage(session.roleplay_id, stage);
+        const caps = stageRow ? roleplay.parseCaptions(stageRow.captions) : [];
+        if (index >= caps.length) return ack && ack({ error: 'Unknown caption.' });
+
+        roleplay.setCaptionText(sessionId, stage, index, text, me.id);
+        const out = { sessionId, stage, index, text, by: me.id };
+        io.to(`user:${session.user_lo}`).emit('roleplay:caption', out);
+        io.to(`user:${session.user_hi}`).emit('roleplay:caption', out);
         ack && ack({ ok: true });
       } catch (e) {
         ack && ack({ error: 'Server error.' });

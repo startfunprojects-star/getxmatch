@@ -524,10 +524,25 @@ db.exec(`
     stage_index INTEGER NOT NULL,                -- 0-based order
     narration   TEXT NOT NULL DEFAULT '',
     image       TEXT,                            -- optional filename in uploads/
+    captions    TEXT NOT NULL DEFAULT '[]',      -- JSON: caption-studio bubbles placed on the image
     created_at  INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_roleplay_stages
     ON roleplay_stages (roleplay_id, stage_index);
+
+  -- Caption-studio text: what the two players have written inside a stage's
+  -- speech/thought bubbles. One shared, live-synced value per (session, stage,
+  -- caption), so both partners see the same words. Rows are keyed on the
+  -- session so they vanish when the roleplay (and its session) is deleted.
+  CREATE TABLE IF NOT EXISTS roleplay_caption_texts (
+    session_id    INTEGER NOT NULL REFERENCES roleplay_sessions(id) ON DELETE CASCADE,
+    stage_index   INTEGER NOT NULL,
+    caption_index INTEGER NOT NULL,
+    text          TEXT NOT NULL DEFAULT '',
+    updated_by    INTEGER,
+    updated_at    INTEGER NOT NULL,
+    PRIMARY KEY (session_id, stage_index, caption_index)
+  );
 
   -- One active playthrough per pair of users. The pair is stored normalized
   -- (user_lo < user_hi); count_lo/count_hi track messages each has sent in the
@@ -547,6 +562,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_roleplay_sessions_pair
     ON roleplay_sessions (user_lo, user_hi, status);
 `);
+
+// Caption-studio bubbles on roleplay stage images. Added idempotently for
+// databases created before the feature existed.
+{
+  const cols = db.prepare('PRAGMA table_info(roleplay_stages)').all().map((c) => c.name);
+  if (!cols.includes('captions')) {
+    db.exec("ALTER TABLE roleplay_stages ADD COLUMN captions TEXT NOT NULL DEFAULT '[]'");
+  }
+}
 
 // Admin-authored "fake" activity used to make the recent-activity feed feel
 // busy. Each row is a triple: person A, an activity, person B. The feed

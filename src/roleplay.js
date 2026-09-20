@@ -21,8 +21,30 @@ function totalStages(roleplayId) {
 
 function getStage(roleplayId, index) {
   return db
-    .prepare('SELECT id, stage_index, narration, image FROM roleplay_stages WHERE roleplay_id = ? AND stage_index = ?')
+    .prepare('SELECT id, stage_index, narration, image, captions FROM roleplay_stages WHERE roleplay_id = ? AND stage_index = ?')
     .get(roleplayId, index);
+}
+
+// Parse a stage's stored caption definitions (positioned speech/thought
+// bubbles). Returns a sanitized array of { type, x, y } with x/y as percentages
+// of the image box. Malformed input yields an empty list.
+function parseCaptions(raw) {
+  let arr;
+  try { arr = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (_e) { return []; }
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .slice(0, 12)
+    .map((c) => ({
+      type: c && c.type === 'thinking' ? 'thinking' : 'saying',
+      x: clampPct(c && c.x),
+      y: clampPct(c && c.y),
+    }));
+}
+
+function clampPct(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 0;
+  return Math.min(100, Math.max(0, Math.round(v * 100) / 100));
 }
 
 // Lightweight catalog summary for the roleplay list.
@@ -39,7 +61,9 @@ function roleplaySummary(r) {
 }
 
 // The narration payload embedded (as JSON) in a kind='narration' chat message.
-function stagePayload(roleplay, stageRow, index, total, final) {
+// `sessionId` binds the card to a live playthrough so the caption bubbles can be
+// synced/saved; it may be null for a final "The End" card.
+function stagePayload(roleplay, stageRow, index, total, final, sessionId) {
   return {
     rp: roleplay.id,
     title: roleplay.title,
@@ -47,6 +71,8 @@ function stagePayload(roleplay, stageRow, index, total, final) {
     total,
     narration: stageRow ? stageRow.narration : '',
     image: stageRow && stageRow.image ? `/uploads/${stageRow.image}` : null,
+    captions: stageRow && stageRow.image ? parseCaptions(stageRow.captions) : [],
+    sid: sessionId || null,
     final: !!final,
   };
 }
@@ -159,10 +185,41 @@ function recordMessage(senderId, otherId) {
   return { type: 'progress', roleplay: rp, total, session: s };
 }
 
+// Return the session row if `userId` is one of its two players, else null.
+// Used to authorize caption edits over the socket / REST.
+function sessionForParticipant(sessionId, userId) {
+  const s = sessionById(sessionId);
+  if (!s) return null;
+  return s.user_lo === userId || s.user_hi === userId ? s : null;
+}
+
+// All caption texts written so far for a stage of a session, as
+// { [captionIndex]: text }. Powers the initial paint when a card loads.
+function getCaptionTexts(sessionId, stageIndex) {
+  const rows = db
+    .prepare('SELECT caption_index, text FROM roleplay_caption_texts WHERE session_id = ? AND stage_index = ?')
+    .all(sessionId, stageIndex);
+  const out = {};
+  rows.forEach((r) => { out[r.caption_index] = r.text; });
+  return out;
+}
+
+// Upsert one shared caption value (last writer wins). Text is trimmed to a
+// sane length by the caller.
+function setCaptionText(sessionId, stageIndex, captionIndex, text, userId) {
+  db.prepare(
+    `INSERT INTO roleplay_caption_texts (session_id, stage_index, caption_index, text, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id, stage_index, caption_index)
+       DO UPDATE SET text = excluded.text, updated_by = excluded.updated_by, updated_at = excluded.updated_at`
+  ).run(sessionId, stageIndex, captionIndex, text, userId, Date.now());
+}
+
 module.exports = {
   pair,
   totalStages,
   getStage,
+  parseCaptions,
   roleplaySummary,
   stagePayload,
   getActiveSession,
@@ -170,4 +227,7 @@ module.exports = {
   startSession,
   stopSession,
   recordMessage,
+  sessionForParticipant,
+  getCaptionTexts,
+  setCaptionText,
 };

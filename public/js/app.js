@@ -22,6 +22,7 @@
     watching: null,      // token of a broadcast being watched inline, or null
     disappearing: 0,     // disappearing-messages TTL (seconds) for the open chat; 0 = off
     online: {},          // userId -> true when a friend/relation is currently online
+    captionEls: {},      // "sid:stage:index" -> the editable caption bubble on screen
   };
 
   /* ---------- online presence for friends/relations ----------
@@ -1571,6 +1572,7 @@
     state.peer = peer;
     state.group = null; // leaving any group view
     state.replyTo = null; // clear any half-composed reply from a previous chat
+    state.captionEls = {}; // drop caption-bubble refs from the previous chat
     closeReactionPalette();
     state.chatPeers[peer.id] = peer;
     delete state.unread[peer.id];
@@ -2172,10 +2174,16 @@
     const label = p.final
       ? '🎬 The End'
       : `🎭 ${esc(p.title || 'Roleplay')} · Stage ${(p.stage || 0) + 1}/${p.total || 1}`;
+    const captions = Array.isArray(p.captions) ? p.captions : [];
+    const hasCaptions = !!p.image && captions.length > 0;
     const card = el(`
       <div class="narration">
         <div class="narration-head">${label}</div>
-        ${p.image ? `<img class="narration-img" src="${esc(p.image)}" loading="lazy" />` : ''}
+        ${p.image
+          ? (hasCaptions
+              ? '<div class="narration-canvas"><img class="narration-img" loading="lazy" /></div>'
+              : '<img class="narration-img" loading="lazy" />')
+          : ''}
         <div class="narration-text"></div>
         <div class="time">${fmtTime(at)}</div>
       </div>
@@ -2184,9 +2192,80 @@
       ? 'Your story is complete. Start another anytime with 🎭.'
       : (p.narration || '');
     const img = card.querySelector('.narration-img');
-    if (img) img.addEventListener('click', () => openLightbox(p.image));
+    if (img) {
+      img.src = p.image;
+      // With captions the image is a positioning surface — don't hijack a click
+      // meant for a bubble; a small zoom control is offered instead below.
+      if (!hasCaptions) img.addEventListener('click', () => openLightbox(p.image));
+    }
+    if (hasCaptions) renderStageCaptions(card, p, captions);
     b.appendChild(card);
     scrollBody();
+  }
+
+  // Overlay the caption-studio bubbles on a stage image. Each bubble is an
+  // editable, auto-growing speech/thought balloon both players share: typing in
+  // one syncs to the partner (and is saved) over 'roleplay:caption'. Binding
+  // needs a live session id (p.sid); a card from a finished session is read-only.
+  function renderStageCaptions(card, p, captions) {
+    const canvas = card.querySelector('.narration-canvas');
+    if (!canvas) return;
+    const sid = p.sid;
+    const stage = p.stage || 0;
+    const editable = !!sid && !p.final;
+
+    captions.forEach((cap, i) => {
+      const type = cap.type === 'thinking' ? 'thinking' : 'saying';
+      const bubble = el(`
+        <div class="rp-caption ${type}" style="left:${+cap.x || 0}%;top:${+cap.y || 0}%">
+          <div class="rp-caption-body" ${editable ? 'contenteditable="true"' : ''}
+               data-ph="${type === 'thinking' ? 'thinking…' : 'saying…'}"></div>
+        </div>
+      `);
+      const body = bubble.querySelector('.rp-caption-body');
+      if (editable) {
+        const key = sid + ':' + stage + ':' + i;
+        state.captionEls[key] = body;
+        let timer = null;
+        body.addEventListener('input', () => {
+          syncCaptionFill(body);
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(() => sendCaption(sid, stage, i, body.textContent || ''), 250);
+        });
+        // Flush immediately on blur so a quick edit isn't lost to the debounce.
+        body.addEventListener('blur', () => {
+          if (timer) { clearTimeout(timer); timer = null; }
+          sendCaption(sid, stage, i, body.textContent || '');
+        });
+      }
+      canvas.appendChild(bubble);
+    });
+
+    // Paint whatever's already been written (survives reload / late join).
+    if (editable) {
+      api.get(`/api/roleplay/captions/${sid}?stage=${stage}`)
+        .then(({ texts }) => {
+          Object.keys(texts || {}).forEach((idx) => {
+            const bodyEl = state.captionEls[sid + ':' + stage + ':' + idx];
+            if (bodyEl && document.activeElement !== bodyEl) {
+              bodyEl.textContent = texts[idx];
+              syncCaptionFill(bodyEl);
+            }
+          });
+        })
+        .catch(() => { /* ignore — bubbles just start empty */ });
+    }
+  }
+
+  // Toggle a "filled" class so an empty bubble shows its placeholder hint and a
+  // filled one drops it. The bubble itself auto-sizes to its text via CSS.
+  function syncCaptionFill(body) {
+    body.classList.toggle('filled', !!(body.textContent || '').trim());
+  }
+
+  function sendCaption(sid, stage, index, text) {
+    if (!state.socket) return;
+    state.socket.emit('roleplay:caption', { sessionId: sid, stage, index, text }, () => {});
   }
 
   // Populate the roleplay picker with the catalog.
@@ -3959,6 +4038,17 @@
       const peerId = state.peer && state.peer.id;
       // Only update the banner when the progress is for the open conversation.
       if (peerId && p && p.peerId === peerId) updateRoleplayBar(p);
+    });
+
+    // The partner (or another of my tabs) typed inside a shared caption bubble.
+    // Mirror the text unless I'm the one editing that very bubble right now.
+    s.on('roleplay:caption', (e) => {
+      if (!e || e.sessionId == null) return;
+      const body = state.captionEls[e.sessionId + ':' + e.stage + ':' + e.index];
+      if (!body || document.activeElement === body) return;
+      if (body.textContent === e.text) return;
+      body.textContent = e.text || '';
+      body.classList.toggle('filled', !!(e.text || '').trim());
     });
 
     // ----- broadcast ("live chat") events -----

@@ -1186,6 +1186,67 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .narration-text { line-height: 1.5; white-space: pre-wrap; }
 .narration .time { display: block; font-size: 11px; color: var(--muted); margin-top: 8px; }
 
+/* ---- Caption-studio bubbles on a stage image (play side + admin editor) ----
+   The image is a positioning surface; each bubble is placed by percentage so it
+   lands in the same spot at any size. The editable body auto-grows to fit what a
+   player types. Shared by the chat card (.narration-canvas) and the admin
+   editor (.rp-cap-canvas). */
+.narration-canvas,
+.rp-cap-canvas {
+  position: relative; display: inline-block; max-width: 100%; line-height: 0;
+}
+.narration-canvas .narration-img { display: block; max-width: 100%; max-height: 340px; cursor: default; margin: 4px 0 8px; }
+.rp-cap-canvas { border: 1px dashed var(--accent-2); border-radius: 10px; touch-action: none; }
+.rp-cap-img { display: block; max-width: 100%; max-height: 360px; border-radius: 9px; }
+
+.rp-caption {
+  position: absolute; z-index: 2; max-width: 46%; line-height: 1.35;
+  transform: translate(0, 0);
+}
+.rp-cap-canvas .rp-caption { cursor: move; touch-action: none; }
+.rp-cap-canvas .rp-caption.dragging { opacity: .85; }
+
+/* The look shared by an editable play-side body and the admin placeholder. */
+.rp-caption-body,
+.rp-caption .rp-cap-ph {
+  display: inline-block; width: max-content; max-width: 100%;
+  min-width: 46px; min-height: 20px; padding: 7px 11px; box-sizing: border-box;
+  font-size: 13px; text-align: center; color: #14181f; background: #fff;
+  border: 2px solid #14181f; overflow-wrap: anywhere; outline: none;
+}
+.rp-caption-body { white-space: pre-wrap; }
+.rp-caption.saying  .rp-caption-body, .rp-caption.saying  .rp-cap-ph { border-radius: 16px; }
+.rp-caption.thinking .rp-caption-body, .rp-caption.thinking .rp-cap-ph {
+  border-radius: 50% / 42%; border-style: dashed;
+}
+/* Speech tail for a "saying" bubble. */
+.rp-caption.saying::after {
+  content: ''; position: absolute; left: 16px; bottom: -9px; width: 0; height: 0;
+  border: 8px solid transparent; border-top-color: #14181f; border-bottom: 0;
+}
+/* Thought trail (two shrinking dots) for a "thinking" bubble. */
+.rp-caption.thinking::after {
+  content: ''; position: absolute; left: 14px; bottom: -14px; width: 8px; height: 8px;
+  border-radius: 50%; background: #fff; border: 2px solid #14181f;
+  box-shadow: -7px 8px 0 -1px #fff, -7px 8px 0 1px #14181f;
+}
+/* Placeholder hint while a player's bubble is still empty. */
+.rp-caption-body:not(.filled)::before {
+  content: attr(data-ph); color: #6b7480; font-style: italic;
+}
+.rp-caption-body:not(.filled):focus::before { opacity: .5; }
+
+/* Admin editor chrome. */
+.rp-cap-editor { margin: 8px 0 4px; }
+.rp-cap-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.rp-cap-tools .hint { flex: 1 1 180px; min-width: 160px; }
+.rp-caption .rp-cap-ph { pointer-events: none; }
+.rp-cap-del {
+  position: absolute; top: -9px; right: -9px; width: 20px; height: 20px; padding: 0;
+  border-radius: 50%; border: none; background: var(--danger, #c0392b); color: #fff;
+  font-size: 14px; line-height: 20px; cursor: pointer; z-index: 3;
+}
+
 /* Roleplay picker popover (mirrors the gift picker). */
 .rp-picker {
   border-top: 1px solid var(--border); background: var(--bg-2);
