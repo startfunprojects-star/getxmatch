@@ -659,16 +659,24 @@ function normalizeCaptions(raw, hasImage) {
     if (!Number.isFinite(v)) return 0;
     return Math.min(100, Math.max(0, Math.round(v * 100) / 100));
   };
+  const clampRot = (n) => {
+    let v = Number(n);
+    if (!Number.isFinite(v)) return 0;
+    v = Math.round(((v % 360) + 360) % 360);
+    return v > 180 ? v - 360 : v;
+  };
   return arr.slice(0, 12).map((c) => ({
     type: c && c.type === 'thinking' ? 'thinking' : 'saying',
     x: clamp(c && c.x),
     y: clamp(c && c.y),
+    rot: clampRot(c && c.rot),
+    flip: !!(c && c.flip),
   }));
 }
 
 // Parse the posted stages, resolving each stage's image to either a freshly
 // uploaded file, a retained existing filename, or none. Returns
-// { value: [{narration, image, captions}], retained: Set } or { error }.
+// { value: [{title, narration, image, captions}], retained: Set } or { error }.
 function normalizeStages(rawStages, fileByField) {
   const arr = parseJson(rawStages, null);
   if (!Array.isArray(arr) || arr.length === 0) return { error: 'Add at least one stage.' };
@@ -676,6 +684,7 @@ function normalizeStages(rawStages, fileByField) {
   const retained = new Set();
   for (let i = 0; i < arr.length; i++) {
     const s = arr[i] || {};
+    const title = (typeof s.title === 'string' ? s.title : '').trim().slice(0, 200);
     const narration = (typeof s.narration === 'string' ? s.narration : '').trim();
     const uploaded = fileByField['stage_image_' + i];
     let image = null;
@@ -689,7 +698,7 @@ function normalizeStages(rawStages, fileByField) {
       return { error: `Stage ${i + 1} needs a narration or an image.` };
     }
     const captions = normalizeCaptions(s.captions, !!image);
-    out.push({ narration: narration.slice(0, 4000), image, captions: JSON.stringify(captions) });
+    out.push({ title, narration: narration.slice(0, 4000), image, captions: JSON.stringify(captions) });
   }
   return { value: out, retained };
 }
@@ -718,10 +727,11 @@ router.get('/roleplays', requireAdmin, (req, res) => {
       cover: r.cover ? `/uploads/${r.cover}` : null,
       requiredMessages: r.required_messages,
       stages: db
-        .prepare('SELECT id, stage_index, narration, image, captions FROM roleplay_stages WHERE roleplay_id = ? ORDER BY stage_index')
+        .prepare('SELECT id, stage_index, title, narration, image, captions FROM roleplay_stages WHERE roleplay_id = ? ORDER BY stage_index')
         .all(r.id)
         .map((s) => ({
           index: s.stage_index,
+          title: s.title || '',
           narration: s.narration,
           image: s.image ? `/uploads/${s.image}` : null,
           imageRaw: s.image || null,
@@ -750,8 +760,8 @@ router.post('/roleplays', requireAdmin, imageUpload.any(), (req, res) => {
     .prepare('INSERT INTO roleplays (title, description, cover, required_messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(title.slice(0, 200), description, cover, required, now, now);
   const rpId = info.lastInsertRowid;
-  const insStage = db.prepare('INSERT INTO roleplay_stages (roleplay_id, stage_index, narration, image, captions, created_at) VALUES (?, ?, ?, ?, ?, ?)');
-  stages.value.forEach((s, i) => insStage.run(rpId, i, s.narration, s.image, s.captions, now));
+  const insStage = db.prepare('INSERT INTO roleplay_stages (roleplay_id, stage_index, title, narration, image, captions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  stages.value.forEach((s, i) => insStage.run(rpId, i, s.title, s.narration, s.image, s.captions, now));
 
   res.status(201).json({ id: rpId });
 });
@@ -789,8 +799,8 @@ router.put('/roleplays/:id', requireAdmin, imageUpload.any(), (req, res) => {
   oldImages.forEach((img) => { if (!stages.retained.has(img)) removeUpload(img); });
 
   db.prepare('DELETE FROM roleplay_stages WHERE roleplay_id = ?').run(rp.id);
-  const insStage = db.prepare('INSERT INTO roleplay_stages (roleplay_id, stage_index, narration, image, captions, created_at) VALUES (?, ?, ?, ?, ?, ?)');
-  stages.value.forEach((s, i) => insStage.run(rp.id, i, s.narration, s.image, s.captions, now));
+  const insStage = db.prepare('INSERT INTO roleplay_stages (roleplay_id, stage_index, title, narration, image, captions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  stages.value.forEach((s, i) => insStage.run(rp.id, i, s.title, s.narration, s.image, s.captions, now));
 
   db.prepare('UPDATE roleplays SET title = ?, description = ?, cover = ?, required_messages = ?, updated_at = ? WHERE id = ?')
     .run(title.slice(0, 200), description, cover, required, now, rp.id);

@@ -105,7 +105,7 @@ function emitRoleplayProgress(io, a, b, session) {
   io.to(`user:${b}`).emit('roleplay:progress', roleplay.progressState(session, b));
 }
 
-// Act on a recordMessage()/start outcome: reveal narration + push progress.
+// Act on a start/advance outcome: reveal narration + push progress.
 function applyRoleplayOutcome(io, senderId, otherId, outcome) {
   if (!outcome) return;
   if (outcome.type === 'advance') {
@@ -655,10 +655,6 @@ function initSocket(io) {
 
         // If this conversation is being broadcast, mirror it to watchers.
         mirrorLiveMessage(io, me.id, to, 'text', outBody, now);
-
-        // Count the message toward any active roleplay; reveal the next stage
-        // when both players have hit the threshold.
-        applyRoleplayOutcome(io, me.id, to, roleplay.recordMessage(me.id, to));
 
         // Keep the sender's wasted meter fresh, and occasionally interrupt the
         // chat with a random admin "wasted" sentence (a permanent message).
@@ -1217,6 +1213,38 @@ function initSocket(io) {
         if (!to) return ack && ack({ error: 'Invalid request.' });
         const session = roleplay.stopSession(me.id, to);
         if (session) emitRoleplayProgress(io, me.id, to, session);
+        ack && ack({ ok: true });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // Either player advances the roleplay to the next stage (the "Next stage"
+    // button). Reveals the next narration to both, or ends the story.
+    socket.on('roleplay:advance', (payload, ack) => {
+      try {
+        const to = parseInt(payload && payload.to, 10);
+        if (!to) return ack && ack({ error: 'Invalid request.' });
+        const outcome = roleplay.advanceSession(me.id, to);
+        if (!outcome) return ack && ack({ error: 'No active roleplay.' });
+        applyRoleplayOutcome(io, me.id, to, outcome);
+        ack && ack({ ok: true });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // "Partner" nudge: ask the other player to type in the main chat. Delivers a
+    // sound/notification to their sockets. Gated to an active shared roleplay.
+    socket.on('roleplay:nudge', (payload, ack) => {
+      try {
+        const to = parseInt(payload && payload.to, 10);
+        if (!to) return ack && ack({ error: 'Invalid request.' });
+        if (areBlocked(me.id, to)) return ack && ack({ error: 'Unavailable.' });
+        const session = roleplay.getActiveSession(me.id, to);
+        if (!session) return ack && ack({ error: 'No active roleplay.' });
+        const fromName = nameOf(me.id);
+        io.to(`user:${to}`).emit('roleplay:nudge', { from: me.id, fromName });
         ack && ack({ ok: true });
       } catch (e) {
         ack && ack({ error: 'Server error.' });

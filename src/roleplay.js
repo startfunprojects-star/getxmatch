@@ -1,11 +1,12 @@
 'use strict';
 
 // Roleplay engine. A roleplay is an admin-authored story with ordered stages.
-// Two users play it out inside their chat: each stage's narration is shown,
-// then both users must each send `required_messages` messages before the next
-// stage's narration is revealed. Session state (current stage + per-user
-// message counts) lives in the roleplay_sessions table, keyed on the
-// normalized user pair.
+// Two users play it out inside their chat: each stage's narration (title + text
+// + an optional image carrying caption-studio speech/thought bubbles) is shown,
+// and either player advances to the next stage with the "Next stage" button.
+// Session state (just the current stage) lives in the roleplay_sessions table,
+// keyed on the normalized user pair. The count_lo/count_hi columns are legacy
+// and no longer used now that advancing is manual.
 
 const db = require('./db');
 
@@ -21,13 +22,14 @@ function totalStages(roleplayId) {
 
 function getStage(roleplayId, index) {
   return db
-    .prepare('SELECT id, stage_index, narration, image, captions FROM roleplay_stages WHERE roleplay_id = ? AND stage_index = ?')
+    .prepare('SELECT id, stage_index, title, narration, image, captions FROM roleplay_stages WHERE roleplay_id = ? AND stage_index = ?')
     .get(roleplayId, index);
 }
 
 // Parse a stage's stored caption definitions (positioned speech/thought
-// bubbles). Returns a sanitized array of { type, x, y } with x/y as percentages
-// of the image box. Malformed input yields an empty list.
+// bubbles). Returns a sanitized array of { type, x, y, rot, flip }: x/y are
+// percentages of the image box (the tail's anchor point), rot is a rotation in
+// degrees and flip mirrors the bubble. Malformed input yields an empty list.
 function parseCaptions(raw) {
   let arr;
   try { arr = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (_e) { return []; }
@@ -38,6 +40,8 @@ function parseCaptions(raw) {
       type: c && c.type === 'thinking' ? 'thinking' : 'saying',
       x: clampPct(c && c.x),
       y: clampPct(c && c.y),
+      rot: clampRot(c && c.rot),
+      flip: !!(c && c.flip),
     }));
 }
 
@@ -45,6 +49,16 @@ function clampPct(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return 0;
   return Math.min(100, Math.max(0, Math.round(v * 100) / 100));
+}
+
+function clampRot(n) {
+  let v = Number(n);
+  if (!Number.isFinite(v)) return 0;
+  v = Math.round(v);
+  // Normalize into (-180, 180].
+  v = ((v % 360) + 360) % 360;
+  if (v > 180) v -= 360;
+  return v;
 }
 
 // Lightweight catalog summary for the roleplay list.
@@ -64,11 +78,15 @@ function roleplaySummary(r) {
 // `sessionId` binds the card to a live playthrough so the caption bubbles can be
 // synced/saved; it may be null for a final "The End" card.
 function stagePayload(roleplay, stageRow, index, total, final, sessionId) {
+  const next = final ? null : getStage(roleplay.id, index + 1);
   return {
     rp: roleplay.id,
     title: roleplay.title,
     stage: index,
     total,
+    stageTitle: stageRow && stageRow.title ? stageRow.title : '',
+    nextTitle: next && next.title ? next.title : '',
+    hasNext: !final && index + 1 < total,
     narration: stageRow ? stageRow.narration : '',
     image: stageRow && stageRow.image ? `/uploads/${stageRow.image}` : null,
     captions: stageRow && stageRow.image ? parseCaptions(stageRow.captions) : [],
@@ -89,20 +107,24 @@ function sessionById(id) {
 }
 
 // Progress snapshot tailored to a viewer (so "you" vs "partner" is correct).
+// Carries the current + next stage titles so players know what they're playing.
 function progressState(session, viewerId) {
   if (!session) return null;
-  const rp = db.prepare('SELECT id, title, required_messages FROM roleplays WHERE id = ?').get(session.roleplay_id);
+  const rp = db.prepare('SELECT id, title FROM roleplays WHERE id = ?').get(session.roleplay_id);
   const isLo = viewerId === session.user_lo;
+  const total = totalStages(session.roleplay_id);
+  const cur = getStage(session.roleplay_id, session.current_stage);
+  const next = getStage(session.roleplay_id, session.current_stage + 1);
   return {
     sessionId: session.id,
     roleplayId: session.roleplay_id,
     title: rp ? rp.title : 'Roleplay',
     peerId: isLo ? session.user_hi : session.user_lo,
     stage: session.current_stage,
-    total: totalStages(session.roleplay_id),
-    required: rp ? rp.required_messages : 0,
-    myCount: isLo ? session.count_lo : session.count_hi,
-    peerCount: isLo ? session.count_hi : session.count_lo,
+    total,
+    stageTitle: cur && cur.title ? cur.title : '',
+    nextStageTitle: next && next.title ? next.title : '',
+    hasNext: session.current_stage + 1 < total,
     status: session.status,
   };
 }
@@ -143,46 +165,34 @@ function stopSession(a, b) {
   return sessionById(s.id);
 }
 
-// Record a TEXT message from sender→other in the active session (if any) and
-// decide what happens next. Returns null if there's no active session, else a
-// descriptor: { type: 'progress' | 'advance' | 'complete', ... }.
-function recordMessage(senderId, otherId) {
-  const session = getActiveSession(senderId, otherId);
+// Manually advance the active session for a pair to the next stage (triggered by
+// either player's "Next stage" button). Returns null if there's no active
+// session, else { type: 'advance' | 'complete', ... } to reveal to both users.
+function advanceSession(a, b) {
+  const session = getActiveSession(a, b);
   if (!session) return null;
   const rp = db.prepare('SELECT * FROM roleplays WHERE id = ?').get(session.roleplay_id);
   if (!rp) return null;
 
-  const required = rp.required_messages;
-  const isLo = senderId === session.user_lo;
-  const now = Date.now();
-  db.prepare(
-    `UPDATE roleplay_sessions
-       SET count_lo = count_lo + ?, count_hi = count_hi + ?, updated_at = ?
-     WHERE id = ?`
-  ).run(isLo ? 1 : 0, isLo ? 0 : 1, now, session.id);
-
-  const s = sessionById(session.id);
   const total = totalStages(rp.id);
+  const now = Date.now();
+  const nextIndex = session.current_stage + 1;
 
-  if (s.count_lo >= required && s.count_hi >= required) {
-    const nextIndex = s.current_stage + 1;
-    if (nextIndex < total) {
-      db.prepare('UPDATE roleplay_sessions SET current_stage = ?, count_lo = 0, count_hi = 0, updated_at = ? WHERE id = ?')
-        .run(nextIndex, now, s.id);
-      return {
-        type: 'advance',
-        roleplay: rp,
-        stageRow: getStage(rp.id, nextIndex),
-        stageIndex: nextIndex,
-        total,
-        session: sessionById(s.id),
-      };
-    }
-    db.prepare("UPDATE roleplay_sessions SET status = 'completed', updated_at = ? WHERE id = ?").run(now, s.id);
-    return { type: 'complete', roleplay: rp, total, session: sessionById(s.id) };
+  if (nextIndex < total) {
+    db.prepare('UPDATE roleplay_sessions SET current_stage = ?, updated_at = ? WHERE id = ?')
+      .run(nextIndex, now, session.id);
+    return {
+      type: 'advance',
+      roleplay: rp,
+      stageRow: getStage(rp.id, nextIndex),
+      stageIndex: nextIndex,
+      total,
+      session: sessionById(session.id),
+    };
   }
 
-  return { type: 'progress', roleplay: rp, total, session: s };
+  db.prepare("UPDATE roleplay_sessions SET status = 'completed', updated_at = ? WHERE id = ?").run(now, session.id);
+  return { type: 'complete', roleplay: rp, total, session: sessionById(session.id) };
 }
 
 // Return the session row if `userId` is one of its two players, else null.
@@ -226,7 +236,7 @@ module.exports = {
   progressState,
   startSession,
   stopSession,
-  recordMessage,
+  advanceSession,
   sessionForParticipant,
   getCaptionTexts,
   setCaptionText,

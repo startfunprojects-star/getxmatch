@@ -1446,13 +1446,15 @@
     await loadRoleplayList();
   }
 
-  // One editable stage: narration + optional image (with keep/replace/clear) +
-  // caption-studio bubbles placed on the image (see mountCaptionEditor).
+  // One editable stage: title + narration + optional image (keep/replace/clear)
+  // + caption-studio bubbles placed on the image (see mountCaptionEditor).
   function roleplayStageBlock(stage, idx) {
-    stage = stage || { narration: '', image: null, imageRaw: null, captions: [] };
+    stage = stage || { title: '', narration: '', image: null, imageRaw: null, captions: [] };
     const block = el(`
       <div class="qb-question rp-stage">
-        <label>Stage <span class="rp-stage-num">${idx + 1}</span></label>
+        <label>Stage <span class="rp-stage-num">${idx + 1}</span> title <span class="hint">(shown to players)</span></label>
+        <input class="rp-title" placeholder="e.g. The first meeting" value="${esc(stage.title || '')}" />
+        <label style="margin-top:8px">Narration / story</label>
         <textarea class="rp-narration" placeholder="Narration / story for this stage…" style="min-height:90px">${esc(stage.narration || '')}</textarea>
         <div class="rp-stage-img">
           <label style="margin:8px 0 4px">Image / GIF (optional)</label>
@@ -1463,7 +1465,13 @@
           <div class="rp-cap-tools">
             <button type="button" class="ghost small rp-add-saying">💬 Add saying</button>
             <button type="button" class="ghost small rp-add-thinking">💭 Add thinking</button>
-            <span class="hint">Drag each bubble onto the picture. Players type their words inside it while they play; the bubble grows to fit.</span>
+            <span class="rp-cap-selctrls" hidden>
+              <button type="button" class="ghost small rp-rot-l" title="Rotate left">⟲</button>
+              <button type="button" class="ghost small rp-rot-r" title="Rotate right">⟳</button>
+              <button type="button" class="ghost small rp-mirror" title="Mirror / flip">⇋</button>
+              <button type="button" class="danger small rp-cap-del" title="Delete caption">🗑</button>
+            </span>
+            <span class="hint">Drag a bubble to place it, then use the controls to rotate or mirror it. Players type inside it while playing; it grows to fit and keeps pointing at the same spot.</span>
           </div>
           <div class="rp-cap-canvas"><img class="rp-cap-img" alt="stage image" /></div>
         </div>
@@ -1474,23 +1482,41 @@
     `);
     block.dataset.existingImage = stage.imageRaw || '';
     block._captions = Array.isArray(stage.captions)
-      ? stage.captions.map((c) => ({ type: c.type === 'thinking' ? 'thinking' : 'saying', x: +c.x || 0, y: +c.y || 0 }))
+      ? stage.captions.map((c) => ({
+          type: c.type === 'thinking' ? 'thinking' : 'saying',
+          x: +c.x || 0, y: +c.y || 0, rot: +c.rot || 0, flip: !!c.flip,
+        }))
       : [];
+    block._sel = -1;
     block.querySelector('.rp-rm-stage').addEventListener('click', () => { block.remove(); renumberStages(); });
     mountCaptionEditor(block, stage.image || null);
     return block;
   }
 
-  // Wire the caption-studio editor for a stage block: picking/removing the
-  // image toggles it, the two buttons add bubbles, and each bubble can be
-  // dragged around and deleted. Positions are stored on block._captions as
-  // percentages of the image box so they survive any later resize.
+  // Markup for one caption bubble (shared shape with the play side): an anchor
+  // point positioned by %, an inner bubble whose bottom-left sits on that anchor
+  // and grows up/right (so the tail keeps pointing at the same spot as it
+  // resizes), rotated via the outer transform and mirrored via a `flip` class.
+  function captionBubbleEl(cap) {
+    return el(`
+      <div class="rp-caption ${cap.type === 'thinking' ? 'thinking' : 'saying'}${cap.flip ? ' flip' : ''}"
+           style="left:${cap.x}%;top:${cap.y}%;transform:rotate(${cap.rot || 0}deg)">
+        <div class="rp-cap-inner"><div class="rp-cap-body" data-ph="${cap.type === 'thinking' ? 'thinking…' : 'saying…'}"></div></div>
+      </div>
+    `);
+  }
+
+  // Wire the caption-studio editor: picking/removing the image toggles it, the
+  // two buttons add bubbles, a bubble can be dragged/selected, and the selection
+  // controls rotate, mirror or delete it. Everything lives on block._captions as
+  // percentages + rotation so it survives resizes and round-trips to the server.
   function mountCaptionEditor(block, existingImageUrl) {
     const editor = block.querySelector('.rp-cap-editor');
     const canvas = block.querySelector('.rp-cap-canvas');
     const img = block.querySelector('.rp-cap-img');
     const fileIn = block.querySelector('.rp-image');
     const clearBox = block.querySelector('.rp-clear-img');
+    const selCtrls = block.querySelector('.rp-cap-selctrls');
 
     function showFor(src) {
       if (!src) { editor.hidden = true; img.removeAttribute('src'); return; }
@@ -1499,60 +1525,77 @@
       paintBubbles();
     }
 
+    function select(i) {
+      block._sel = i;
+      canvas.querySelectorAll('.rp-caption').forEach((b, j) => b.classList.toggle('selected', j === i));
+      selCtrls.hidden = !(i >= 0 && i < block._captions.length);
+    }
+
     function paintBubbles() {
       canvas.querySelectorAll('.rp-caption').forEach((b) => b.remove());
-      block._captions.forEach((cap, i) => canvas.appendChild(makeBubble(cap, i)));
-    }
-
-    function makeBubble(cap, i) {
-      const bubble = el(`
-        <div class="rp-caption ${cap.type === 'thinking' ? 'thinking' : 'saying'}" style="left:${cap.x}%;top:${cap.y}%">
-          <span class="rp-cap-ph">${cap.type === 'thinking' ? '💭 thinking…' : '💬 saying…'}</span>
-          <button type="button" class="rp-cap-del" title="Remove caption">×</button>
-        </div>
-      `);
-      bubble.querySelector('.rp-cap-del').addEventListener('click', (e) => {
-        e.stopPropagation();
-        block._captions.splice(i, 1);
-        paintBubbles();
+      block._captions.forEach((cap, i) => {
+        const bubble = captionBubbleEl(cap);
+        enableDrag(bubble, cap, i);
+        canvas.appendChild(bubble);
       });
-      enableDrag(bubble, cap);
-      return bubble;
+      select(block._sel < block._captions.length ? block._sel : -1);
     }
 
-    function enableDrag(bubble, cap) {
-      bubble.addEventListener('pointerdown', (e) => {
-        if (e.target.classList.contains('rp-cap-del')) return;
+    function enableDrag(bubble, cap, i) {
+      const inner = bubble.querySelector('.rp-cap-inner');
+      inner.addEventListener('pointerdown', (e) => {
         e.preventDefault();
-        bubble.setPointerCapture(e.pointerId);
+        select(i);
+        inner.setPointerCapture(e.pointerId);
         bubble.classList.add('dragging');
+        const rect = canvas.getBoundingClientRect();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const origX = cap.x;
+        const origY = cap.y;
         const move = (ev) => {
-          const rect = canvas.getBoundingClientRect();
           if (!rect.width || !rect.height) return;
-          const x = ((ev.clientX - rect.left) / rect.width) * 100;
-          const y = ((ev.clientY - rect.top) / rect.height) * 100;
-          cap.x = Math.min(92, Math.max(0, Math.round(x * 100) / 100));
-          cap.y = Math.min(90, Math.max(0, Math.round(y * 100) / 100));
+          const dx = ((ev.clientX - startX) / rect.width) * 100;
+          const dy = ((ev.clientY - startY) / rect.height) * 100;
+          cap.x = Math.min(98, Math.max(2, Math.round((origX + dx) * 100) / 100));
+          cap.y = Math.min(98, Math.max(2, Math.round((origY + dy) * 100) / 100));
           bubble.style.left = cap.x + '%';
           bubble.style.top = cap.y + '%';
         };
         const up = (ev) => {
           bubble.classList.remove('dragging');
-          bubble.releasePointerCapture(ev.pointerId);
-          bubble.removeEventListener('pointermove', move);
-          bubble.removeEventListener('pointerup', up);
+          inner.releasePointerCapture(ev.pointerId);
+          inner.removeEventListener('pointermove', move);
+          inner.removeEventListener('pointerup', up);
         };
-        bubble.addEventListener('pointermove', move);
-        bubble.addEventListener('pointerup', up);
+        inner.addEventListener('pointermove', move);
+        inner.addEventListener('pointerup', up);
       });
     }
 
-    block.querySelector('.rp-add-saying').addEventListener('click', () => {
-      block._captions.push({ type: 'saying', x: 20, y: 20 });
+    function addCaption(type) {
+      block._captions.push({ type, x: 24, y: type === 'thinking' ? 60 : 30, rot: 0, flip: false });
+      block._sel = block._captions.length - 1;
       paintBubbles();
-    });
-    block.querySelector('.rp-add-thinking').addEventListener('click', () => {
-      block._captions.push({ type: 'thinking', x: 20, y: 55 });
+    }
+    function selCap() { return block._captions[block._sel]; }
+    function applySel() {
+      const bubble = canvas.querySelectorAll('.rp-caption')[block._sel];
+      const cap = selCap();
+      if (!bubble || !cap) return;
+      bubble.style.transform = `rotate(${cap.rot || 0}deg)`;
+      bubble.classList.toggle('flip', !!cap.flip);
+    }
+
+    block.querySelector('.rp-add-saying').addEventListener('click', () => addCaption('saying'));
+    block.querySelector('.rp-add-thinking').addEventListener('click', () => addCaption('thinking'));
+    block.querySelector('.rp-rot-l').addEventListener('click', () => { const c = selCap(); if (c) { c.rot = (c.rot || 0) - 15; applySel(); } });
+    block.querySelector('.rp-rot-r').addEventListener('click', () => { const c = selCap(); if (c) { c.rot = (c.rot || 0) + 15; applySel(); } });
+    block.querySelector('.rp-mirror').addEventListener('click', () => { const c = selCap(); if (c) { c.flip = !c.flip; applySel(); } });
+    block.querySelector('.rp-cap-del').addEventListener('click', () => {
+      if (block._sel < 0) return;
+      block._captions.splice(block._sel, 1);
+      block._sel = -1;
       paintBubbles();
     });
 
@@ -1566,7 +1609,7 @@
     });
     if (clearBox) {
       clearBox.addEventListener('change', () => {
-        if (clearBox.checked && !fileIn.files[0]) { block._captions = []; showFor(null); }
+        if (clearBox.checked && !fileIn.files[0]) { block._captions = []; block._sel = -1; showFor(null); }
         else showFor(fileIn.files[0] ? img.src : existingImageUrl);
       });
     }
@@ -1587,8 +1630,6 @@
       <h2>${rp ? 'Edit roleplay' : 'Create roleplay'}</h2>
       <label>Title</label><input id="rpTitle" value="${esc(rp ? rp.title : '')}" />
       <label>Description</label><input id="rpDesc" value="${esc(rp ? rp.description : '')}" />
-      <label>Messages required from EACH user per stage</label>
-      <input id="rpRequired" type="number" min="1" max="100" value="${rp ? rp.requiredMessages : 10}" style="max-width:120px" />
       <label>Cover image (optional)</label>
       ${rp && rp.cover ? `<div><img class="rp-thumb" src="${esc(rp.cover)}" alt="cover" /></div>` : ''}
       <input type="file" id="rpCover" accept="image/*" />
@@ -1622,7 +1663,6 @@
       const fd = new FormData();
       fd.append('title', host.querySelector('#rpTitle').value.trim());
       fd.append('description', host.querySelector('#rpDesc').value.trim());
-      fd.append('requiredMessages', host.querySelector('#rpRequired').value || '10');
 
       const coverEl = host.querySelector('#rpCover');
       if (coverEl.files[0]) fd.append('cover', coverEl.files[0]);
@@ -1631,6 +1671,7 @@
       const stageEls = Array.from(stagesBox.querySelectorAll('.rp-stage'));
       if (!stageEls.length) { msg.className = 'msg error'; msg.textContent = 'Add at least one stage.'; return; }
       const stagesOut = stageEls.map((blk, i) => {
+        const title = blk.querySelector('.rp-title').value.trim();
         const narration = blk.querySelector('.rp-narration').value.trim();
         const fileIn = blk.querySelector('.rp-image');
         const cleared = blk.querySelector('.rp-clear-img');
@@ -1639,6 +1680,7 @@
         const keepExisting = existing && !fileIn.files[0] && !(cleared && cleared.checked);
         const hasImage = !!fileIn.files[0] || keepExisting;
         return {
+          title,
           narration,
           existingImage: keepExisting ? existing : null,
           captions: hasImage ? (blk._captions || []) : [],
@@ -1676,7 +1718,7 @@
       const item = el(`
         <div class="admin-item">
           <h3>${esc(rp.title)}</h3>
-          <div class="count">${rp.stages.length} stage${rp.stages.length === 1 ? '' : 's'} · ${rp.requiredMessages} messages each per stage</div>
+          <div class="count">${rp.stages.length} stage${rp.stages.length === 1 ? '' : 's'}</div>
           <div class="admin-item-actions">
             <button class="ghost small" data-edit>Edit</button>
             <button class="danger small" data-del>Delete</button>

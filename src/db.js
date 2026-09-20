@@ -522,6 +522,7 @@ db.exec(`
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     roleplay_id INTEGER NOT NULL REFERENCES roleplays(id) ON DELETE CASCADE,
     stage_index INTEGER NOT NULL,                -- 0-based order
+    title       TEXT NOT NULL DEFAULT '',        -- shown to players so they know what this stage is about
     narration   TEXT NOT NULL DEFAULT '',
     image       TEXT,                            -- optional filename in uploads/
     captions    TEXT NOT NULL DEFAULT '[]',      -- JSON: caption-studio bubbles placed on the image
@@ -569,6 +570,9 @@ db.exec(`
   const cols = db.prepare('PRAGMA table_info(roleplay_stages)').all().map((c) => c.name);
   if (!cols.includes('captions')) {
     db.exec("ALTER TABLE roleplay_stages ADD COLUMN captions TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!cols.includes('title')) {
+    db.exec("ALTER TABLE roleplay_stages ADD COLUMN title TEXT NOT NULL DEFAULT ''");
   }
 }
 

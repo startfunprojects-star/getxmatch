@@ -2173,7 +2173,8 @@
     try { p = typeof raw === 'string' ? JSON.parse(raw) : (raw || {}); } catch (_e) { p = {}; }
     const label = p.final
       ? '🎬 The End'
-      : `🎭 ${esc(p.title || 'Roleplay')} · Stage ${(p.stage || 0) + 1}/${p.total || 1}`;
+      : `🎭 ${esc(p.title || 'Roleplay')} · Stage ${(p.stage || 0) + 1}/${p.total || 1}`
+        + (p.stageTitle ? ` · ${esc(p.stageTitle)}` : '');
     const captions = Array.isArray(p.captions) ? p.captions : [];
     const hasCaptions = !!p.image && captions.length > 0;
     const card = el(`
@@ -2217,12 +2218,13 @@
     captions.forEach((cap, i) => {
       const type = cap.type === 'thinking' ? 'thinking' : 'saying';
       const bubble = el(`
-        <div class="rp-caption ${type}" style="left:${+cap.x || 0}%;top:${+cap.y || 0}%">
-          <div class="rp-caption-body" ${editable ? 'contenteditable="true"' : ''}
-               data-ph="${type === 'thinking' ? 'thinking…' : 'saying…'}"></div>
+        <div class="rp-caption ${type}${cap.flip ? ' flip' : ''}"
+             style="left:${+cap.x || 0}%;top:${+cap.y || 0}%;transform:rotate(${+cap.rot || 0}deg)">
+          <div class="rp-cap-inner"><div class="rp-cap-body" ${editable ? 'contenteditable="true"' : ''}
+               data-ph="${type === 'thinking' ? 'thinking…' : 'saying…'}"></div></div>
         </div>
       `);
-      const body = bubble.querySelector('.rp-caption-body');
+      const body = bubble.querySelector('.rp-cap-body');
       if (editable) {
         const key = sid + ':' + stage + ':' + i;
         state.captionEls[key] = body;
@@ -2286,7 +2288,7 @@
           ${rp.cover ? `<img class="rp-cover" src="${esc(rp.cover)}" />` : '<span class="rp-cover rp-cover-ph">🎭</span>'}
           <span class="rp-item-body">
             <span class="rp-item-title">${esc(rp.title)}</span>
-            <span class="rp-item-meta">${rp.stageCount} stage${rp.stageCount === 1 ? '' : 's'} · ${rp.requiredMessages} msgs each</span>
+            <span class="rp-item-meta">${rp.stageCount} stage${rp.stageCount === 1 ? '' : 's'}</span>
           </span>
         </button>
       `);
@@ -2313,27 +2315,79 @@
     });
   }
 
-  // Render/refresh the roleplay progress banner for the open chat.
+  // Render/refresh the roleplay banner for the open chat. Shows the current
+  // stage title, a "You"/"Partner" turn control, a "Next stage" advance button,
+  // and "End". Advancing is manual now — there are no message counters.
   function updateRoleplayBar(p) {
     const bar = document.getElementById('roleplayBar');
     if (!bar) return;
     if (!p || p.status !== 'active') { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
-    const meDone = p.myCount >= p.required;
-    const peerDone = p.peerCount >= p.required;
+    const stageTitle = p.stageTitle ? `<span class="rp-bar-name">${esc(p.stageTitle)}</span>` : '';
+    // Give players a heads-up about what's coming next.
+    const nextTitle = p.hasNext && p.nextStageTitle
+      ? `<span class="rp-bar-next" title="Next stage">Next: ${esc(p.nextStageTitle)}</span>` : '';
     bar.innerHTML = `
       <div class="rp-bar-main">
         <span class="rp-bar-title">🎭 ${esc(p.title)}</span>
         <span class="rp-bar-stage">Stage ${(p.stage || 0) + 1}/${p.total}</span>
+        ${stageTitle}
+        ${nextTitle}
       </div>
-      <div class="rp-bar-progress">
-        <span class="${meDone ? 'done' : ''}">You ${Math.min(p.myCount, p.required)}/${p.required}${meDone ? ' ✓' : ''}</span>
-        <span class="${peerDone ? 'done' : ''}">Partner ${Math.min(p.peerCount, p.required)}/${p.required}${peerDone ? ' ✓' : ''}</span>
+      <div class="rp-bar-actions">
+        <button class="ghost small" id="rpYou" title="Type your part in the chat below">You</button>
+        <button class="ghost small" id="rpPartner" title="Nudge your partner to type in the chat">Partner</button>
+        <button class="primary small" id="rpNext">${p.hasNext ? 'Next stage ▶' : 'Finish ▶'}</button>
+        <button class="ghost small" id="rpEnd">End</button>
       </div>
-      <button class="ghost small" id="rpEnd">End</button>
     `;
     bar.classList.remove('hidden');
-    const end = bar.querySelector('#rpEnd');
-    if (end) end.addEventListener('click', stopRoleplay);
+    bar.querySelector('#rpYou').addEventListener('click', () => {
+      const input = document.getElementById('msgInput');
+      if (input) { input.focus(); input.scrollIntoView({ block: 'nearest' }); }
+    });
+    bar.querySelector('#rpPartner').addEventListener('click', nudgePartner);
+    bar.querySelector('#rpNext').addEventListener('click', advanceRoleplay);
+    bar.querySelector('#rpEnd').addEventListener('click', stopRoleplay);
+  }
+
+  // "Partner" button: ask the other player to type in the main chat. They get a
+  // sound + toast on their side.
+  function nudgePartner() {
+    if (!state.peer || !state.socket) return;
+    state.socket.emit('roleplay:nudge', { to: state.peer.id }, (res) => {
+      if (res && res.error) return notify(res.error);
+      notify('Nudged your partner to type.');
+    });
+  }
+
+  // "Next stage" button: advance the shared story. The next narration + progress
+  // arrive over the socket for both players.
+  function advanceRoleplay() {
+    if (!state.peer || !state.socket) return;
+    state.socket.emit('roleplay:advance', { to: state.peer.id }, (res) => {
+      if (res && res.error) return notify(res.error);
+    });
+  }
+
+  // A short chime for the "Partner" nudge, synthesized so there's no asset to
+  // ship. Falls back silently if the browser blocks audio.
+  function playNudgeSound() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.setValueAtTime(1180, ctx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(); osc.stop(ctx.currentTime + 0.42);
+      osc.onended = () => ctx.close();
+    } catch (_e) { /* audio unavailable — the toast still shows */ }
   }
 
   // m: { body: giftId, mine, at, id?, reply? }
@@ -4038,6 +4092,15 @@
       const peerId = state.peer && state.peer.id;
       // Only update the banner when the progress is for the open conversation.
       if (peerId && p && p.peerId === peerId) updateRoleplayBar(p);
+    });
+
+    // My partner tapped "Partner" — they want me to type in the main chat.
+    s.on('roleplay:nudge', (e) => {
+      playNudgeSound();
+      const who = (e && e.fromName) || 'Your partner';
+      notify(`${who} wants you to type in the chat.`);
+      const input = document.getElementById('msgInput');
+      if (input && state.peer && e && e.from === state.peer.id) input.focus();
     });
 
     // The partner (or another of my tabs) typed inside a shared caption bubble.
