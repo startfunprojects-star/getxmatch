@@ -179,7 +179,17 @@ const ATTEMPT_STYLE = `<style>
 .gx-opt:active:not(:disabled) { transform: scale(.995); }
 .gx-opt.mine { border-color: var(--accent); }
 .gx-opt:disabled { cursor: default; opacity: .9; }
-.gx-opt-bar { position: absolute; inset: 0 auto 0 0; width: 0; background: color-mix(in srgb, var(--accent) 20%, transparent); transition: width .3s ease; }
+.gx-opt-bar { position: absolute; inset: 0 auto 0 0; width: 0; display: flex; background: color-mix(in srgb, var(--accent) 12%, transparent); transition: width .3s ease; }
+.gx-seg { height: 100%; min-width: 0; }
+.gx-seg-male { background: color-mix(in srgb, var(--vote-male) 42%, transparent); }
+.gx-seg-female { background: color-mix(in srgb, var(--vote-female) 42%, transparent); }
+.gx-seg-other { background: color-mix(in srgb, var(--vote-other) 42%, transparent); }
+.gx-legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 12px 0 0; color: var(--muted); font-size: 13px; }
+.gx-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.gx-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.gx-dot.gx-seg-male { background: var(--vote-male); }
+.gx-dot.gx-seg-female { background: var(--vote-female); }
+.gx-dot.gx-seg-other { background: var(--vote-other); }
 .gx-opt-main { position: relative; z-index: 1; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .gx-opt-label { font-weight: 600; overflow-wrap: anywhere; }
 .gx-opt-meta { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -339,12 +349,47 @@ ${ATTEMPT_SCRIPT}`;
 
 function pollTally(id, options) {
   const counts = new Array(options.length).fill(0);
-  db.prepare('SELECT option_index, COUNT(*) AS n FROM poll_votes WHERE poll_id = ? GROUP BY option_index')
+  // Split each option's votes by voter gender (Male / Female / other) so the
+  // result bars can be coloured accordingly.
+  const genders = options.map(() => ({ male: 0, female: 0, other: 0 }));
+  db.prepare(
+    `SELECT v.option_index AS oi, p.gender AS gender
+       FROM poll_votes v LEFT JOIN profiles p ON p.user_id = v.user_id
+      WHERE v.poll_id = ?`
+  )
     .all(id)
-    .forEach((r) => { if (r.option_index >= 0 && r.option_index < counts.length) counts[r.option_index] = r.n; });
+    .forEach((r) => {
+      const i = r.oi;
+      if (!(i >= 0 && i < counts.length)) return;
+      counts[i] += 1;
+      if (r.gender === 'Male') genders[i].male += 1;
+      else if (r.gender === 'Female') genders[i].female += 1;
+      else genders[i].other += 1;
+    });
   const total = counts.reduce((a, b) => a + b, 0);
-  return { counts, total };
+  return { counts, total, genders };
 }
+
+// Coloured, hover-labelled segments for one option's result bar. Each gender
+// gets a slice sized by its share of that option's votes; the title attribute
+// reveals the exact Male / Female / other breakdown on hover.
+function voteBarSegs(g) {
+  g = g || { male: 0, female: 0, other: 0 };
+  return [
+    ['male', g.male, 'Male'],
+    ['female', g.female, 'Female'],
+    ['other', g.other, 'Other / unspecified'],
+  ]
+    .filter(([, n]) => n > 0)
+    .map(
+      ([cls, n, label]) =>
+        `<span class="gx-seg gx-seg-${cls}" style="flex-grow:${n}" title="${label}: ${n} vote${n === 1 ? '' : 's'}"></span>`
+    )
+    .join('');
+}
+
+// Small legend explaining the vote colours.
+const VOTE_LEGEND = `<p class="gx-legend"><span class="gx-legend-item"><span class="gx-dot gx-seg-male"></span>Male</span><span class="gx-legend-item"><span class="gx-dot gx-seg-female"></span>Female</span><span class="gx-legend-item"><span class="gx-dot gx-seg-other"></span>Other</span></p>`;
 
 router.get('/polls', (req, res) => {
   const rows = db.prepare('SELECT id, question, options, closed, seo FROM polls ORDER BY created_at DESC').all();
@@ -389,7 +434,7 @@ router.get('/polls/:id/:slug?', optionalAuth, (req, res, next) => {
   if (chk.redirect) return res.redirect(301, chk.redirect);
 
   const options = parseJson(row.options, []);
-  const { counts, total } = pollTally(row.id, options);
+  const { counts, total, genders } = pollTally(row.id, options);
 
   const loggedIn = !!req.user;
   let myVote = null;
@@ -403,7 +448,7 @@ router.get('/polls/:id/:slug?', optionalAuth, (req, res, next) => {
     const pct = total ? Math.round((n / total) * 100) : 0;
     return `
       <button type="button" class="gx-opt${myVote === i ? ' mine' : ''}" data-i="${i}"${row.closed ? ' disabled' : ''}>
-        <span class="gx-opt-bar" style="width:${pct}%"></span>
+        <span class="gx-opt-bar" style="width:${pct}%">${voteBarSegs(genders[i])}</span>
         <span class="gx-opt-main"><span class="gx-opt-label">${esc(o)}</span><span class="gx-opt-meta">${pct}% · ${n}</span></span>
       </button>`;
   }).join('');
@@ -434,6 +479,7 @@ ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Polls', path: '/polls' }
 ${ATTEMPT_STYLE}
 <div id="gxAttempt" class="gx-attempt" data-kind="poll" data-id="${row.id}" data-logged="${loggedIn ? 1 : 0}"${row.closed ? ' data-closed="1"' : ''}>
   <div class="gx-opts">${optHtml}</div>
+  ${VOTE_LEGEND}
   <p class="gx-hint">${hint}</p>
   <div class="gx-note" hidden></div>
 </div>

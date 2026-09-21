@@ -120,10 +120,21 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
 function pollPayload(row, viewerId) {
   const options = parseJson(row.options, []);
   const counts = new Array(options.length).fill(0);
-  db.prepare('SELECT option_index, COUNT(*) AS n FROM poll_votes WHERE poll_id = ? GROUP BY option_index')
+  // Per-option gender split so the client can colour votes Male / Female.
+  const genders = options.map(() => ({ male: 0, female: 0, other: 0 }));
+  db.prepare(
+    `SELECT v.option_index AS oi, p.gender AS gender
+       FROM poll_votes v LEFT JOIN profiles p ON p.user_id = v.user_id
+      WHERE v.poll_id = ?`
+  )
     .all(row.id)
     .forEach((r) => {
-      if (r.option_index >= 0 && r.option_index < counts.length) counts[r.option_index] = r.n;
+      const i = r.oi;
+      if (!(i >= 0 && i < counts.length)) return;
+      counts[i] += 1;
+      if (r.gender === 'Male') genders[i].male += 1;
+      else if (r.gender === 'Female') genders[i].female += 1;
+      else genders[i].other += 1;
     });
   const mine = db
     .prepare('SELECT option_index FROM poll_votes WHERE poll_id = ? AND user_id = ?')
@@ -134,6 +145,7 @@ function pollPayload(row, viewerId) {
     question: row.question,
     options,
     counts,
+    genders,
     total,
     closed: !!row.closed,
     seo: parseJson(row.seo, {}),

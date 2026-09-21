@@ -111,11 +111,24 @@ function pollPayload(pollId, viewerId) {
   const options = parseOptions(poll);
 
   const counts = new Array(options.length).fill(0);
-  const rows = db.prepare('SELECT option_index, user_id FROM chat_poll_votes WHERE poll_id = ?').all(poll.id);
+  // Per-option gender split (Male / Female / other) so the client can colour votes.
+  const genders = options.map(() => ({ male: 0, female: 0, other: 0 }));
+  const rows = db
+    .prepare(
+      `SELECT v.option_index AS option_index, v.user_id AS user_id, p.gender AS gender
+         FROM chat_poll_votes v LEFT JOIN profiles p ON p.user_id = v.user_id
+        WHERE v.poll_id = ?`
+    )
+    .all(poll.id);
   const voters = new Set();
   const mine = [];
   for (const r of rows) {
-    if (r.option_index >= 0 && r.option_index < counts.length) counts[r.option_index]++;
+    if (r.option_index >= 0 && r.option_index < counts.length) {
+      counts[r.option_index]++;
+      if (r.gender === 'Male') genders[r.option_index].male++;
+      else if (r.gender === 'Female') genders[r.option_index].female++;
+      else genders[r.option_index].other++;
+    }
     voters.add(r.user_id);
     if (viewerId && r.user_id === viewerId) mine.push(r.option_index);
   }
@@ -126,7 +139,7 @@ function pollPayload(pollId, viewerId) {
     creatorId: poll.creator_id,
     question: poll.question,
     multi: !!poll.multi,
-    options: options.map((text, i) => ({ text, count: counts[i] })),
+    options: options.map((text, i) => ({ text, count: counts[i], genders: genders[i] })),
     total: voters.size,
     myVotes: mine,
   };

@@ -12,6 +12,10 @@
   --accent-2: #7c5cff;
   --ok: #34d399;
   --danger: #ff5c6c;
+  /* Poll vote tallies, coloured by voter gender. */
+  --vote-male: #4f9bff;
+  --vote-female: #ff69b4;
+  --vote-other: #9aa3b5;
   --radius: 14px;
   --radius-sm: 10px;
   --radius-lg: 20px;
@@ -338,14 +342,27 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .poll-card .poll-opt.sel { border-color: var(--accent); }
 .poll-card .poll-bar {
   position: absolute; left: 0; top: 0; bottom: 0; z-index: 0;
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  display: flex; background: color-mix(in srgb, var(--accent) 12%, transparent);
   transition: width .35s ease;
 }
-.poll-card .poll-opt.sel .poll-bar { background: color-mix(in srgb, var(--accent) 34%, transparent); }
+.poll-card .poll-opt.sel .poll-bar { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .poll-card .poll-opt-mark { position: relative; z-index: 1; width: 15px; flex: none; color: var(--accent); font-weight: 800; }
 .poll-card .poll-opt-text { position: relative; z-index: 1; flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .poll-card .poll-opt-count { position: relative; z-index: 1; flex: none; font-weight: 700; font-size: 13px; color: var(--muted); }
 .poll-card .time { color: var(--muted); font-size: 10px; }
+
+/* Gender-coloured vote segments + legend (shared by chat & explore polls). */
+.vote-seg { height: 100%; min-width: 0; }
+.vote-seg-male { background: color-mix(in srgb, var(--vote-male) 45%, transparent); }
+.vote-seg-female { background: color-mix(in srgb, var(--vote-female) 45%, transparent); }
+.vote-seg-other { background: color-mix(in srgb, var(--vote-other) 45%, transparent); }
+.poll-bar-split { display: flex; background: none !important; }
+.vote-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; color: var(--muted); font-size: 11.5px; }
+.vote-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.vote-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.vote-dot.vote-seg-male { background: var(--vote-male); }
+.vote-dot.vote-seg-female { background: var(--vote-female); }
+.vote-dot.vote-seg-other { background: var(--vote-other); }
 
 /* Poll builder modal */
 .poll-builder { display: flex; flex-direction: column; gap: 8px; min-width: min(360px, 78vw); }

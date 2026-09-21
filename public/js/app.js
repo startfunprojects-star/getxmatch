@@ -2919,6 +2919,30 @@
     scrollBody();
   }
 
+  // Coloured, hover-labelled segments for one option's vote bar. Each gender
+  // gets a slice sized by its share of that option's votes; the title reveals
+  // the exact Male / Female / other breakdown on hover.
+  function voteBarSegs(g) {
+    g = g || { male: 0, female: 0, other: 0 };
+    return [
+      ['male', g.male, 'Male'],
+      ['female', g.female, 'Female'],
+      ['other', g.other, 'Other / unspecified'],
+    ]
+      .filter(([, n]) => n > 0)
+      .map(([cls, n, label]) =>
+        `<span class="vote-seg vote-seg-${cls}" style="flex-grow:${n}" title="${label}: ${n} vote${n === 1 ? '' : 's'}"></span>`)
+      .join('');
+  }
+
+  // Legend explaining the Male / Female vote colours.
+  const VOTE_LEGEND_HTML =
+    '<div class="vote-legend">' +
+    '<span class="vote-legend-item"><span class="vote-dot vote-seg-male"></span>Male</span>' +
+    '<span class="vote-legend-item"><span class="vote-dot vote-seg-female"></span>Female</span>' +
+    '<span class="vote-legend-item"><span class="vote-dot vote-seg-other"></span>Other</span>' +
+    '</div>';
+
   function renderPollInner(card) {
     const p = card._poll;
     const total = p.total || 0;
@@ -2926,6 +2950,7 @@
       <div class="poll-q"><span class="poll-ico">📊</span><span class="poll-q-text"></span></div>
       <div class="poll-sub"></div>
       <div class="poll-opts"></div>
+      ${VOTE_LEGEND_HTML}
       <span class="time">${fmtTime(card._at)}</span>
     `;
     card.querySelector('.poll-q-text').textContent = p.question;
@@ -2937,7 +2962,7 @@
       const pct = total ? Math.round((o.count / total) * 100) : 0;
       const opt = el(`
         <button class="poll-opt${mineSel ? ' sel' : ''}" type="button">
-          <span class="poll-bar" style="width:${pct}%"></span>
+          <span class="poll-bar" style="width:${pct}%">${voteBarSegs(o.genders)}</span>
           <span class="poll-opt-mark">${mineSel ? '✓' : ''}</span>
           <span class="poll-opt-text"></span>
           <span class="poll-opt-count">${o.count}</span>
@@ -6176,12 +6201,13 @@
       const mine = p.myVote === oi;
       optsBox.appendChild(el(`
         <div class="poll-opt${mine ? ' mine' : ''}" data-i="${oi}">
-          <div class="poll-bar" style="width:${pct}%"></div>
+          <div class="poll-bar poll-bar-split" style="width:${pct}%">${voteBarSegs(p.genders && p.genders[oi])}</div>
           <span class="poll-label">${esc(opt)}${mine ? ' ✓' : ''}</span>
           <span class="poll-pct">${pct}% · ${count}</span>
         </div>
       `));
     });
+    optsBox.appendChild(el(VOTE_LEGEND_HTML));
     optsBox.appendChild(el(`<div class="hint" style="margin-top:8px">${p.total} vote${p.total === 1 ? '' : 's'}</div>`));
     const open = () => window.open(url, '_blank', 'noopener');
     card.addEventListener('click', open);

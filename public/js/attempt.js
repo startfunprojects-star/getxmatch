@@ -48,6 +48,19 @@
   if (kind === 'poll') {
     var closed = root.getAttribute('data-closed') === '1';
 
+    function barSegs(g) {
+      g = g || { male: 0, female: 0, other: 0 };
+      var parts = [['male', g.male, 'Male'], ['female', g.female, 'Female'], ['other', g.other, 'Other / unspecified']];
+      var html = '';
+      for (var j = 0; j < parts.length; j++) {
+        var n = parts[j][1] || 0;
+        if (n <= 0) continue;
+        html += '<span class="gx-seg gx-seg-' + parts[j][0] + '" style="flex-grow:' + n +
+          '" title="' + esc(parts[j][2]) + ': ' + n + ' vote' + (n === 1 ? '' : 's') + '"></span>';
+      }
+      return html;
+    }
+
     function paintPoll(poll) {
       var total = poll.total || 0;
       var btns = root.querySelectorAll('.gx-opt');
@@ -56,7 +69,10 @@
         var pct = total ? Math.round((n / total) * 100) : 0;
         var bar = btns[i].querySelector('.gx-opt-bar');
         var meta = btns[i].querySelector('.gx-opt-meta');
-        if (bar) bar.style.width = pct + '%';
+        if (bar) {
+          bar.style.width = pct + '%';
+          bar.innerHTML = barSegs(poll.genders && poll.genders[i]);
+        }
         if (meta) meta.textContent = pct + '% · ' + n;
         var mine = poll.myVote === i;
         btns[i].classList.toggle('mine', mine);

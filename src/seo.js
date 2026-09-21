@@ -291,8 +291,8 @@ function breadcrumbHtml(crumbs) {
 // The shared inline stylesheet for public pages — small, fast, theme-aware, and
 // independent of the app's large SPA stylesheet.
 const PAGE_CSS = `
-:root{--bg:#0b0d13;--bg2:#14171f;--bg3:#1c202b;--text:#eef0f6;--muted:#98a0b2;--border:#262c39;--accent:#ff4d7d;--accent2:#7c5cff;--grad:linear-gradient(135deg,var(--accent),var(--accent2))}
-@media (prefers-color-scheme:light){:root{--bg:#f6f7fb;--bg2:#fff;--bg3:#eef0f5;--text:#141824;--muted:#5b6270;--border:#e4e7ee;--accent:#e5356a;--accent2:#6a4bff}}
+:root{--bg:#0b0d13;--bg2:#14171f;--bg3:#1c202b;--text:#eef0f6;--muted:#98a0b2;--border:#262c39;--accent:#ff4d7d;--accent2:#7c5cff;--grad:linear-gradient(135deg,var(--accent),var(--accent2));--vote-male:#4f9bff;--vote-female:#ff69b4;--vote-other:#9aa3b5}
+@media (prefers-color-scheme:light){:root{--bg:#f6f7fb;--bg2:#fff;--bg3:#eef0f5;--text:#141824;--muted:#5b6270;--border:#e4e7ee;--accent:#e5356a;--accent2:#6a4bff;--vote-male:#2f6fe0;--vote-female:#e14a95;--vote-other:#8890a0}}
 *{box-sizing:border-box}
 ::selection{background:rgba(255,77,125,.34);color:#fff}
 *{scrollbar-width:thin;scrollbar-color:var(--border) transparent}
