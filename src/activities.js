@@ -1,19 +1,24 @@
 'use strict';
 
-// The set of activity verbs users can pick in a chat. These are exactly the
-// values from column 2 ("Activity") of the admin's fake-activity table, so the
-// real "what are you doing" statuses use the same vocabulary as the fillers.
+// The set of activity verbs users can pick as their "what are you doing"
+// status in a chat.
 
-const db = require('./db');
+const ACTIVITIES = [
+  'chatting with',
+  'flirting with',
+  'video calling',
+  'getting to know',
+  'vibing with',
+  'texting',
+];
 
 function listActivities() {
-  const rows = db.prepare('SELECT DISTINCT activity FROM fake_activities').all();
-  return [...new Set(rows.map((r) => String(r.activity).trim()).filter(Boolean))];
+  return ACTIVITIES.slice();
 }
 
 function isValidActivity(activity) {
   const a = String(activity || '').trim();
-  return a.length > 0 && listActivities().includes(a);
+  return a.length > 0 && ACTIVITIES.includes(a);
 }
 
 module.exports = { listActivities, isValidActivity };

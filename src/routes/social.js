@@ -600,8 +600,7 @@ router.get('/gifts', requireAuth, (_req, res) => {
    Chat activity ("what are you doing" status)
 --------------------------------------------------------------------------- */
 
-// GET /api/social/activities — the activity verbs users can pick (column 2 of
-// the admin's fake-activity table).
+// GET /api/social/activities — the activity verbs users can pick.
 router.get('/activities', requireAuth, (_req, res) => {
   res.json({ activities: listActivities() });
 });

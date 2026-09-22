@@ -1109,188 +1109,12 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .gift-cell:hover .gift-emoji { animation: giftWiggle .5s ease-in-out infinite; }
 .gift-cell .gift-cell-name { font-size: 11px; color: var(--muted); }
 
-/* ---------- Wasted (offers, meter, sentences) ---------- */
-.wasted-picker {
-  border-top: 1px solid var(--border);
-  background: var(--bg-2);
-  padding: 12px 16px;
-  max-height: 300px;
-  overflow-y: auto;
-}
-.wasted-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.wasted-cell {
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  background: var(--bg-3); border: 1px solid var(--border); border-radius: 12px;
-  padding: 10px 6px; cursor: pointer; transition: border-color .12s, transform .12s;
-}
-.wasted-cell:hover { border-color: var(--accent); transform: translateY(-2px); }
-.wasted-cell.self:hover { border-color: var(--warn, #e0a800); }
-.wasted-cell .wasted-emoji { font-size: 26px; line-height: 1; }
-.wasted-cell .wasted-cell-name { font-size: 11px; color: var(--muted); }
-
-/* The intoxication meter under the chat header. */
-.wasted-bar {
-  display: flex; align-items: center; gap: 10px;
-  padding: 6px 16px; font-size: 12px;
-  background: var(--bg-2); border-bottom: 1px solid var(--border);
-}
-.wasted-bar .wasted-label { color: var(--muted); white-space: nowrap; }
-.wasted-bar .wasted-track {
-  flex: 1; height: 8px; border-radius: 999px; overflow: hidden;
-  background: var(--bg-3); border: 1px solid var(--border);
-}
-.wasted-bar .wasted-fill {
-  display: block; height: 100%;
-  background: linear-gradient(90deg, #6ac06a, #e0a800 60%, #d9534f);
-  transition: width .3s ease;
-}
-.wasted-bar .wasted-num { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.wasted-bar.maxed .wasted-label { color: var(--danger, #d9534f); font-weight: 600; }
-
-/* Offers & consumption — centered system narration (stays in the chat). */
-.wasted-offer {
-  align-self: center; text-align: center; max-width: 82%;
-  margin: 8px auto; padding: 8px 16px;
-  display: flex; flex-direction: column; align-items: center; gap: 6px;
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg-2));
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
-  border-radius: 14px;
-}
-.wasted-offer .wasted-offer-text { line-height: 1.35; font-size: 13.5px; }
-.wasted-offer .offer-actions { display: flex; gap: 8px; }
-.wasted-offer .wasted-offer-time { font-size: 10px; color: var(--muted); }
-
-/* Random admin "wasted" sentence — a permanent centered system line. */
-.wasted-sentence {
-  align-self: center; text-align: center; max-width: 80%;
-  margin: 8px auto; padding: 6px 14px;
-  font-size: 13px; font-style: italic; color: var(--muted);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-2));
-  border: 1px dashed var(--border); border-radius: 12px;
-}
-
-/* Admin: removable word chips. */
-.wasted-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.wasted-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: var(--bg-3); border: 1px solid var(--border);
-  border-radius: 999px; padding: 4px 6px 4px 12px; font-size: 13px;
-}
-.wasted-chip .wasted-x {
-  border: none; background: transparent; color: var(--muted);
-  cursor: pointer; font-size: 13px; line-height: 1; padding: 2px 4px; border-radius: 999px;
-}
-.wasted-chip .wasted-x:hover { color: var(--danger, #d9534f); }
-
-/* ---------- Roleplay ---------- */
-/* Progress banner above the composer. */
-.roleplay-bar {
-  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-  padding: 10px 16px; border-top: 1px solid var(--border);
-  background: linear-gradient(90deg, rgba(124,92,255,.12), rgba(255,77,125,.10));
-}
-.rp-bar-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.rp-bar-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rp-bar-stage { font-size: 12px; color: var(--muted); background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; }
-.rp-bar-progress { display: flex; gap: 10px; font-size: 12px; margin-left: auto; }
-.rp-bar-progress span { background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
-.rp-bar-progress span.done { border-color: var(--accent); color: var(--text); }
-.rp-bar-name { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
-.rp-bar-next { font-size: 12px; color: var(--muted); background: var(--bg-3); border: 1px dashed var(--border); border-radius: 999px; padding: 2px 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
-.rp-bar-actions { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
-
-/* Narration story card in the chat stream. */
-.narration {
-  align-self: stretch; max-width: 100%; margin: 6px auto; width: min(560px, 100%);
-  background: var(--bg-2); border: 1px solid var(--accent-2); border-radius: 14px;
-  padding: 14px 16px; text-align: center;
-}
-.narration-head { font-weight: 700; color: var(--accent-2); margin-bottom: 8px; font-size: 14px; }
-.narration-img { max-width: 100%; max-height: 320px; border-radius: 10px; margin: 4px 0 8px; cursor: zoom-in; }
-.narration-text { line-height: 1.5; white-space: pre-wrap; }
-.narration .time { display: block; font-size: 11px; color: var(--muted); margin-top: 8px; }
-
-/* ---- Caption-studio bubbles on a stage image (play side + admin editor) ----
-   The image is a positioning surface; each bubble is placed by percentage so it
-   lands in the same spot at any size. The editable body auto-grows to fit what a
-   player types. Shared by the chat card (.narration-canvas) and the admin
-   editor (.rp-cap-canvas). */
-.narration-canvas,
-.rp-cap-canvas {
-  position: relative; display: inline-block; max-width: 100%; line-height: 0;
-}
-.narration-canvas .narration-img { display: block; max-width: 100%; max-height: 340px; cursor: default; margin: 4px 0 8px; }
-.rp-cap-canvas { border: 1px dashed var(--accent-2); border-radius: 10px; touch-action: none; }
-.rp-cap-img { display: block; max-width: 100%; max-height: 360px; border-radius: 9px; }
-
-/* A caption is an anchor POINT at (left%, top%). Its inner bubble hangs with its
-   bottom-left corner on that point and grows up + right, so the tail keeps
-   pointing at the same spot no matter how much text is typed. Rotation is an
-   inline transform on the anchor (pivoting at the point); mirroring is the
-   `flip` class. */
-.rp-caption {
-  position: absolute; width: 0; height: 0; z-index: 2; line-height: 1.35;
-  transform-origin: 0 0;
-}
-.rp-cap-inner {
-  position: absolute; left: 0; bottom: 0;
-  display: inline-block; width: max-content; max-width: min(240px, 70vw);
-  min-width: 44px; min-height: 20px; padding: 7px 11px; box-sizing: border-box;
-  font-size: 13px; text-align: center; color: #14181f; background: #fff;
-  border: 2px solid #14181f; transform-origin: left bottom;
-}
-.rp-cap-body {
-  display: inline-block; min-width: 8px; white-space: pre-wrap;
-  overflow-wrap: anywhere; outline: none;
-}
-.rp-caption.saying  .rp-cap-inner { border-radius: 16px; }
-.rp-caption.thinking .rp-cap-inner { border-radius: 50% / 42%; border-style: dashed; }
-/* Mirror: move the tail to the opposite corner only. We must NOT put a
-   scaleX(-1) transform on (or above) the editable text: a contenteditable
-   inside a mirrored ancestor breaks native caret placement in Blink/WebKit, so
-   characters get inserted at the wrong spot and typing appears reversed. The
-   rounded bubble body is horizontally symmetric, so mirroring the tail alone is
-   enough to point the bubble the other way. */
-/* Speech tail for a "saying" bubble, at the anchored bottom-left corner. */
-.rp-caption.saying .rp-cap-inner::after {
-  content: ''; position: absolute; left: 8px; bottom: -9px; width: 0; height: 0;
-  border: 8px solid transparent; border-top-color: #14181f; border-bottom: 0;
-}
-.rp-caption.flip.saying .rp-cap-inner::after { left: auto; right: 8px; }
-/* Thought trail (two shrinking dots) for a "thinking" bubble. */
-.rp-caption.thinking .rp-cap-inner::after {
-  content: ''; position: absolute; left: 4px; bottom: -13px; width: 8px; height: 8px;
-  border-radius: 50%; background: #fff; border: 2px solid #14181f;
-  box-shadow: -6px 8px 0 -1px #fff, -6px 8px 0 1px #14181f;
-}
-.rp-caption.flip.thinking .rp-cap-inner::after {
-  left: auto; right: 4px;
-  box-shadow: 6px 8px 0 -1px #fff, 6px 8px 0 1px #14181f;
-}
-/* Placeholder hint while a player's bubble is still empty. */
-.rp-cap-body:not(.filled)::before {
-  content: attr(data-ph); color: #6b7480; font-style: italic;
-}
-.rp-cap-body:not(.filled):focus::before { opacity: .5; }
-
-/* Play-side move/rotate grips on an editable caption (sit by the tail anchor). */
-.rp-cap-grip {
-  position: absolute; width: 22px; height: 22px; padding: 0; z-index: 4;
-  border-radius: 50%; border: 2px solid #14181f; background: #fff; color: #14181f;
-  font-size: 12px; line-height: 18px; text-align: center; cursor: grab;
-  touch-action: none; opacity: .9;
-}
-.rp-cap-grip:active { cursor: grabbing; }
-.rp-cap-move { left: -26px; top: -8px; }
-.rp-cap-rot  { left: -26px; top: -34px; }
-
-/* Highway canvas re-uses the shared caption model but is read-only. */
+/* Highway canvas for a shared image. */
 .hw-canvas { margin: 6px 0; border-radius: 12px; overflow: visible; }
 .hw-canvas .hw-image { display: block; max-width: 100%; border-radius: 12px; cursor: default; }
 
-/* Roleplay/chat "Share to Highway" buttons. */
-.rp-share-btn, .hw-share-btn { margin-top: 8px; }
-.narration-foot { margin-top: 4px; }
+/* "Share to Highway" button. */
+.hw-share-btn { margin-top: 8px; }
 
 /* A like/comment on a shared picture, echoed into the chat. */
 .hwevent-card {
@@ -1307,36 +1131,6 @@ table.users tbody tr:hover { background: var(--bg-3); }
 /* Likes on a profile. */
 .pro-likes { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
-/* Admin editor chrome. */
-.rp-cap-editor { margin: 8px 0 4px; }
-.rp-cap-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
-.rp-cap-tools .hint { flex: 1 1 180px; min-width: 160px; }
-.rp-cap-selctrls { display: inline-flex; gap: 6px; padding-left: 6px; border-left: 1px solid var(--border); }
-.rp-cap-canvas .rp-cap-inner { cursor: move; touch-action: none; }
-.rp-cap-canvas .rp-caption.dragging .rp-cap-inner { opacity: .85; }
-.rp-cap-canvas .rp-caption.selected .rp-cap-inner { box-shadow: 0 0 0 2px var(--accent, #7c5cff); }
-
-/* Roleplay picker popover (mirrors the gift picker). */
-.rp-picker {
-  border-top: 1px solid var(--border); background: var(--bg-2);
-  padding: 12px 16px; max-height: 300px; overflow-y: auto;
-}
-.rp-list { display: flex; flex-direction: column; gap: 8px; }
-.rp-item {
-  display: flex; align-items: center; gap: 12px; text-align: left;
-  background: var(--bg-3); border: 1px solid var(--border); border-radius: 12px;
-  padding: 8px 10px; cursor: pointer; transition: border-color .12s;
-}
-.rp-item:hover { border-color: var(--accent); }
-.rp-cover { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; flex: none; background: var(--bg); }
-.rp-cover-ph { display: grid; place-items: center; font-size: 24px; }
-.rp-item-body { display: flex; flex-direction: column; min-width: 0; }
-.rp-item-title { font-weight: 600; }
-.rp-item-meta { font-size: 12px; color: var(--muted); }
-
-/* Admin roleplay editor. */
-.rp-stage .rp-thumb, .rp-thumb { max-width: 160px; max-height: 120px; border-radius: 8px; display: block; margin: 6px 0; border: 1px solid var(--border); }
-
 /* ---------- Admin: content management ---------- */
 .admin-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
 .admin-tabs button.active { background: var(--bg-3); border: 1px solid var(--accent); }
@@ -1347,7 +1141,7 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .admin-item h3 { margin: 0 0 4px; font-size: 16px; }
 .admin-item-actions { display: flex; gap: 8px; margin-top: 8px; }
 
-/* Editor + "existing items" sidebar layout (quizzes, polls, blogs, roleplays). */
+/* Editor + "existing items" sidebar layout (quizzes, polls, blogs). */
 .admin-split { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
 .admin-split .admin-main { min-width: 0; }
 .admin-split .admin-side { position: sticky; top: 16px; }
@@ -1526,39 +1320,9 @@ a.share-link:hover { text-decoration: underline; }
 .pick-row:hover { background: var(--bg-3); }
 .pick-row input { width: auto; margin: 0; }
 
-/* ===========================================================================
-   Admin: Fake Activity editor
-=========================================================================== */
-.fake-row-head, .fake-add, .fake-row { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; align-items: center; }
-.fake-row-head { margin-top: 10px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-.fake-add { margin-top: 6px; }
-.fake-table { margin-top: 4px; }
-.fake-row { padding: 8px 0; border-bottom: 1px solid var(--border); }
-.fake-row:last-child { border-bottom: none; }
-.fake-name { font-weight: 600; }
-.fake-act { color: var(--muted); }
-.fake-row .danger.small { justify-self: end; padding: 4px 9px; }
-.fake-actions { display: flex; gap: 6px; justify-self: end; }
-.fake-row input { width: 100%; }
-@media (max-width: 560px) {
-  .fake-row-head { display: none; }
-  .fake-add, .fake-row { grid-template-columns: 1fr 1fr; }
-}
-
 /* Live-streamed activity item: subtle slide/fade in */
 @keyframes feedIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 .feed-item.feed-new { animation: feedIn .35s ease; }
-
-/* Admin: fake-activity on/off switch */
-.fake-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.fake-toggle-row h2 { margin: 0; }
-.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
-.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
-.switch-slider { position: relative; width: 42px; height: 24px; background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; transition: background .15s; flex: none; }
-.switch-slider::before { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); transition: transform .15s, background .15s; }
-.switch input:checked + .switch-slider { background: color-mix(in srgb, var(--ok) 55%, var(--bg-3)); border-color: var(--ok); }
-.switch input:checked + .switch-slider::before { transform: translateX(18px); background: #fff; }
-.switch-label { font-size: 13px; color: var(--muted); min-width: 22px; }
 
 /* Chat "what are you doing" activity bar */
 .chat-activity-bar {
@@ -1602,8 +1366,6 @@ a.share-link:hover { text-decoration: underline; }
 .activity-pick select:hover, .activity-pick input:hover { border-color: var(--accent-2); background: var(--bg-elev); }
 .activity-pick select:focus, .activity-pick input:focus { border-color: var(--accent-2); background: var(--bg-elev); box-shadow: var(--ring); }
 .activity-pick select option { background: var(--bg-2); color: var(--text); }
-
-.fake-empty { color: var(--muted); }
 
 /* ==========================================================================
    Broadcast ("live chat")

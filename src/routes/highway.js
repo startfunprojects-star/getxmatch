@@ -25,10 +25,6 @@ const router = express.Router();
 const BODY_MAX = 2000;
 const COMMENT_MAX = 500;
 
-function parseJson(raw, fallback) {
-  try { const v = JSON.parse(raw); return v == null ? fallback : v; } catch (_e) { return fallback; }
-}
-
 function nameOf(userId) {
   const r = db.prepare('SELECT p.display_name, u.username FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?').get(userId);
   return (r && (r.display_name || r.username)) || 'Someone';
@@ -96,7 +92,6 @@ function shapePost(r, viewerId) {
     id: r.id,
     body: r.body || '',
     image: r.image ? `/uploads/${r.image}` : null,
-    captions: parseJson(r.captions, []),
     createdAt: r.created_at,
     author: {
       id: r.user_id,
@@ -151,7 +146,7 @@ router.post('/', requireAuth, postLimiter, imageUpload.single('image'), (req, re
   // in per-client, so send the neutral author-centric shape.
   try {
     broadcastHighway({
-      id: post.id, body: post.body, image: post.image, captions: post.captions,
+      id: post.id, body: post.body, image: post.image,
       createdAt: post.createdAt, author: post.author,
     });
   } catch (_e) { /* never block the response */ }

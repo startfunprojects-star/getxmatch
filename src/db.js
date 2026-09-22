@@ -227,7 +227,7 @@ db.exec(`
     ['gender', 'TEXT'],
     ['date_of_birth', 'TEXT'],
     ['country', 'TEXT'],
-    ['weight', 'REAL'], // body weight in kg — drives the "Wasted" score increment
+    ['weight', 'REAL'], // body weight in kg
 
     ['smokes', 'TEXT'],
     ['drinks', 'TEXT'],
@@ -542,124 +542,15 @@ db.exec(`
     updated_at INTEGER NOT NULL
   );
 
-  /* ---------------- Roleplay stories ----------------
-     Admin-authored interactive stories two users play out in chat. A roleplay
-     has an ordered list of stages, each with a narration and an optional
-     image/gif. required_messages is how many messages EACH user must send in a
-     stage before the next stage's narration is revealed. */
-  CREATE TABLE IF NOT EXISTS roleplays (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    title             TEXT NOT NULL,
-    description       TEXT NOT NULL DEFAULT '',
-    cover             TEXT,                      -- optional filename in uploads/
-    required_messages INTEGER NOT NULL DEFAULT 10,
-    created_at        INTEGER NOT NULL,
-    updated_at        INTEGER NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS roleplay_stages (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    roleplay_id INTEGER NOT NULL REFERENCES roleplays(id) ON DELETE CASCADE,
-    stage_index INTEGER NOT NULL,                -- 0-based order
-    title       TEXT NOT NULL DEFAULT '',        -- shown to players so they know what this stage is about
-    narration   TEXT NOT NULL DEFAULT '',
-    image       TEXT,                            -- optional filename in uploads/
-    captions    TEXT NOT NULL DEFAULT '[]',      -- JSON: caption-studio bubbles placed on the image
-    created_at  INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_roleplay_stages
-    ON roleplay_stages (roleplay_id, stage_index);
-
-  -- Caption-studio text: what the two players have written inside a stage's
-  -- speech/thought bubbles. One shared, live-synced value per (session, stage,
-  -- caption), so both partners see the same words. Rows are keyed on the
-  -- session so they vanish when the roleplay (and its session) is deleted.
-  CREATE TABLE IF NOT EXISTS roleplay_caption_texts (
-    session_id    INTEGER NOT NULL REFERENCES roleplay_sessions(id) ON DELETE CASCADE,
-    stage_index   INTEGER NOT NULL,
-    caption_index INTEGER NOT NULL,
-    text          TEXT NOT NULL DEFAULT '',
-    x             REAL,     -- per-session position/rotation overrides (players can drag/rotate);
-    y             REAL,     -- NULL means "use the admin-authored default from the stage".
-    rot           REAL,
-    updated_by    INTEGER,
-    updated_at    INTEGER NOT NULL,
-    PRIMARY KEY (session_id, stage_index, caption_index)
-  );
-
-  -- One active playthrough per pair of users. The pair is stored normalized
-  -- (user_lo < user_hi); count_lo/count_hi track messages each has sent in the
-  -- current stage and reset to 0 when the stage advances.
-  CREATE TABLE IF NOT EXISTS roleplay_sessions (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    roleplay_id   INTEGER NOT NULL REFERENCES roleplays(id) ON DELETE CASCADE,
-    user_lo       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    user_hi       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    current_stage INTEGER NOT NULL DEFAULT 0,
-    count_lo      INTEGER NOT NULL DEFAULT 0,
-    count_hi      INTEGER NOT NULL DEFAULT 0,
-    status        TEXT NOT NULL DEFAULT 'active', -- 'active' | 'completed'
-    created_at    INTEGER NOT NULL,
-    updated_at    INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_roleplay_sessions_pair
-    ON roleplay_sessions (user_lo, user_hi, status);
-`);
-
-// Caption-studio bubbles on roleplay stage images. Added idempotently for
-// databases created before the feature existed.
-{
-  const cols = db.prepare('PRAGMA table_info(roleplay_stages)').all().map((c) => c.name);
-  if (!cols.includes('captions')) {
-    db.exec("ALTER TABLE roleplay_stages ADD COLUMN captions TEXT NOT NULL DEFAULT '[]'");
-  }
-  if (!cols.includes('title')) {
-    db.exec("ALTER TABLE roleplay_stages ADD COLUMN title TEXT NOT NULL DEFAULT ''");
-  }
-}
-
-// Per-session caption position/rotation overrides (players can drag/rotate a
-// caption while playing). Added idempotently.
-{
-  const cols = db.prepare('PRAGMA table_info(roleplay_caption_texts)').all().map((c) => c.name);
-  if (!cols.includes('x')) db.exec('ALTER TABLE roleplay_caption_texts ADD COLUMN x REAL');
-  if (!cols.includes('y')) db.exec('ALTER TABLE roleplay_caption_texts ADD COLUMN y REAL');
-  if (!cols.includes('rot')) db.exec('ALTER TABLE roleplay_caption_texts ADD COLUMN rot REAL');
-}
-
-// Highway posts can carry a baked caption overlay (shared roleplay images) and a
-// link back to the conversation they were shared from (so likes/comments on them
-// can surface in that chat). Added idempotently.
-{
-  const cols = db.prepare('PRAGMA table_info(highway_posts)').all().map((c) => c.name);
-  if (!cols.includes('captions')) db.exec("ALTER TABLE highway_posts ADD COLUMN captions TEXT NOT NULL DEFAULT '[]'");
-  if (!cols.includes('origin_kind')) db.exec('ALTER TABLE highway_posts ADD COLUMN origin_kind TEXT');
-  if (!cols.includes('origin_a')) db.exec('ALTER TABLE highway_posts ADD COLUMN origin_a INTEGER');
-  if (!cols.includes('origin_b')) db.exec('ALTER TABLE highway_posts ADD COLUMN origin_b INTEGER');
-}
-
-// Admin-authored "fake" activity used to make the recent-activity feed feel
-// busy. Each row is a triple: person A, an activity, person B. The feed
-// recombines these names/activities at random and mixes them with real
-// activity. Names here are plain strings — never linked to real accounts.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS fake_activities (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    person_a   TEXT NOT NULL,   -- female name (column 1)
-    activity   TEXT NOT NULL,
-    person_b   TEXT NOT NULL,   -- male name (column 3)
-    created_at INTEGER NOT NULL
-  );
-
-  -- Simple key/value store for global app settings (e.g. fake-activity on/off).
+  -- Simple key/value store for global app settings.
   CREATE TABLE IF NOT EXISTS app_settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
 
-  -- What a user says they're doing with a chat partner (an activity verb drawn
-  -- from the admin's fake-activity list, e.g. "flirting with"). Shown at the top
-  -- of that chat and, using the two real names, on the Recent Activity feed.
+  -- What a user says they're doing with a chat partner (an activity verb).
+  -- Shown at the top of that chat and, using the two real names, on the
+  -- Recent Activity feed.
   CREATE TABLE IF NOT EXISTS chat_activities (
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     peer_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -677,17 +568,6 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_activity_posts_recent ON activity_posts (created_at);
-
-  -- Continuous server-generated activity stream (the "recent activity" ticker).
-  -- Generated on the server on a timer so it runs even with nobody online and
-  -- every user sees the SAME rows. Kept as a rolling window (old rows pruned).
-  CREATE TABLE IF NOT EXISTS activity_stream (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    text       TEXT NOT NULL,
-    icon       TEXT NOT NULL DEFAULT '✨',
-    created_at INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_activity_stream_recent ON activity_stream (created_at);
 
   -- Group chats: up to 4 members, joined by invitation/acceptance.
   CREATE TABLE IF NOT EXISTS chat_groups (
@@ -771,14 +651,23 @@ db.exec(`
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     body        TEXT NOT NULL DEFAULT '',
     image       TEXT,                     -- optional filename in uploads/
-    captions    TEXT NOT NULL DEFAULT '[]', -- baked caption-studio overlay (shared roleplay images)
-    origin_kind TEXT,                     -- 'roleplay' | 'chat' when shared from a conversation
+    origin_kind TEXT,                     -- 'chat' when shared from a conversation
     origin_a    INTEGER,                  -- the two chat participants to notify on like/comment
     origin_b    INTEGER,
     created_at  INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_highway_recent ON highway_posts (created_at);
 `);
+
+// Origin link back to the conversation a post was shared from (so likes/
+// comments on it can surface in that chat). Added idempotently for databases
+// created before this existed.
+{
+  const cols = db.prepare('PRAGMA table_info(highway_posts)').all().map((c) => c.name);
+  if (!cols.includes('origin_kind')) db.exec('ALTER TABLE highway_posts ADD COLUMN origin_kind TEXT');
+  if (!cols.includes('origin_a')) db.exec('ALTER TABLE highway_posts ADD COLUMN origin_a INTEGER');
+  if (!cols.includes('origin_b')) db.exec('ALTER TABLE highway_posts ADD COLUMN origin_b INTEGER');
+}
 
 // Highway post engagement: one "like" per user per post, plus flat comments.
 // Both cascade-delete with their post (pruned or removed by its author).
@@ -856,59 +745,10 @@ db.exec(`
     db.exec('ALTER TABLE users ADD COLUMN last_digest_at INTEGER NOT NULL DEFAULT 0');
     db.prepare('UPDATE users SET last_digest_at = ?').run(Date.now());
   }
-  // "Wasted" score bookkeeping. wasted_score is the current intoxication level
-  // (0..15); it climbs when a user consumes a drink/substance and decays over
-  // time (they sober up). wasted_updated_at is when it was last changed, so the
-  // decay can be computed lazily on read (see src/wasted.js).
-  if (!cols.includes('wasted_score')) {
-    db.exec('ALTER TABLE users ADD COLUMN wasted_score REAL NOT NULL DEFAULT 0');
-  }
-  if (!cols.includes('wasted_updated_at')) {
-    db.exec('ALTER TABLE users ADD COLUMN wasted_updated_at INTEGER NOT NULL DEFAULT 0');
-  }
 }
 
-// --- "Wasted" feature admin content.
-// wasted_words: a pool of words the system randomly splices into the messages of
-// tipsy users (the drunker they are, the more often). wasted_sentences: whole
-// lines that randomly appear as permanent system messages inside a chat.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS wasted_words (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    word       TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS wasted_sentences (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    sentence   TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-
-  -- Per-conversation intoxication score. Directional: user_id's "wasted" level
-  -- in their chat with peer_id (so the same person can be sober in one chat and
-  -- hammered in another). Resets to 0 after 15 minutes (see src/wasted.js) and
-  -- is wiped for a user when they log in again.
-  CREATE TABLE IF NOT EXISTS wasted_scores (
-    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    peer_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    score      REAL NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (user_id, peer_id)
-  );
-
-  -- Same, but keyed by group: a user's intoxication within one group chat.
-  CREATE TABLE IF NOT EXISTS wasted_group_scores (
-    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    group_id   INTEGER NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
-    score      REAL NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (user_id, group_id)
-  );
-`);
-
-// group_messages gained a `kind` (text | wasted | offer) so the Wasted feature
-// — spliced words, the "Completely Wasted" narration, offers and system
-// sentences — works in group chats too. Added idempotently.
+// group_messages gained a `kind` so non-text message types (e.g. gifts) can be
+// distinguished from plain text. Added idempotently.
 {
   const cols = db.prepare('PRAGMA table_info(group_messages)').all().map((c) => c.name);
   if (!cols.includes('kind')) {

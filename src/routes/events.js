@@ -6,6 +6,7 @@
 //   • recent chats          (conversations that recently happened)
 //   • quiz attempts         (quizzes users attempted)
 //   • admin events          (curated announcements)
+//   • user-shared images    (photos/GIFs posted to the feed)
 // Each activity row carries the viewer's friendship state with the actor so the
 // UI can offer an "Add friend" action inline.
 
@@ -19,7 +20,6 @@ const { requireAuth } = require('../auth');
 const { friendState } = require('../profileData');
 const { imageUpload } = require('../upload');
 const { broadcastActivity } = require('../socket');
-const { recentStream } = require('../activityStream');
 const { acceptedText, sentText, relEmoji } = require('../relationships');
 
 const router = express.Router();
@@ -245,11 +245,6 @@ function buildFeed(viewerId, opts) {
         text: e.body || e.title,
       });
     });
-
-  // 5) The shared, server-generated activity stream (same rows for every user,
-  //    generated continuously in the background). No actor/target, so their
-  //    names are never clickable.
-  recentStream(PER_SOURCE).forEach((f) => events.push(f));
 
   events.sort((a, b) => b.at - a.at);
   return events.slice(0, 100);

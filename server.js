@@ -9,7 +9,6 @@ const { Server } = require('socket.io');
 
 const config = require('./src/config');
 const { initSocket } = require('./src/socket');
-const { startActivityStream } = require('./src/activityStream');
 const { startDigestScheduler } = require('./src/digest');
 
 const authRoutes = require('./src/routes/auth');
@@ -21,7 +20,6 @@ const contentRoutes = require('./src/routes/content');
 const leaderboardRoutes = require('./src/routes/leaderboard');
 const eventsRoutes = require('./src/routes/events');
 const groupRoutes = require('./src/routes/groups');
-const roleplayRoutes = require('./src/routes/roleplay');
 const matchRoutes = require('./src/routes/match');
 const broadcastRoutes = require('./src/routes/broadcast');
 const adsRoutes = require('./src/routes/ads');
@@ -71,7 +69,6 @@ app.use('/api/content', contentRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/groups', groupRoutes);
-app.use('/api/roleplay', roleplayRoutes);
 app.use('/api/match', matchRoutes); // public: shared compatibility-quiz links
 app.use('/api/broadcast', broadcastRoutes); // public: directory of live broadcasts
 app.use('/api/ads', adsRoutes); // public: serve ads + log clicks
@@ -128,7 +125,6 @@ const io = new Server(server, {
   maxHttpBufferSize: config.maxChatFileBytes + 1024 * 1024, // room for file relay + metadata
 });
 initSocket(io);
-startActivityStream(); // continuous, shared "recent activity" generator
 startDigestScheduler(); // daily offline-activity email digest
 
 server.listen(config.port, () => {

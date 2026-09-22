@@ -4,7 +4,6 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../auth');
 const { getGift } = require('../gifts');
-const wasted = require('../wasted');
 const polls = require('../polls');
 const chatQuiz = require('../chatQuiz');
 
@@ -16,8 +15,6 @@ function buildReplyPreview(row) {
   if (row.reply_kind === 'gift') {
     const g = getGift(row.reply_body);
     text = g ? `${g.emoji} ${g.name}` : 'a gift';
-  } else if (row.reply_kind === 'narration') {
-    text = '🎭 Roleplay';
   } else if (row.reply_kind === 'poll') {
     text = polls.pollLabel(polls.pollIdFromBody(row.reply_body));
   } else if (row.reply_kind === 'quiz') {
@@ -118,11 +115,8 @@ router.get('/:id/messages', requireAuth, (req, res) => {
     reactionsByMsg.get(r.message_id).push({ userId: r.user_id, emoji: r.emoji });
   }
 
-  const score = wasted.getScore(req.user.id, otherId, now);
-
   res.json({
     disappearing,
-    wasted: { score: Math.round(score * 100) / 100, max: wasted.MAX_SCORE, maxed: wasted.isMaxed(score) },
     messages: rows.map((m) => ({
       id: m.id,
       from: m.sender_id,

@@ -22,7 +22,6 @@
     watching: null,      // token of a broadcast being watched inline, or null
     disappearing: 0,     // disappearing-messages TTL (seconds) for the open chat; 0 = off
     online: {},          // userId -> true when a friend/relation is currently online
-    captionEls: {},      // "sid:stage:index" -> the editable caption bubble on screen
     ignored: {},         // userId -> true for people I've ignored (hide their Highway posts)
   };
 
@@ -1273,10 +1272,10 @@
 
   // Open (and render) a group chat.
   async function openGroup(gid) {
-    let group, messages = [], groupWasted = null;
+    let group, messages = [];
     try { group = (await api.get('/api/groups/' + gid)).group; }
     catch (e) { return notify(e.message); }
-    try { const r = await api.get('/api/groups/' + gid + '/messages'); messages = r.messages || []; groupWasted = r.wasted || null; } catch (_e) {}
+    try { const r = await api.get('/api/groups/' + gid + '/messages'); messages = r.messages || []; } catch (_e) {}
 
     stopWatching(); // leaving any inline broadcast we were watching
     state.peer = null;
@@ -1303,13 +1302,10 @@
           <button class="ghost small" id="groupAddBtn" title="Add someone">＋ Add</button>
           <button class="ghost small" id="groupLeaveBtn" title="Leave this group">Leave</button>
         </div>
-        <div class="wasted-bar hidden" id="wastedBar"></div>
         <div class="chat-body" id="chatBody"></div>
-        <div class="wasted-picker hidden" id="wastedPicker"></div>
         <div class="composer-preview hidden" id="composerPreview"></div>
         <div class="composer">
           <input type="text" id="msgInput" placeholder="Message the group…" autocomplete="off" dir="auto" />
-          <button class="icon-btn" id="wastedBtn" title="Offer a drink or substance — get Wasted">🥂</button>
           <button class="icon-btn" id="pollBtn" title="Create a poll">📊</button>
           <button class="primary" id="sendBtn">Send</button>
         </div>
@@ -1344,26 +1340,10 @@
     // Put the cursor in the composer right away so the user can type at once.
     setTimeout(() => input.focus(), 0);
 
-    // Wasted picker (offer to the group, or take one yourself).
-    const wastedPicker = view.querySelector('#wastedPicker');
-    const wastedBtn = view.querySelector('#wastedBtn');
-    wastedBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (!wastedPicker.classList.contains('hidden')) { wastedPicker.classList.add('hidden'); return; }
-      buildWastedPicker(wastedPicker);
-      wastedPicker.classList.remove('hidden');
-    });
-    document.addEventListener('click', function onGWDocClick(ev) {
-      if (!document.body.contains(wastedPicker)) { document.removeEventListener('click', onGWDocClick); return; }
-      if (!wastedPicker.contains(ev.target) && ev.target !== wastedBtn) wastedPicker.classList.add('hidden');
-    });
-
     // Poll builder.
     view.querySelector('#pollBtn').addEventListener('click', () => openPollBuilder({ groupId: gid }));
 
-    state.wasted = groupWasted || null;
     messages.forEach(appendGroupMessage);
-    updateWastedBar();
     scrollBody();
   }
 
@@ -1382,9 +1362,6 @@
   function appendGroupMessage(m) {
     const b = chatBody();
     if (!b) return;
-    // Wasted narrations render centered for everyone, not as a user's bubble.
-    if (m.kind === 'wasted') return appendWastedSentence(m);
-    if (m.kind === 'offer') return appendGroupOfferBubble(m);
     if (m.kind === 'poll') return appendPollBubble(m);
     const narration = narrationText(m.body);
     if (narration != null) {
@@ -1615,7 +1592,6 @@
     state.peer = peer;
     state.group = null; // leaving any group view
     state.replyTo = null; // clear any half-composed reply from a previous chat
-    state.captionEls = {}; // drop caption-bubble refs from the previous chat
     closeReactionPalette();
     state.chatPeers[peer.id] = peer;
     delete state.unread[peer.id];
@@ -1647,7 +1623,6 @@
           <button class="ghost small" id="makeGroupBtn" title="Start a group chat with this person and others">👥 Group</button>
         </div>
         <div class="disappear-banner hidden" id="disappearBanner"></div>
-        <div class="wasted-bar hidden" id="wastedBar"></div>
         <div class="live-banner hidden" id="liveBanner"></div>
         <div class="chat-activity-bar hidden" id="activityBar">
           <div class="activity-status" id="activityStatus"></div>
@@ -1664,18 +1639,13 @@
           <div class="fly-layer" id="chatFlyLayer"></div>
         </div>
         <div class="typing hidden" id="typing">typing…</div>
-        <div class="roleplay-bar hidden" id="roleplayBar"></div>
         <div class="gift-picker hidden" id="giftPicker"></div>
-        <div class="rp-picker hidden" id="rpPicker"></div>
-        <div class="wasted-picker hidden" id="wastedPicker"></div>
         <div class="reply-banner hidden" id="replyBanner"></div>
         <div class="composer-preview hidden" id="composerPreview"></div>
         <div class="composer">
           <input type="file" id="fileInput" class="hidden" />
           <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
           <button class="icon-btn" id="giftBtn" title="Send a naughty gift">🎁</button>
-          <button class="icon-btn" id="rpBtn" title="Start a roleplay story">🎭</button>
-          <button class="icon-btn" id="wastedBtn" title="Offer a drink or substance — get Wasted">🥂</button>
           <button class="icon-btn" id="pollBtn" title="Create a poll">📊</button>
           <button class="icon-btn" id="quizBtn" title="Take a quiz together">🧩</button>
           <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" dir="auto" />
@@ -1757,49 +1727,17 @@
       }
     });
 
-    // Roleplay picker.
-    const rpPicker = view.querySelector('#rpPicker');
-    const rpBtn = view.querySelector('#rpBtn');
-    rpBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      if (!rpPicker.classList.contains('hidden')) { rpPicker.classList.add('hidden'); return; }
-      giftPicker.classList.add('hidden');
-      await buildRoleplayPicker(rpPicker);
-      rpPicker.classList.remove('hidden');
-    });
-    document.addEventListener('click', function onRpDocClick(ev) {
-      if (!document.body.contains(rpPicker)) { document.removeEventListener('click', onRpDocClick); return; }
-      if (!rpPicker.contains(ev.target) && ev.target !== rpBtn) rpPicker.classList.add('hidden');
-    });
-
-    // Wasted picker (offer a drink / substance, or take one yourself).
-    const wastedPicker = view.querySelector('#wastedPicker');
-    const wastedBtn = view.querySelector('#wastedBtn');
-    wastedBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (!wastedPicker.classList.contains('hidden')) { wastedPicker.classList.add('hidden'); return; }
-      giftPicker.classList.add('hidden');
-      rpPicker.classList.add('hidden');
-      buildWastedPicker(wastedPicker);
-      wastedPicker.classList.remove('hidden');
-    });
-    document.addEventListener('click', function onWDocClick(ev) {
-      if (!document.body.contains(wastedPicker)) { document.removeEventListener('click', onWDocClick); return; }
-      if (!wastedPicker.contains(ev.target) && ev.target !== wastedBtn) wastedPicker.classList.add('hidden');
-    });
-
     // Poll builder.
     view.querySelector('#pollBtn').addEventListener('click', () => openPollBuilder({ to: peer.id }));
     // Quiz picker — start a quiz to attempt together.
     view.querySelector('#quizBtn').addEventListener('click', () => openQuizPicker(peer.id));
 
-    // Load persisted history (text + gifts + roleplay narration).
+    // Load persisted history (text + gifts).
     adState.counters.chat = 0; // restart the every-20-messages ad cadence per chat
     state.disappearing = 0;
     try {
-      const { messages, disappearing, wasted } = await api.get(`/api/users/${peer.id}/messages`);
+      const { messages, disappearing } = await api.get(`/api/users/${peer.id}/messages`);
       state.disappearing = disappearing || 0;
-      if (wasted) state.wasted = wasted;
 
       // Shared files aren't stored on the server; they're kept in THIS browser's
       // IndexedDB so they survive a refresh (per user/device). Fall back to the
@@ -1823,14 +1761,7 @@
       }
     } catch (_e) {}
     updateDisappearBanner();
-    updateWastedBar();
     scrollBody();
-
-    // Restore any active roleplay progress banner for this conversation.
-    try {
-      const { session } = await api.get(`/api/roleplay/session/${peer.id}`);
-      updateRoleplayBar(session);
-    } catch (_e) { updateRoleplayBar(null); }
   }
 
   function chatBody() { return document.getElementById('chatBody'); }
@@ -2227,75 +2158,13 @@
     if (m.kind === 'gift') appendGiftBubble(m);
     else if (m.kind === 'poll') appendPollBubble(m);
     else if (m.kind === 'quiz') appendQuizBubble(m);
-    else if (m.kind === 'narration') appendNarrationBubble(m.body, m.at);
-    else if (m.kind === 'offer') appendOfferBubble(m);
-    else if (m.kind === 'wasted') appendWastedSentence(m);
     else if (m.kind === 'hwevent') appendHighwayEventBubble(m);
     else if (m.kind === 'voice') return; // legacy voice notes (feature removed)
     else appendTextBubble(m);
     // Advertisement after every 20 exchanged messages (text + gifts).
-    if (m.kind !== 'narration' && m.kind !== 'voice' && m.kind !== 'offer' && m.kind !== 'wasted' && m.kind !== 'poll' && m.kind !== 'quiz' && m.kind !== 'hwevent') {
+    if (m.kind !== 'voice' && m.kind !== 'poll' && m.kind !== 'quiz' && m.kind !== 'hwevent') {
       maybeInsertStreamAd(chatBody(), 'chat_inline', 'chat', 20);
     }
-  }
-
-  // Roleplay narration card. `raw` is the JSON payload stored in the message.
-  function appendNarrationBubble(raw, at) {
-    const b = chatBody();
-    if (!b) return;
-    let p = {};
-    try { p = typeof raw === 'string' ? JSON.parse(raw) : (raw || {}); } catch (_e) { p = {}; }
-    const label = p.final
-      ? '🎬 The End'
-      : `🎭 ${esc(p.title || 'Roleplay')} · Stage ${(p.stage || 0) + 1}/${p.total || 1}`
-        + (p.stageTitle ? ` · ${esc(p.stageTitle)}` : '');
-    const captions = Array.isArray(p.captions) ? p.captions : [];
-    const hasCaptions = !!p.image && captions.length > 0;
-    const card = el(`
-      <div class="narration">
-        <div class="narration-head">${label}</div>
-        ${p.image
-          ? (hasCaptions
-              ? '<div class="narration-canvas"><img class="narration-img" loading="lazy" /></div>'
-              : '<img class="narration-img" loading="lazy" />')
-          : ''}
-        <div class="narration-text"></div>
-        <div class="narration-foot"></div>
-        <div class="time">${fmtTime(at)}</div>
-      </div>
-    `);
-    card.querySelector('.narration-text').textContent = p.final
-      ? 'Your story is complete. Start another anytime with 🎭.'
-      : (p.narration || '');
-    const img = card.querySelector('.narration-img');
-    if (img) {
-      img.src = p.image;
-      // With captions the image is a positioning surface — don't hijack a click
-      // meant for a bubble; a small zoom control is offered instead below.
-      if (!hasCaptions) img.addEventListener('click', () => openLightbox(p.image));
-    }
-    if (hasCaptions) renderStageCaptions(card, p, captions);
-
-    // Share the captioned image/gif to the Highway (participants only).
-    if (p.image && p.sid && !p.final) {
-      const foot = card.querySelector('.narration-foot');
-      const share = el('<button class="ghost small rp-share-btn" type="button">🌊 Share to Highway</button>');
-      share.addEventListener('click', () => shareRoleplayCaption(share, p.sid, p.stage || 0));
-      foot.appendChild(share);
-    }
-    b.appendChild(card);
-    scrollBody();
-  }
-
-  // Post the current captioned stage image to the Highway. The server bakes in
-  // the live caption text/positions and links the post back to this chat.
-  function shareRoleplayCaption(btn, sid, stage) {
-    btn.disabled = true;
-    const original = btn.textContent;
-    btn.textContent = 'Sharing…';
-    api.post('/api/roleplay/share', { sessionId: sid, stage })
-      .then(() => { btn.textContent = '✓ Shared to Highway'; notify('Shared to the Highway.'); })
-      .catch((e) => { btn.disabled = false; btn.textContent = original; notify(e.message || 'Could not share.'); });
   }
 
   // A like/comment on a picture this conversation shared to the Highway. Shown as
@@ -2324,289 +2193,6 @@
     if (thumb && p.image) thumb.addEventListener('click', () => openLightbox(p.image));
     b.appendChild(card);
     scrollBody();
-  }
-
-  // Overlay the caption-studio bubbles on a stage image. Each bubble is an
-  // editable, auto-growing speech/thought balloon both players share: typing in
-  // one syncs to the partner (and is saved) over 'roleplay:caption'. Binding
-  // needs a live session id (p.sid); a card from a finished session is read-only.
-  function renderStageCaptions(card, p, captions) {
-    const canvas = card.querySelector('.narration-canvas');
-    if (!canvas) return;
-    const sid = p.sid;
-    const stage = p.stage || 0;
-    const editable = !!sid && !p.final;
-
-    captions.forEach((cap, i) => {
-      const type = cap.type === 'thinking' ? 'thinking' : 'saying';
-      // Working copy of this caption's geometry (mutated by drag/rotate).
-      const geo = { x: +cap.x || 0, y: +cap.y || 0, rot: +cap.rot || 0 };
-      const bubble = el(`
-        <div class="rp-caption ${type}${cap.flip ? ' flip' : ''}"
-             style="left:${geo.x}%;top:${geo.y}%;transform:rotate(${geo.rot}deg)">
-          <div class="rp-cap-inner"><div class="rp-cap-body" ${editable ? 'contenteditable="true"' : ''}
-               data-ph="${type === 'thinking' ? 'thinking…' : 'saying…'}"></div></div>
-          ${editable ? '<button type="button" class="rp-cap-grip rp-cap-move" title="Drag to move">✥</button>'
-                     + '<button type="button" class="rp-cap-grip rp-cap-rot" title="Drag to rotate">⟳</button>' : ''}
-        </div>
-      `);
-      const body = bubble.querySelector('.rp-cap-body');
-      const applyGeo = () => {
-        bubble.style.left = geo.x + '%';
-        bubble.style.top = geo.y + '%';
-        bubble.style.transform = `rotate(${geo.rot}deg)`;
-      };
-      if (editable) {
-        const key = sid + ':' + stage + ':' + i;
-        state.captionEls[key] = { bubble, body, geo, applyGeo };
-        let timer = null;
-        body.addEventListener('input', () => {
-          syncCaptionFill(body);
-          if (timer) clearTimeout(timer);
-          timer = setTimeout(() => sendCaption(sid, stage, i, { text: body.textContent || '' }), 250);
-        });
-        body.addEventListener('blur', () => {
-          if (timer) { clearTimeout(timer); timer = null; }
-          sendCaption(sid, stage, i, { text: body.textContent || '' });
-        });
-        enableCaptionMove(canvas, bubble, geo, applyGeo, (f) => sendCaption(sid, stage, i, f));
-        enableCaptionRotate(canvas, bubble, geo, applyGeo, (f) => sendCaption(sid, stage, i, f));
-      }
-      canvas.appendChild(bubble);
-    });
-
-    // Paint whatever's already been written / moved (survives reload / late join).
-    if (editable) {
-      api.get(`/api/roleplay/captions/${sid}?stage=${stage}`)
-        .then(({ captions: st }) => {
-          Object.keys(st || {}).forEach((idx) => {
-            const entry = state.captionEls[sid + ':' + stage + ':' + idx];
-            if (!entry) return;
-            const s = st[idx];
-            if (document.activeElement !== entry.body && typeof s.text === 'string') {
-              entry.body.textContent = s.text;
-              syncCaptionFill(entry.body);
-            }
-            if (s.x != null) entry.geo.x = s.x;
-            if (s.y != null) entry.geo.y = s.y;
-            if (s.rot != null) entry.geo.rot = s.rot;
-            entry.applyGeo();
-          });
-        })
-        .catch(() => { /* ignore — bubbles just start empty */ });
-    }
-  }
-
-  // Drag the ✥ grip to reposition a caption; the tail keeps pointing where the
-  // bubble sits. Geometry is throttled to the partner and saved.
-  function enableCaptionMove(canvas, bubble, geo, applyGeo, send) {
-    const grip = bubble.querySelector('.rp-cap-move');
-    if (!grip) return;
-    grip.addEventListener('pointerdown', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      grip.setPointerCapture(e.pointerId);
-      const rect = canvas.getBoundingClientRect();
-      const sx = e.clientX; const sy = e.clientY; const ox = geo.x; const oy = geo.y;
-      let last = 0;
-      const move = (ev) => {
-        if (!rect.width || !rect.height) return;
-        geo.x = Math.min(100, Math.max(0, ox + ((ev.clientX - sx) / rect.width) * 100));
-        geo.y = Math.min(100, Math.max(0, oy + ((ev.clientY - sy) / rect.height) * 100));
-        applyGeo();
-        const now = Date.now();
-        if (now - last > 60) { last = now; send({ x: geo.x, y: geo.y }); }
-      };
-      const up = (ev) => {
-        grip.releasePointerCapture(ev.pointerId);
-        grip.removeEventListener('pointermove', move);
-        grip.removeEventListener('pointerup', up);
-        send({ x: geo.x, y: geo.y });
-      };
-      grip.addEventListener('pointermove', move);
-      grip.addEventListener('pointerup', up);
-    });
-  }
-
-  // Drag the ⟳ grip to rotate a caption around its anchor point.
-  function enableCaptionRotate(canvas, bubble, geo, applyGeo, send) {
-    const grip = bubble.querySelector('.rp-cap-rot');
-    if (!grip) return;
-    grip.addEventListener('pointerdown', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      grip.setPointerCapture(e.pointerId);
-      const rect = canvas.getBoundingClientRect();
-      const ax = rect.left + (geo.x / 100) * rect.width;
-      const ay = rect.top + (geo.y / 100) * rect.height;
-      const ang = (ev) => Math.atan2(ev.clientY - ay, ev.clientX - ax) * 180 / Math.PI;
-      const start = ang(e); const orig = geo.rot;
-      let last = 0;
-      const move = (ev) => {
-        let r = orig + (ang(ev) - start);
-        r = ((r % 360) + 360) % 360; if (r > 180) r -= 360;
-        geo.rot = Math.round(r);
-        applyGeo();
-        const now = Date.now();
-        if (now - last > 60) { last = now; send({ rot: geo.rot }); }
-      };
-      const up = (ev) => {
-        grip.releasePointerCapture(ev.pointerId);
-        grip.removeEventListener('pointermove', move);
-        grip.removeEventListener('pointerup', up);
-        send({ rot: geo.rot });
-      };
-      grip.addEventListener('pointermove', move);
-      grip.addEventListener('pointerup', up);
-    });
-  }
-
-  // Render read-only caption bubbles (with their baked text) onto a canvas — used
-  // for a captioned image shared to the Highway. `captions` carry {type,x,y,rot,
-  // flip,text}.
-  function renderReadonlyCaptions(canvas, captions) {
-    (captions || []).forEach((cap) => {
-      if (!cap || !(cap.text || '').trim()) return; // skip blank bubbles on the share
-      const type = cap.type === 'thinking' ? 'thinking' : 'saying';
-      const bubble = el(`
-        <div class="rp-caption ${type}${cap.flip ? ' flip' : ''}"
-             style="left:${+cap.x || 0}%;top:${+cap.y || 0}%;transform:rotate(${+cap.rot || 0}deg)">
-          <div class="rp-cap-inner"><div class="rp-cap-body filled"></div></div>
-        </div>
-      `);
-      bubble.querySelector('.rp-cap-body').textContent = cap.text || '';
-      canvas.appendChild(bubble);
-    });
-  }
-
-  // Toggle a "filled" class so an empty bubble shows its placeholder hint and a
-  // filled one drops it. The bubble itself auto-sizes to its text via CSS.
-  function syncCaptionFill(body) {
-    body.classList.toggle('filled', !!(body.textContent || '').trim());
-  }
-
-  // `fields` is any of { text, x, y, rot } — only what changed is sent.
-  function sendCaption(sid, stage, index, fields) {
-    if (!state.socket) return;
-    state.socket.emit('roleplay:caption', Object.assign({ sessionId: sid, stage, index }, fields), () => {});
-  }
-
-  // Populate the roleplay picker with the catalog.
-  async function buildRoleplayPicker(picker) {
-    picker.innerHTML = '<div class="gift-picker-title">Loading roleplays…</div>';
-    let roleplays = [];
-    try { roleplays = (await api.get('/api/roleplay')).roleplays || []; } catch (_e) { roleplays = []; }
-    picker.innerHTML = '';
-    picker.appendChild(el('<div class="gift-picker-title">Start a roleplay story</div>'));
-    if (!roleplays.length) {
-      picker.appendChild(el('<div class="hint" style="padding:6px 2px">No roleplays available yet. The admin can add them from the dashboard.</div>'));
-      return;
-    }
-    const list = el('<div class="rp-list"></div>');
-    roleplays.forEach((rp) => {
-      const item = el(`
-        <button class="rp-item" title="${esc(rp.description || rp.title)}">
-          ${rp.cover ? `<img class="rp-cover" src="${esc(rp.cover)}" />` : '<span class="rp-cover rp-cover-ph">🎭</span>'}
-          <span class="rp-item-body">
-            <span class="rp-item-title">${esc(rp.title)}</span>
-            <span class="rp-item-meta">${rp.stageCount} stage${rp.stageCount === 1 ? '' : 's'}</span>
-          </span>
-        </button>
-      `);
-      item.addEventListener('click', () => { startRoleplay(rp.id); picker.classList.add('hidden'); });
-      list.appendChild(item);
-    });
-    picker.appendChild(list);
-  }
-
-  function startRoleplay(roleplayId) {
-    if (!state.peer || !state.socket) return;
-    state.socket.emit('roleplay:start', { to: state.peer.id, roleplayId }, (res) => {
-      if (res && res.error) return notify(res.error);
-      // The first narration + progress arrive over the socket.
-    });
-  }
-
-  function stopRoleplay() {
-    if (!state.peer || !state.socket) return;
-    if (!confirm('End this roleplay?')) return;
-    state.socket.emit('roleplay:stop', { to: state.peer.id }, (res) => {
-      if (res && res.error) return notify(res.error);
-      updateRoleplayBar(null);
-    });
-  }
-
-  // Render/refresh the roleplay banner for the open chat. Shows the current
-  // stage title, a "You"/"Partner" turn control, a "Next stage" advance button,
-  // and "End". Advancing is manual now — there are no message counters.
-  function updateRoleplayBar(p) {
-    const bar = document.getElementById('roleplayBar');
-    if (!bar) return;
-    if (!p || p.status !== 'active') { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
-    const stageTitle = p.stageTitle ? `<span class="rp-bar-name">${esc(p.stageTitle)}</span>` : '';
-    // Give players a heads-up about what's coming next.
-    const nextTitle = p.hasNext && p.nextStageTitle
-      ? `<span class="rp-bar-next" title="Next stage">Next: ${esc(p.nextStageTitle)}</span>` : '';
-    bar.innerHTML = `
-      <div class="rp-bar-main">
-        <span class="rp-bar-title">🎭 ${esc(p.title)}</span>
-        <span class="rp-bar-stage">Stage ${(p.stage || 0) + 1}/${p.total}</span>
-        ${stageTitle}
-        ${nextTitle}
-      </div>
-      <div class="rp-bar-actions">
-        <button class="ghost small" id="rpYou" title="Type your part in the chat below">You</button>
-        <button class="ghost small" id="rpPartner" title="Nudge your partner to type in the chat">Partner</button>
-        <button class="primary small" id="rpNext">${p.hasNext ? 'Next stage ▶' : 'Finish ▶'}</button>
-        <button class="ghost small" id="rpEnd">End</button>
-      </div>
-    `;
-    bar.classList.remove('hidden');
-    bar.querySelector('#rpYou').addEventListener('click', () => {
-      const input = document.getElementById('msgInput');
-      if (input) { input.focus(); input.scrollIntoView({ block: 'nearest' }); }
-    });
-    bar.querySelector('#rpPartner').addEventListener('click', nudgePartner);
-    bar.querySelector('#rpNext').addEventListener('click', advanceRoleplay);
-    bar.querySelector('#rpEnd').addEventListener('click', stopRoleplay);
-  }
-
-  // "Partner" button: ask the other player to type in the main chat. They get a
-  // sound + toast on their side.
-  function nudgePartner() {
-    if (!state.peer || !state.socket) return;
-    state.socket.emit('roleplay:nudge', { to: state.peer.id }, (res) => {
-      if (res && res.error) return notify(res.error);
-      notify('Nudged your partner to type.');
-    });
-  }
-
-  // "Next stage" button: advance the shared story. The next narration + progress
-  // arrive over the socket for both players.
-  function advanceRoleplay() {
-    if (!state.peer || !state.socket) return;
-    state.socket.emit('roleplay:advance', { to: state.peer.id }, (res) => {
-      if (res && res.error) return notify(res.error);
-    });
-  }
-
-  // A short chime for the "Partner" nudge, synthesized so there's no asset to
-  // ship. Falls back silently if the browser blocks audio.
-  function playNudgeSound() {
-    try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return;
-      const ctx = new Ctx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, ctx.currentTime);
-      osc.frequency.setValueAtTime(1180, ctx.currentTime + 0.12);
-      gain.gain.setValueAtTime(0.001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-      osc.connect(gain); gain.connect(ctx.destination);
-      osc.start(); osc.stop(ctx.currentTime + 0.42);
-      osc.onended = () => ctx.close();
-    } catch (_e) { /* audio unavailable — the toast still shows */ }
   }
 
   // m: { body: giftId, mine, at, id?, reply? }
@@ -2638,212 +2224,6 @@
     emoji.style.animation = 'none';
     void emoji.offsetWidth;
     emoji.style.animation = '';
-  }
-
-  /* ---------- "Wasted": offers, self-takes & the intoxication meter ---------- */
-
-  // Mirror of src/wasted.js ITEMS (drink + the three substances).
-  var WASTED_ITEMS = [
-    { id: 'drink', label: 'Drink', emoji: '🍺' },
-    { id: 'smoke', label: 'Smoke', emoji: '🚬' },
-    { id: 'powder', label: 'Powder', emoji: '❄️' },
-    { id: 'pills', label: 'Pills', emoji: '💊' },
-  ];
-  function wastedItem(id) { return WASTED_ITEMS.find((i) => i.id === id) || { id, label: 'Something', emoji: '🥂' }; }
-
-  // Build the picker: offer an item to the peer, or take one yourself.
-  function buildWastedPicker(picker) {
-    picker.innerHTML = '';
-    picker.appendChild(el('<div class="gift-picker-title">Offer a drink or substance</div>'));
-    const offerGrid = el('<div class="wasted-grid"></div>');
-    WASTED_ITEMS.forEach((it) => {
-      const cell = el(`<button class="wasted-cell" title="Offer ${esc(it.label)}"><span class="wasted-emoji">${esc(it.emoji)}</span><span class="wasted-cell-name">${esc(it.label)}</span></button>`);
-      cell.addEventListener('click', () => { offerWasted(it.id); picker.classList.add('hidden'); });
-      offerGrid.appendChild(cell);
-    });
-    picker.appendChild(offerGrid);
-    picker.appendChild(el('<div class="gift-picker-title" style="margin-top:8px">…or take one yourself</div>'));
-    const selfGrid = el('<div class="wasted-grid"></div>');
-    WASTED_ITEMS.forEach((it) => {
-      const cell = el(`<button class="wasted-cell self" title="Take ${esc(it.label)} yourself"><span class="wasted-emoji">${esc(it.emoji)}</span><span class="wasted-cell-name">${esc(it.label)}</span></button>`);
-      cell.addEventListener('click', () => { takeWasted(it.id); picker.classList.add('hidden'); });
-      selfGrid.appendChild(cell);
-    });
-    picker.appendChild(selfGrid);
-  }
-
-  function offerWasted(item) {
-    if (!state.socket) return;
-    if (state.group) {
-      state.socket.emit('wasted:groupOffer', { groupId: state.group.gid, item }, (res) => {
-        if (res && res.error) notify(res.error);
-      });
-      return;
-    }
-    if (!state.peer) return;
-    state.socket.emit('wasted:offer', { to: state.peer.id, item }, (res) => {
-      if (res && res.error) notify(res.error);
-      // The offer narration arrives (to everyone) over the socket.
-    });
-  }
-
-  function takeWasted(item) {
-    if (!state.socket) return;
-    if (state.group) {
-      state.socket.emit('wasted:groupSelf', { groupId: state.group.gid, item }, (res) => {
-        if (res && res.error) notify(res.error);
-      });
-      return;
-    }
-    if (!state.peer) return;
-    state.socket.emit('wasted:self', { to: state.peer.id, item }, (res) => {
-      if (res && res.error) notify(res.error);
-      // The narration and the updated score arrive over the socket.
-    });
-  }
-
-  function respondOffer(messageId, accept) {
-    if (!state.socket) return;
-    state.socket.emit('wasted:respond', { messageId, accept }, (res) => {
-      if (res && res.error) notify(res.error);
-    });
-  }
-
-  // Render an offer / self-take / consumption as a CENTERED system narration
-  // (like a roleplay card), not a chat bubble from a user. It stays in the chat.
-  function appendOfferBubble(m) {
-    const b = chatBody();
-    if (!b) return;
-    let data = {};
-    try { data = typeof m.body === 'string' ? JSON.parse(m.body) : (m.body || {}); } catch (_e) { data = {}; }
-    const card = el('<div class="wasted-offer"></div>');
-    if (m.id) card.dataset.offerId = m.id;
-    card._offer = data;
-    card._mine = !!m.mine;
-    card._at = m.at;
-    card._render = () => renderOfferInner(card);
-    card._render();
-    b.appendChild(card);
-    scrollBody();
-  }
-
-  // The third-person system narration line for an offer / consumption.
-  function offerNarrationText(data, mine) {
-    const it = wastedItem(data.item);
-    const who = esc(peerLabel());
-    const item = `${it.emoji} ${esc(it.label)}`;
-    switch (data.status) {
-      case 'self':
-        return mine ? `You poured yourself a ${item}` : `${who} poured themselves a ${item}`;
-      case 'accepted':
-        return mine ? `${who} accepted your ${item}` : `You accepted ${who}'s ${item}`;
-      case 'rejected':
-        return mine ? `${who} turned down your ${item}` : `You turned down ${who}'s ${item}`;
-      case 'pending':
-      default:
-        return mine ? `You offered ${who} a ${item}…` : `${who} offers you a ${item}`;
-    }
-  }
-
-  function renderOfferInner(card) {
-    const data = card._offer || {};
-    const mine = card._mine;
-    const pending = data.status === 'pending' && !mine;
-    const actions = pending
-      ? '<div class="offer-actions"><button class="primary small" data-accept>Accept</button><button class="ghost small" data-reject>Reject</button></div>'
-      : '';
-    card.innerHTML = `<span class="wasted-offer-text">🥂 ${offerNarrationText(data, mine)}</span>${actions}<span class="wasted-offer-time">${fmtTime(card._at)}</span>`;
-    const acc = card.querySelector('[data-accept]');
-    const rej = card.querySelector('[data-reject]');
-    if (acc) acc.addEventListener('click', () => respondOffer(Number(card.dataset.offerId), true));
-    if (rej) rej.addEventListener('click', () => respondOffer(Number(card.dataset.offerId), false));
-  }
-
-  // A pending offer was answered — update its narration in place. `extra` may
-  // carry { who, whoName } for group offers (who answered).
-  function updateOffer(id, status, extra) {
-    const b = chatBody();
-    if (!b) return;
-    const card = b.querySelector(`.wasted-offer[data-offer-id="${id}"]`);
-    if (!card || !card._offer) return;
-    card._offer.status = status;
-    if (extra && extra.who != null) card._offer.who = extra.who;
-    if (extra && extra.whoName) card._offer.whoName = extra.whoName;
-    (card._render || (() => renderOfferInner(card)))();
-  }
-
-  /* ---------- group-chat offers (centered narration, delivered to all) ---------- */
-
-  // Display name for a group member id ("You" for me).
-  function groupMemberName(id) {
-    if (state.me && id === state.me.id) return 'You';
-    const m = state.group && (state.group.members || []).find((x) => x.id === id);
-    return m ? m.displayName : 'Someone';
-  }
-
-  function offerGroupText(data) {
-    const myId = state.me && state.me.id;
-    const it = wastedItem(data.item);
-    const item = `${it.emoji} ${esc(it.label)}`;
-    const iAmOfferer = data.by === myId;
-    const by = esc(groupMemberName(data.by));
-    const whoName = data.who != null ? esc(data.whoName || groupMemberName(data.who)) : '';
-    const byPossessive = iAmOfferer ? 'your' : `${by}'s`;
-    switch (data.status) {
-      case 'self':
-        return iAmOfferer ? `You poured yourself a ${item}` : `${by} poured themselves a ${item}`;
-      case 'accepted':
-        return `${whoName} accepted ${byPossessive} ${item}`;
-      case 'rejected':
-        return `${whoName} turned down ${byPossessive} ${item}`;
-      case 'pending':
-      default:
-        return `${by} ${iAmOfferer ? 'offer' : 'offers'} the group a ${item}`;
-    }
-  }
-
-  function appendGroupOfferBubble(m) {
-    const b = chatBody();
-    if (!b) return;
-    let data = {};
-    try { data = typeof m.body === 'string' ? JSON.parse(m.body) : (m.body || {}); } catch (_e) { data = {}; }
-    const card = el('<div class="wasted-offer"></div>');
-    if (m.id) card.dataset.offerId = m.id;
-    card._offer = data;
-    card._at = m.at;
-    card._render = () => renderGroupOfferInner(card);
-    card._render();
-    b.appendChild(card);
-    scrollBody();
-  }
-
-  function renderGroupOfferInner(card) {
-    const data = card._offer || {};
-    // Anyone but the offerer can answer a still-pending group offer.
-    const canAnswer = data.status === 'pending' && data.by !== (state.me && state.me.id);
-    const actions = canAnswer
-      ? '<div class="offer-actions"><button class="primary small" data-accept>Accept</button><button class="ghost small" data-reject>Reject</button></div>'
-      : '';
-    card.innerHTML = `<span class="wasted-offer-text">🥂 ${offerGroupText(data)}</span>${actions}<span class="wasted-offer-time">${fmtTime(card._at)}</span>`;
-    const acc = card.querySelector('[data-accept]');
-    const rej = card.querySelector('[data-reject]');
-    if (acc) acc.addEventListener('click', () => respondGroupOffer(Number(card.dataset.offerId), true));
-    if (rej) rej.addEventListener('click', () => respondGroupOffer(Number(card.dataset.offerId), false));
-  }
-
-  function respondGroupOffer(messageId, accept) {
-    if (!state.socket) return;
-    state.socket.emit('wasted:groupRespond', { messageId, accept }, (res) => {
-      if (res && res.error) notify(res.error);
-    });
-  }
-
-  // A random admin "wasted" sentence — a permanent centered system message.
-  function appendWastedSentence(m) {
-    const b = chatBody();
-    if (!b) return;
-    b.appendChild(el(`<div class="wasted-sentence">🥴 ${esc(m.body)}</div>`));
-    scrollBody();
   }
 
   /* ---------- Polls (WhatsApp-style, in chat) ---------- */
@@ -3126,23 +2506,6 @@
     renderQuizInner(card);
   }
 
-  // Paint the intoxication meter for the current viewer from state.wasted.
-  function updateWastedBar() {
-    const bar = document.getElementById('wastedBar');
-    if (!bar) return;
-    const w = state.wasted;
-    if (!w || !w.score) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
-    const max = w.max || 15;
-    const pct = Math.min(100, (w.score / max) * 100);
-    const maxed = w.maxed || w.score >= max;
-    bar.classList.remove('hidden');
-    bar.classList.toggle('maxed', maxed);
-    bar.innerHTML = `
-      <span class="wasted-label">${maxed ? '🥴 Completely Wasted' : '🥂 Wasted'}</span>
-      <span class="wasted-track"><span class="wasted-fill" style="width:${pct}%"></span></span>
-      <span class="wasted-num">${Math.round(w.score * 10) / 10}/${max}</span>`;
-  }
-
   /* ---------- reply / quote ---------- */
 
   function peerLabel() {
@@ -3351,11 +2714,7 @@
     cancelReply();
     state.socket.emit('chat:message', { to: state.peer.id, body, replyTo, replyFile }, (res) => {
       if (res && res.error) return notify(res.error);
-      // Too wasted to speak: the server turned this into a centered narration
-      // that arrives over the socket — don't also append a text bubble here.
-      if (res && res.wasted) return;
-      // Echo is handled here for the sending tab. Use the server's returned body
-      // so spliced "Wasted" words show here too.
+      // Echo is handled here for the sending tab. Use the server's returned body.
       const m = (res && res.message) || {};
       appendTextBubble({ body: m.body != null ? m.body : body, mine: true, at: m.at || Date.now(), id: m.id, reply: m.reply || replySnapshot, expiresAt: m.expiresAt });
     });
@@ -4294,7 +3653,7 @@
       if (!e || (!e.text && !e.image)) return;
       pushLiveActivity({
         type: e.image ? 'activity-image' : 'chat-activity',
-        icon: e.icon || fakeIcon(e.activity || ''),
+        icon: e.icon || activityIcon(e.activity || ''),
         at: e.at || Date.now(),
         text: e.text,
         image: e.image || null,
@@ -4308,24 +3667,6 @@
       if (e && e.messageId != null) updateReaction(e.messageId, e.userId, e.emoji);
     });
 
-    // My "Wasted" score changed (I consumed something / it decayed) — refresh
-    // the meter so the gauge and the "Completely Wasted" state stay current.
-    s.on('wasted:score', (e) => {
-      if (!e) return;
-      // Scores are per-conversation (1-1 by peerId, group by groupId): only
-      // update the meter when the event is for the chat currently open.
-      if (e.groupId != null) {
-        if (!(state.group && state.group.gid === e.groupId)) return;
-      } else if (e.peerId != null) {
-        if (!(state.peer && state.peer.id === e.peerId)) return;
-      }
-      state.wasted = { score: e.score, max: e.max, maxed: e.maxed };
-      updateWastedBar();
-    });
-
-    // A pending offer was accepted/rejected — flip its narration in place.
-    s.on('wasted:update', (e) => { if (e && e.id != null) updateOffer(e.id, e.status, e); });
-
     // Disappearing-messages setting changed for a conversation of mine.
     s.on('chat:disappearing', (e) => {
       const peerId = state.peer && state.peer.id;
@@ -4337,41 +3678,8 @@
     // The server swept expired messages — drop those bubbles.
     s.on('chat:expire', (e) => { if (e && e.ids) expireMessages(e.ids); });
 
-    s.on('roleplay:progress', (p) => {
-      const peerId = state.peer && state.peer.id;
-      // Only update the banner when the progress is for the open conversation.
-      if (peerId && p && p.peerId === peerId) updateRoleplayBar(p);
-    });
-
     // My account was just suspended (e.g. mass-reported) — show the notice.
     s.on('account:suspended', (e) => { showSuspendedScreen({ suspended: true, suspendedUntil: e && e.until, error: 'Your account has been suspended.' }); });
-
-    // My partner tapped "Partner" — they want me to type in the main chat.
-    s.on('roleplay:nudge', (e) => {
-      playNudgeSound();
-      const who = (e && e.fromName) || 'Your partner';
-      notify(`${who} wants you to type in the chat.`);
-      const input = document.getElementById('msgInput');
-      if (input && state.peer && e && e.from === state.peer.id) input.focus();
-    });
-
-    // The partner (or another of my tabs) edited a shared caption — text and/or
-    // position/rotation. Mirror whatever changed, but don't clobber text I'm
-    // actively typing into that very bubble.
-    s.on('roleplay:caption', (e) => {
-      if (!e || e.sessionId == null) return;
-      const entry = state.captionEls[e.sessionId + ':' + e.stage + ':' + e.index];
-      if (!entry) return;
-      if (typeof e.text === 'string' && document.activeElement !== entry.body && entry.body.textContent !== e.text) {
-        entry.body.textContent = e.text;
-        entry.body.classList.toggle('filled', !!e.text.trim());
-      }
-      let moved = false;
-      if (typeof e.x === 'number') { entry.geo.x = e.x; moved = true; }
-      if (typeof e.y === 'number') { entry.geo.y = e.y; moved = true; }
-      if (typeof e.rot === 'number') { entry.geo.rot = e.rot; moved = true; }
-      if (moved) entry.applyGeo();
-    });
 
     // ----- broadcast ("live chat") events -----
 
@@ -5676,21 +4984,10 @@
     const bodyEl = card.querySelector('.hw-body');
     if (p.body) appendRichText(bodyEl, p.body); else bodyEl.remove();
     if (p.image) {
-      const captions = Array.isArray(p.captions) ? p.captions : [];
-      if (captions.length) {
-        // Captioned share: image is a positioning surface for read-only bubbles.
-        const canvas = el('<div class="narration-canvas hw-canvas"></div>');
-        const img = el('<img class="hw-image" loading="lazy" alt="shared image" />');
-        img.src = p.image;
-        canvas.appendChild(img);
-        renderReadonlyCaptions(canvas, captions);
-        card.appendChild(canvas);
-      } else {
-        const img = el('<img class="hw-image" loading="lazy" alt="shared image" />');
-        img.src = p.image;
-        img.addEventListener('click', () => openLightbox(p.image));
-        card.appendChild(img);
-      }
+      const img = el('<img class="hw-image" loading="lazy" alt="shared image" />');
+      img.src = p.image;
+      img.addEventListener('click', () => openLightbox(p.image));
+      card.appendChild(img);
     }
 
     const actionSlot = card.querySelector('.hw-action');
@@ -5866,7 +5163,7 @@
     if (payload.author && state.ignored[payload.author.id]) return; // muted author
     const mine = !!(state.me && payload.author && payload.author.id === state.me.id);
     prependHighwayPost(highwayFeed, {
-      id: payload.id, body: payload.body, image: payload.image, captions: payload.captions || [],
+      id: payload.id, body: payload.body, image: payload.image,
       createdAt: payload.createdAt, author: payload.author, mine, friendState: mine ? 'self' : 'none',
     });
     trimHighwayFeed(highwayFeed);
@@ -6307,7 +5604,7 @@
 
   /* ---------- Recent Activity ---------- */
 
-  // Build one feed row. `live` items (streamed fake activity) show "just now".
+  // Build one feed row. `live` items (streamed just now) show "just now".
   function feedItemEl(ev, live) {
     const item = el(`
       <div class="feed-item${live ? ' feed-new' : ''}">
@@ -6357,15 +5654,14 @@
     registerActivityFeed(feed);
   }
 
-  /* ---- live activity feed (driven by the server) ----
-     The "recent activity" stream is generated continuously on the SERVER, so
-     every user sees the same feed even with nobody online. Logged-in clients
-     receive each new row over the socket ('activity:new' → pushLiveActivity);
-     the sign-in page has no socket, so it polls instead (startAuthActivityPoll).
+  /* ---- live activity feed ----
+     Logged-in clients receive each new activity row over the socket
+     ('activity:new' → pushLiveActivity); the sign-in page has no socket, so it
+     polls instead (startAuthActivityPoll).
   */
   const activityFeeds = []; // mounted feed elements that live socket updates flow into
 
-  function fakeIcon(activity) {
+  function activityIcon(activity) {
     const a = String(activity).toLowerCase();
     if (/(chat|messag|talk)/.test(a)) return '💬';
     if (/(flirt|crush|love|kiss)/.test(a)) return '😍';

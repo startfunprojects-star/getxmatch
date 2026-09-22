@@ -10,7 +10,6 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../auth');
 const { notifyGroup } = require('../socket');
-const wasted = require('../wasted');
 const polls = require('../polls');
 
 const router = express.Router();
@@ -162,9 +161,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
        LIMIT 200`
     )
     .all(gid);
-  const score = wasted.getGroupScore(req.user.id, gid);
   res.json({
-    wasted: { score: Math.round(score * 100) / 100, max: wasted.MAX_SCORE, maxed: wasted.isMaxed(score) },
     messages: rows.map((r) => ({
       id: r.id,
       groupId: gid,

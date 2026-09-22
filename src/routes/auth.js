@@ -9,7 +9,6 @@ const db = require('../db');
 const config = require('../config');
 const { sendSignupOtp } = require('../mail');
 const { signToken, setAuthCookie, clearAuthCookie, requireAuth } = require('../auth');
-const wasted = require('../wasted');
 
 const router = express.Router();
 
@@ -158,9 +157,6 @@ router.post('/login', authLimiter, (req, res) => {
 
   const token = signToken(user);
   setAuthCookie(res, token);
-
-  // A fresh login sobers the user up in every conversation.
-  wasted.resetForUser(user.id);
 
   const profile = db.prepare('SELECT user_id FROM profiles WHERE user_id = ?').get(user.id);
   res.json({ user: publicUser(user), hasProfile: !!profile });

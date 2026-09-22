@@ -58,7 +58,7 @@ function saveProfile(userId, body, file) {
   const country = (b.country || '').trim();
   if (!country || country.length > 60) return fail('Please select a country.');
 
-  // --- Mandatory: body weight (kg). Drives the "Wasted" score in chat.
+  // --- Mandatory: body weight (kg).
   const weight = Math.round(Number(b.weight));
   if (!Number.isFinite(weight) || weight < F.MIN_WEIGHT || weight > F.MAX_WEIGHT) {
     return fail(`Please enter a valid weight between ${F.MIN_WEIGHT} and ${F.MAX_WEIGHT} kg.`);

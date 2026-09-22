@@ -6,8 +6,6 @@ const config = require('./config');
 const { userFromToken, suspensionRemaining } = require('./auth');
 const { areBlocked } = require('./relations');
 const { getGift } = require('./gifts');
-const wasted = require('./wasted');
-const roleplay = require('./roleplay');
 const chatlife = require('./chatlife');
 const broadcast = require('./broadcast');
 const polls = require('./polls');
@@ -83,141 +81,7 @@ function expiryFor(a, b) {
 }
 
 /* --------------------------------------------------------------------------
-   Roleplay delivery helpers
--------------------------------------------------------------------------- */
-
-// Persist a narration card as a kind='narration' message and deliver it to
-// both users in the pair (body is the JSON stage payload).
-function deliverNarration(io, a, b, payload) {
-  const now = Date.now();
-  const body = JSON.stringify(payload);
-  const info = db
-    .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at) VALUES (?, ?, ?, 'narration', ?)")
-    .run(a, b, body, now);
-  const msg = { id: info.lastInsertRowid, from: a, to: b, body, kind: 'narration', at: now };
-  io.to(`user:${a}`).emit('chat:message', { ...msg, mine: true });
-  io.to(`user:${b}`).emit('chat:message', { ...msg, mine: false });
-  // Mirror roleplay narration to broadcast watchers, if any.
-  mirrorLiveMessage(io, a, b, 'narration', body, now);
-}
-
-function emitRoleplayProgress(io, a, b, session) {
-  io.to(`user:${a}`).emit('roleplay:progress', roleplay.progressState(session, a));
-  io.to(`user:${b}`).emit('roleplay:progress', roleplay.progressState(session, b));
-}
-
-// Wipe the chat messages exchanged during a roleplay session (everything
-// between the pair from when the session started onward) and tell both clients
-// to drop those bubbles. Highway shares live in their own table with copied
-// image files, so they are untouched. Returns nothing.
-function purgeRoleplayChat(io, session) {
-  if (!session) return;
-  const a = session.user_lo;
-  const b = session.user_hi;
-  const rows = db
-    .prepare(
-      `SELECT id FROM messages
-        WHERE created_at >= ?
-          AND ((sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?))`
-    )
-    .all(session.created_at, a, b, b, a);
-  const ids = rows.map((r) => r.id);
-  if (!ids.length) return;
-  // Single statement matching the same rows we just selected (no per-row loop —
-  // node:sqlite's DatabaseSync has no transaction() helper).
-  db.prepare(
-    `DELETE FROM messages
-      WHERE created_at >= ?
-        AND ((sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?))`
-  ).run(session.created_at, a, b, b, a);
-  io.to(`user:${a}`).emit('chat:expire', { ids });
-  io.to(`user:${b}`).emit('chat:expire', { ids });
-}
-
-// Act on a start/advance outcome: reveal narration + push progress. On the final
-// stage the whole play chat is cleared first, then a single "The End" card is
-// left as closure (it survives the purge as it's created afterwards).
-function applyRoleplayOutcome(io, senderId, otherId, outcome) {
-  if (!outcome) return;
-  if (outcome.type === 'advance') {
-    deliverNarration(io, senderId, otherId,
-      roleplay.stagePayload(outcome.roleplay, outcome.stageRow, outcome.stageIndex, outcome.total, false, outcome.session.id));
-    emitRoleplayProgress(io, senderId, otherId, outcome.session);
-  } else if (outcome.type === 'complete') {
-    purgeRoleplayChat(io, outcome.session);
-    deliverNarration(io, senderId, otherId,
-      roleplay.stagePayload(outcome.roleplay, null, outcome.total, outcome.total, true, outcome.session.id));
-    emitRoleplayProgress(io, senderId, otherId, outcome.session);
-  } else if (outcome.type === 'progress') {
-    emitRoleplayProgress(io, senderId, otherId, outcome.session);
-  }
-}
-
-/* --------------------------------------------------------------------------
-   "Wasted" helpers
--------------------------------------------------------------------------- */
-
-// Tell a user (all their tabs) their current wasted score for a specific
-// conversation, so the UI can show the meter and gate sending at the cap.
-function emitWastedScore(io, userId, peerId, score) {
-  io.to(`user:${userId}`).emit('wasted:score', {
-    userId,
-    peerId,
-    score: Math.round(score * 100) / 100,
-    max: wasted.MAX_SCORE,
-    maxed: wasted.isMaxed(score),
-  });
-}
-
-// Persist and deliver an offer/self-take as a kind='offer' message. The body is
-// a JSON payload { item, status, by }: status is 'pending' (awaiting the
-// recipient), 'accepted', 'rejected', or 'self' (the sender took it alone).
-function deliverOffer(io, from, to, payload) {
-  const now = Date.now();
-  const body = JSON.stringify(payload);
-  const info = db
-    .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'offer', ?, NULL)")
-    .run(from, to, body, now);
-  const msg = { id: info.lastInsertRowid, from, to, body, kind: 'offer', at: now };
-  io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
-  io.to(`user:${from}`).emit('chat:message', { ...msg, mine: true });
-  mirrorLiveMessage(io, from, to, 'offer', body, now);
-  return info.lastInsertRowid;
-}
-
-// Pick a female name and a male name from a set of chat participants, used to
-// fill the pronouns in a "wasted" sentence. Returns { female, male } (either may
-// be null if no participant of that gender is in the chat).
-function genderNamesFor(userIds) {
-  let female = null;
-  let male = null;
-  for (const uid of userIds) {
-    const r = db
-      .prepare('SELECT p.gender, p.display_name, u.username FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?')
-      .get(uid);
-    if (!r) continue;
-    const name = r.display_name || r.username;
-    if (!female && r.gender === 'Female') female = name;
-    if (!male && r.gender === 'Male') male = name;
-  }
-  return { female, male };
-}
-
-// Persist and deliver an admin "wasted" sentence as a permanent system message
-// visible to both users. expires_at is left NULL so it never disappears.
-function deliverWastedSentence(io, a, b, sentence) {
-  const now = Date.now();
-  const info = db
-    .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'wasted', ?, NULL)")
-    .run(a, b, sentence, now);
-  const msg = { id: info.lastInsertRowid, from: a, to: b, body: sentence, kind: 'wasted', at: now };
-  io.to(`user:${a}`).emit('chat:message', { ...msg, mine: false });
-  io.to(`user:${b}`).emit('chat:message', { ...msg, mine: false });
-  mirrorLiveMessage(io, a, b, 'wasted', sentence, now);
-}
-
-/* --------------------------------------------------------------------------
-   Group-chat "Wasted" helpers
+   Group-chat helpers
 -------------------------------------------------------------------------- */
 
 // The joined members of a group (the audience for any group message).
@@ -228,7 +92,7 @@ function groupJoinedIds(groupId) {
     .map((r) => r.user_id);
 }
 
-// Persist a group message of any kind (text | wasted | offer) and deliver it to
+// Persist a group message of any kind (text | poll) and deliver it to
 // every joined member (mine flag per recipient). Returns the new row id.
 function deliverGroupMessage(io, groupId, senderId, kind, body) {
   const now = Date.now();
@@ -249,17 +113,6 @@ function deliverGroupMessage(io, groupId, senderId, kind, body) {
   groupJoinedIds(groupId).forEach((uid) =>
     io.to(`user:${uid}`).emit('group:message', { ...base, mine: uid === senderId }));
   return info.lastInsertRowid;
-}
-
-// Tell a user their current wasted score inside a group, for the meter + gating.
-function emitGroupWastedScore(io, userId, groupId, score) {
-  io.to(`user:${userId}`).emit('wasted:score', {
-    userId,
-    groupId,
-    score: Math.round(score * 100) / 100,
-    max: wasted.MAX_SCORE,
-    maxed: wasted.isMaxed(score),
-  });
 }
 
 /* --------------------------------------------------------------------------
@@ -287,10 +140,6 @@ function replyPreview(replyToId) {
   if (row.kind === 'gift') {
     const g = getGift(row.body);
     text = g ? `${g.emoji} ${g.name}` : 'a gift';
-  } else if (row.kind === 'narration') {
-    text = '🎭 Roleplay';
-  } else if (row.kind === 'offer') {
-    text = '🥂 Wasted';
   } else if (row.kind === 'poll') {
     text = polls.pollLabel(polls.pollIdFromBody(row.body));
   } else if (row.kind === 'quiz') {
@@ -388,17 +237,6 @@ function broadcastMessageView(row) {
   if (kind === 'gift') {
     const g = getGift(row.body);
     text = g ? `${g.emoji} ${g.name}` : '🎁 a gift';
-  } else if (kind === 'narration') {
-    try {
-      const p = JSON.parse(row.body);
-      text = p.final ? '🎬 The End' : `🎭 ${p.title || 'Roleplay'}`;
-    } catch (_e) { text = '🎭 Roleplay'; }
-  } else if (kind === 'offer') {
-    try {
-      const o = JSON.parse(row.body);
-      const it = wasted.getItem(o.item);
-      text = it ? `🥂 ${it.emoji} ${it.label}` : '🥂 Wasted';
-    } catch (_e) { text = '🥂 Wasted'; }
   } else if (kind === 'poll') {
     text = polls.pollLabel(polls.pollIdFromBody(row.body));
   }
@@ -429,8 +267,8 @@ function emitViewerCount(io, b) {
 }
 
 // If the pair (from -> to) is being broadcast, mirror a just-sent message to
-// everyone watching. kind is 'text' | 'gift' | 'narration'; body is the raw
-// stored value (gift id / narration JSON / text).
+// everyone watching. kind is 'text' | 'gift' | 'poll'; body is the raw
+// stored value (gift id / poll JSON / text).
 function mirrorLiveMessage(io, from, to, kind, body, at) {
   const b = broadcast.forPair(from, to);
   if (!b) return;
@@ -438,17 +276,6 @@ function mirrorLiveMessage(io, from, to, kind, body, at) {
   if (kind === 'gift') {
     const g = getGift(body);
     text = g ? `${g.emoji} ${g.name}` : '🎁 a gift';
-  } else if (kind === 'narration') {
-    try {
-      const p = JSON.parse(body);
-      text = p.final ? '🎬 The End' : `🎭 ${p.title || 'Roleplay'}`;
-    } catch (_e) { text = '🎭 Roleplay'; }
-  } else if (kind === 'offer') {
-    try {
-      const o = JSON.parse(body);
-      const it = wasted.getItem(o.item);
-      text = it ? `🥂 ${it.emoji} ${it.label}` : '🥂 Wasted';
-    } catch (_e) { text = '🥂 Wasted'; }
   } else if (kind === 'poll') {
     text = polls.pollLabel(polls.pollIdFromBody(body));
   }
@@ -695,26 +522,9 @@ function initSocket(io) {
         const now = Date.now();
         const expiresAt = expiryFor(me.id, to);
 
-        // A narration/action line ("/…") is delivered verbatim: the "Wasted"
-        // system never splices its words in, blocks it, or piggybacks a random
-        // admin sentence on it.
-        const isNarration = body[0] === '/';
-
-        // "Wasted": at the cap the user is too gone to speak — their message
-        // becomes a centered system narration ("Completely Wasted") instead of a
-        // chat bubble. Below the cap, random words may be spliced into what they
-        // actually say. Narration is exempt from both.
-        const senderScore = wasted.getScore(me.id, to, now);
-        if (!isNarration && wasted.isMaxed(senderScore)) {
-          deliverWastedSentence(io, me.id, to, wasted.WASTED_MESSAGE);
-          emitWastedScore(io, me.id, to, senderScore);
-          return ack && ack({ ok: true, wasted: true });
-        }
-        const outBody = isNarration ? body : wasted.injectWords(body, senderScore);
-
         const info = db
           .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at, expires_at) VALUES (?, ?, ?, 'text', ?, ?, ?)")
-          .run(me.id, to, outBody, replyTo, now, expiresAt);
+          .run(me.id, to, body, replyTo, now, expiresAt);
 
         // Reply target: normally another persisted message. A reply to a shared
         // FILE (which isn't in the DB) carries a client snapshot instead — the
@@ -725,23 +535,14 @@ function initSocket(io) {
           const from = parseInt(rf.from, 10) === to ? to : me.id;
           reply = { id: rf.id.slice(0, 64), from, kind: 'file', text: String(rf.text || '📎 File').slice(0, 140) };
         }
-        const msg = { id: info.lastInsertRowid, from: me.id, to, body: outBody, kind: 'text', at: now, replyTo, reply, expiresAt };
+        const msg = { id: info.lastInsertRowid, from: me.id, to, body, kind: 'text', at: now, replyTo, reply, expiresAt };
 
         // Deliver to recipient's sockets and echo to sender's other tabs.
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
         socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
 
         // If this conversation is being broadcast, mirror it to watchers.
-        mirrorLiveMessage(io, me.id, to, 'text', outBody, now);
-
-        // Keep the sender's wasted meter fresh, and occasionally interrupt the
-        // chat with a random admin "wasted" sentence (a permanent message).
-        emitWastedScore(io, me.id, to, senderScore);
-        const sentence = isNarration ? null : wasted.maybeSentence();
-        if (sentence) {
-          const gn = genderNamesFor([me.id, to]);
-          deliverWastedSentence(io, me.id, to, wasted.fillGendered(sentence, gn.female, gn.male));
-        }
+        mirrorLiveMessage(io, me.id, to, 'text', body, now);
 
         ack && ack({ ok: true, message: { ...msg, mine: true } });
       } catch (e) {
@@ -1036,157 +837,6 @@ function initSocket(io) {
       }
     });
 
-    /* -------------------- "Wasted" offers -------------------- */
-
-    // Offer a drink/substance to the other user. They can accept or reject.
-    socket.on('wasted:offer', (payload, ack) => {
-      try {
-        const to = parseInt(payload && payload.to, 10);
-        const item = wasted.getItem(payload && payload.item);
-        if (!to || !item) return ack && ack({ error: 'Invalid offer.' });
-        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
-        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
-        if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot offer this user anything — a block is in place.' });
-        }
-        const id = deliverOffer(io, me.id, to, { item: item.id, status: 'pending', by: me.id });
-        ack && ack({ ok: true, id });
-      } catch (_e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
-    // Take a drink/substance yourself. Consumes immediately (no acceptance) and
-    // raises your own wasted score.
-    socket.on('wasted:self', (payload, ack) => {
-      try {
-        const to = parseInt(payload && payload.to, 10);
-        const item = wasted.getItem(payload && payload.item);
-        if (!to || !item) return ack && ack({ error: 'Invalid request.' });
-        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
-        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
-
-        deliverOffer(io, me.id, to, { item: item.id, status: 'self', by: me.id });
-        const score = wasted.consume(me.id, to);
-        emitWastedScore(io, me.id, to, score);
-        ack && ack({ ok: true, score });
-      } catch (_e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
-    // Respond to a pending offer aimed at me: accept (consume + raise my score)
-    // or reject. Only the recipient of the offer may respond.
-    socket.on('wasted:respond', (payload, ack) => {
-      try {
-        const messageId = parseInt(payload && payload.messageId, 10);
-        const accept = !!(payload && payload.accept);
-        if (!messageId) return ack && ack({ error: 'Invalid response.' });
-
-        const row = db
-          .prepare("SELECT id, sender_id, recipient_id, body FROM messages WHERE id = ? AND kind = 'offer'")
-          .get(messageId);
-        if (!row) return ack && ack({ error: 'Offer not found.' });
-        if (row.recipient_id !== me.id) return ack && ack({ error: 'This offer is not for you.' });
-
-        let data;
-        try { data = JSON.parse(row.body); } catch (_e) { data = {}; }
-        if (data.status !== 'pending') return ack && ack({ error: 'This offer was already answered.' });
-
-        data.status = accept ? 'accepted' : 'rejected';
-        db.prepare('UPDATE messages SET body = ? WHERE id = ?').run(JSON.stringify(data), row.id);
-
-        const evt = { id: row.id, status: data.status };
-        io.to(`user:${row.sender_id}`).emit('wasted:update', evt);
-        io.to(`user:${row.recipient_id}`).emit('wasted:update', evt);
-
-        if (accept) {
-          // The recipient (me) consumes; the score applies to this conversation
-          // (with the offerer).
-          const score = wasted.consume(me.id, row.sender_id);
-          emitWastedScore(io, me.id, row.sender_id, score);
-          return ack && ack({ ok: true, score });
-        }
-        ack && ack({ ok: true });
-      } catch (_e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
-    /* -------------------- "Wasted" offers in group chat -------------------- */
-
-    // Helper: is `uid` a joined member of `groupId`?
-    const isGroupMember = (groupId, uid) =>
-      !!db.prepare("SELECT 1 FROM chat_group_members WHERE group_id = ? AND user_id = ? AND status = 'joined'").get(groupId, uid);
-
-    // Offer a drink/substance to the whole group. Any other member can accept
-    // (first response resolves it).
-    socket.on('wasted:groupOffer', (payload, ack) => {
-      try {
-        const groupId = parseInt(payload && payload.groupId, 10);
-        const item = wasted.getItem(payload && payload.item);
-        if (!groupId || !item) return ack && ack({ error: 'Invalid offer.' });
-        if (!isGroupMember(groupId, me.id)) return ack && ack({ error: 'You are not a member of this group.' });
-        const id = deliverGroupMessage(io, groupId, me.id, 'offer', JSON.stringify({ item: item.id, status: 'pending', by: me.id }));
-        ack && ack({ ok: true, id });
-      } catch (_e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
-    // Take a drink/substance yourself in a group — consumes immediately.
-    socket.on('wasted:groupSelf', (payload, ack) => {
-      try {
-        const groupId = parseInt(payload && payload.groupId, 10);
-        const item = wasted.getItem(payload && payload.item);
-        if (!groupId || !item) return ack && ack({ error: 'Invalid request.' });
-        if (!isGroupMember(groupId, me.id)) return ack && ack({ error: 'You are not a member of this group.' });
-        deliverGroupMessage(io, groupId, me.id, 'offer', JSON.stringify({ item: item.id, status: 'self', by: me.id }));
-        const score = wasted.consumeGroup(me.id, groupId);
-        emitGroupWastedScore(io, me.id, groupId, score);
-        ack && ack({ ok: true, score });
-      } catch (_e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
-    // Respond to a group offer (accept/reject). Anyone in the group except the
-    // offerer may respond; the first response resolves it. Accepting consumes.
-    socket.on('wasted:groupRespond', (payload, ack) => {
-      try {
-        const messageId = parseInt(payload && payload.messageId, 10);
-        const accept = !!(payload && payload.accept);
-        if (!messageId) return ack && ack({ error: 'Invalid response.' });
-
-        const row = db
-          .prepare("SELECT id, group_id, sender_id, body FROM group_messages WHERE id = ? AND kind = 'offer'")
-          .get(messageId);
-        if (!row) return ack && ack({ error: 'Offer not found.' });
-        if (!isGroupMember(row.group_id, me.id)) return ack && ack({ error: 'You are not a member of this group.' });
-        if (row.sender_id === me.id) return ack && ack({ error: 'You cannot answer your own offer.' });
-
-        let data;
-        try { data = JSON.parse(row.body); } catch (_e) { data = {}; }
-        if (data.status !== 'pending') return ack && ack({ error: 'This offer was already answered.' });
-
-        data.status = accept ? 'accepted' : 'rejected';
-        data.who = me.id; // who answered (a group offer can be answered by anyone)
-        db.prepare('UPDATE group_messages SET body = ? WHERE id = ?').run(JSON.stringify(data), row.id);
-
-        const evt = { id: row.id, groupId: row.group_id, status: data.status, who: me.id, whoName: nameOf(me.id) };
-        groupJoinedIds(row.group_id).forEach((uid) => io.to(`user:${uid}`).emit('wasted:update', evt));
-
-        if (accept) {
-          const score = wasted.consumeGroup(me.id, row.group_id);
-          emitGroupWastedScore(io, me.id, row.group_id, score);
-          return ack && ack({ ok: true, score });
-        }
-        ack && ack({ ok: true });
-      } catch (_e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
     // Emoji reaction on a message (text/gift). Toggling: same emoji again
     // clears it, a different emoji replaces it. Broadcast to both users so all
     // tabs stay in sync.
@@ -1222,123 +872,6 @@ function initSocket(io) {
         io.to(`user:${to}`).emit('chat:reaction', evt);
         io.to(`user:${me.id}`).emit('chat:reaction', evt);
         ack && ack({ ok: true, emoji: resultEmoji });
-      } catch (e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
-    // Start (or restart) a roleplay with another user. Reveals the first
-    // stage's narration to both.
-    socket.on('roleplay:start', (payload, ack) => {
-      try {
-        const to = parseInt(payload && payload.to, 10);
-        const roleplayId = parseInt(payload && payload.roleplayId, 10);
-        if (!to || !roleplayId) return ack && ack({ error: 'Invalid roleplay.' });
-
-        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
-        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
-        if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot start a roleplay — a block is in place.' });
-        }
-
-        const started = roleplay.startSession(roleplayId, me.id, to);
-        if (started.error) return ack && ack({ error: started.error });
-
-        deliverNarration(io, me.id, to,
-          roleplay.stagePayload(started.roleplay, started.stageRow, 0, started.total, false, started.session.id));
-        emitRoleplayProgress(io, me.id, to, started.session);
-
-        ack && ack({ ok: true });
-      } catch (e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
-    // A player edited a stage's speech/thought bubble — typed text and/or dragged
-    // or rotated it. Whatever fields are present are shared: persisted on the
-    // session and mirrored live to both partners so the card stays in sync. Only
-    // the two players of an active session may write.
-    socket.on('roleplay:caption', (payload, ack) => {
-      try {
-        const sessionId = parseInt(payload && payload.sessionId, 10);
-        const stage = parseInt(payload && payload.stage, 10);
-        const index = parseInt(payload && payload.index, 10);
-        if (!sessionId || !(stage >= 0) || !(index >= 0)) return ack && ack({ error: 'Invalid caption.' });
-
-        const session = roleplay.sessionForParticipant(sessionId, me.id);
-        if (!session) return ack && ack({ error: 'Not your roleplay.' });
-        if (session.status !== 'active') return ack && ack({ error: 'This roleplay has ended.' });
-
-        const stageRow = roleplay.getStage(session.roleplay_id, stage);
-        const caps = stageRow ? roleplay.parseCaptions(stageRow.captions) : [];
-        if (index >= caps.length) return ack && ack({ error: 'Unknown caption.' });
-
-        const clampPct = (n) => Math.min(100, Math.max(0, n));
-        const clampRot = (n) => { let v = ((n % 360) + 360) % 360; return v > 180 ? v - 360 : v; };
-        const fields = {};
-        const out = { sessionId, stage, index, by: me.id };
-        if (typeof payload.text === 'string') { fields.text = payload.text.slice(0, 500); out.text = fields.text; }
-        if (payload.x !== undefined && Number.isFinite(+payload.x)) { fields.x = clampPct(+payload.x); out.x = fields.x; }
-        if (payload.y !== undefined && Number.isFinite(+payload.y)) { fields.y = clampPct(+payload.y); out.y = fields.y; }
-        if (payload.rot !== undefined && Number.isFinite(+payload.rot)) { fields.rot = clampRot(+payload.rot); out.rot = fields.rot; }
-        if (!Object.keys(fields).length) return ack && ack({ error: 'Nothing to update.' });
-
-        roleplay.setCaptionState(sessionId, stage, index, fields, me.id);
-        io.to(`user:${session.user_lo}`).emit('roleplay:caption', out);
-        io.to(`user:${session.user_hi}`).emit('roleplay:caption', out);
-        ack && ack({ ok: true });
-      } catch (e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
-    // Cancel the active roleplay with another user.
-    socket.on('roleplay:stop', (payload, ack) => {
-      try {
-        const to = parseInt(payload && payload.to, 10);
-        if (!to) return ack && ack({ error: 'Invalid request.' });
-        const session = roleplay.stopSession(me.id, to);
-        if (session) {
-          // Ending a roleplay finishes it: clear the play chat, leave a short
-          // marker, then push the ended state so both banners close.
-          purgeRoleplayChat(io, session);
-          deliverWastedSentence(io, session.user_lo, session.user_hi,
-            '🎭 Roleplay ended — the play chat was cleared. Anything shared to the Highway stays there.');
-          emitRoleplayProgress(io, me.id, to, session);
-        }
-        ack && ack({ ok: true });
-      } catch (e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
-    // Either player advances the roleplay to the next stage (the "Next stage"
-    // button). Reveals the next narration to both, or ends the story.
-    socket.on('roleplay:advance', (payload, ack) => {
-      try {
-        const to = parseInt(payload && payload.to, 10);
-        if (!to) return ack && ack({ error: 'Invalid request.' });
-        const outcome = roleplay.advanceSession(me.id, to);
-        if (!outcome) return ack && ack({ error: 'No active roleplay.' });
-        applyRoleplayOutcome(io, me.id, to, outcome);
-        ack && ack({ ok: true });
-      } catch (e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
-    // "Partner" nudge: ask the other player to type in the main chat. Delivers a
-    // sound/notification to their sockets. Gated to an active shared roleplay.
-    socket.on('roleplay:nudge', (payload, ack) => {
-      try {
-        const to = parseInt(payload && payload.to, 10);
-        if (!to) return ack && ack({ error: 'Invalid request.' });
-        if (areBlocked(me.id, to)) return ack && ack({ error: 'Unavailable.' });
-        const session = roleplay.getActiveSession(me.id, to);
-        if (!session) return ack && ack({ error: 'No active roleplay.' });
-        const fromName = nameOf(me.id);
-        io.to(`user:${to}`).emit('roleplay:nudge', { from: me.id, fromName });
-        ack && ack({ ok: true });
       } catch (e) {
         ack && ack({ error: 'Server error.' });
       }
@@ -1400,31 +933,7 @@ function initSocket(io) {
           .get(groupId, me.id);
         if (!mine) return ack && ack({ error: 'You are not a member of this group.' });
 
-        // A narration/action line ("/…") is delivered verbatim — exempt from the
-        // "Wasted" system's word-splicing, cap block, and random admin sentence.
-        const isNarration = body[0] === '/';
-
-        // "Wasted" in group chat: at the cap the message becomes a centered
-        // system narration seen by everyone; below it, random words get spliced
-        // into what they say. Score is per-group.
-        const senderScore = wasted.getGroupScore(me.id, groupId);
-        if (!isNarration && wasted.isMaxed(senderScore)) {
-          deliverGroupMessage(io, groupId, me.id, 'wasted', wasted.WASTED_MESSAGE);
-          emitGroupWastedScore(io, me.id, groupId, senderScore);
-          return ack && ack({ ok: true, wasted: true });
-        }
-
-        const outBody = isNarration ? body : wasted.injectWords(body, senderScore);
-        deliverGroupMessage(io, groupId, me.id, 'text', outBody);
-        emitGroupWastedScore(io, me.id, groupId, senderScore);
-
-        // Occasionally drop a random admin "wasted" sentence into the group,
-        // with pronouns filled from the members' genders.
-        const sentence = isNarration ? null : wasted.maybeSentence();
-        if (sentence) {
-          const gn = genderNamesFor(groupJoinedIds(groupId));
-          deliverGroupMessage(io, groupId, me.id, 'wasted', wasted.fillGendered(sentence, gn.female, gn.male));
-        }
+        deliverGroupMessage(io, groupId, me.id, 'text', body);
 
         ack && ack({ ok: true });
       } catch (e) {

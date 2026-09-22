@@ -16,12 +16,6 @@ function setSetting(key, value) {
   ).run(key, String(value));
 }
 
-const FAKE_KEY = 'fake_activity_enabled';
-
-// Fake activity is on by default (only '0' turns it off).
-const isFakeActivityEnabled = () => getSetting(FAKE_KEY, '1') !== '0';
-const setFakeActivityEnabled = (on) => setSetting(FAKE_KEY, on ? '1' : '0');
-
 /* ---------------------------------------------------------------------------
    Site-wide on-page SEO.
 
@@ -52,8 +46,6 @@ function setSiteSeo(obj) {
 module.exports = {
   getSetting,
   setSetting,
-  isFakeActivityEnabled,
-  setFakeActivityEnabled,
   getSiteSeo,
   setSiteSeo,
 };

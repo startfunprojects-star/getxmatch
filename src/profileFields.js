@@ -47,7 +47,7 @@ const MAX_BUFFER_PHOTOS = 10;
 const MAX_GIFS = 100;
 const MIN_AGE = 18;
 
-// Body weight (kg) bounds. Mandatory on the profile; drives the "Wasted" score.
+// Body weight (kg) bounds. Mandatory on the profile.
 const MIN_WEIGHT = 30;
 const MAX_WEIGHT = 400;
 
