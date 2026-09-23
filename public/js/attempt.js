@@ -446,7 +446,9 @@
               result.innerHTML =
                 '<h2>Your answers are locked in 🎉</h2>' +
                 '<p>' + summary + '</p>' +
-                '<p>Share this link — it stays active for one hour. When someone else answers, you’ll both see how well you match.</p>' +
+                '<p>Share this link — <strong>it stays active for 24 hours</strong>, until ' + esc(fmtUntil(d.expiresAt)) + '. ' +
+                'When someone answers it, you’ll both see your compatibility results. If they’re a signed-in member, ' +
+                'you earn <strong>10 points</strong> and they earn <strong>5 points</strong>.</p>' +
                 '<div class="gx-share">' +
                 '<input type="text" readonly value="' + esc(link) + '" />' +
                 '<button type="button" class="cta" id="gxCopy">Copy link</button>' +

@@ -13,7 +13,7 @@ const { quizStats } = require('../quizStats');
 
 const router = express.Router();
 
-const MATCH_TTL_MS = 60 * 60 * 1000; // shared links live for one hour
+const { MATCH_TTL_MS, typeLabel } = require('../quizTypes'); // shared links live for 24 hours
 
 // Best display name for a logged-in user: their profile name, else @username.
 function userDisplayName(userId) {
@@ -44,7 +44,7 @@ function parseJson(raw, fallback) {
 // GET /api/content/quizzes — list quizzes.
 router.get('/quizzes', requireAuth, (req, res) => {
   const rows = db
-    .prepare('SELECT id, title, description, questions, negative_marks, created_at FROM quizzes ORDER BY created_at DESC')
+    .prepare('SELECT id, title, description, questions, negative_marks, type, created_at FROM quizzes ORDER BY created_at DESC')
     .all();
 
   const quizzes = rows.map((r) => {
@@ -56,6 +56,8 @@ router.get('/quizzes', requireAuth, (req, res) => {
       title: r.title,
       description: r.description,
       matches,
+      type: r.type,
+      typeLabel: typeLabel(r.type),
       createdAt: r.created_at,
       // questionCount, totalSeconds, untimedQuestions, totalPoints,
       // negativeMarks, attemptedBy, topScorers

@@ -45,17 +45,33 @@
       <div class="match-empty">
         <div class="match-emoji">⏳</div>
         <h2>Waiting for your match</h2>
-        <p class="match-sub">You answered “${esc(data.quizTitle)}”. Share the link with someone — this page updates automatically the moment they finish.</p>
-        <p class="hint">${expiryLine(data.expiresAt)}</p>
+        <p class="match-sub">You answered “${esc(data.quizTitle)}”. Share the link with someone — this page updates automatically the moment they finish, and you’ll both see your compatibility results.</p>
+        ${pointsRule(data.points)}
+        <p class="match-expiry">${expiryLine(data.expiresAt, data.ttlHours)}</p>
         <div class="waiting-dots">Listening for your result…</div>
       </div>
     `));
     pollTimer = setTimeout(load, 4000); // re-check every 4s until they answer
   }
 
-  function expiryLine(expiresAt) {
-    const mins = Math.max(0, Math.round((expiresAt - Date.now()) / 60000));
-    return mins > 0 ? `Link active for about ${mins} more minute${mins === 1 ? '' : 's'}.` : 'This link is about to expire.';
+  // "This link is active for 24 hours — until 24 Sep, 3:05 pm (23 h 12 min left)."
+  function expiryLine(expiresAt, ttlHours) {
+    const left = expiresAt - Date.now();
+    if (left <= 60000) return '⏳ This link is about to expire.';
+    const mins = Math.round(left / 60000);
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    const leftTxt = h ? `${h} h${m ? ` ${m} min` : ''}` : `${m} min`;
+    let until = '';
+    try { until = new Date(expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }); }
+    catch (_e) { until = new Date(expiresAt).toLocaleString(); }
+    return `⏳ This link is active for ${ttlHours || 24} hours — until ${esc(until)} (${leftTxt} left).`;
+  }
+
+  // How points work for a shared compatibility link.
+  function pointsRule(p) {
+    if (!p) return '';
+    return `<p class="hint">🏆 When a signed-in member finishes the quiz from this link, the person who shared it gets <strong>${p.sharer} points</strong> and the person who answered gets <strong>${p.responder} points</strong>.</p>`;
   }
 
   // Responder answers the quiz.
@@ -65,9 +81,12 @@
       <div class="match-intro">
         <div class="match-emoji">💘</div>
         <h2>${esc(data.aName)} invited you</h2>
-        <p class="match-sub">Answer “${esc(data.quizTitle)}” to see how compatible the two of you are.</p>
+        <p class="match-sub">Answer “${esc(data.quizTitle)}” to see how compatible the two of you are — you’ll both see the results.</p>
         ${data.quizDescription ? `<p class="hint">${esc(data.quizDescription)}</p>` : ''}
-        <p class="hint">${expiryLine(data.expiresAt)}</p>
+        ${data.points ? (data.loggedIn
+          ? `<p class="hint">🏆 Finish the quiz to earn <strong>${data.points.responder} points</strong> — and ${esc(data.aName)} earns ${data.points.sharer}.</p>`
+          : `<p class="hint">🏆 <a href="/?signup=1">Sign in or join</a> before answering to earn <strong>${data.points.responder} points</strong> (and give ${esc(data.aName)} ${data.points.sharer}). Guests can still play, but no one earns points.</p>`) : ''}
+        <p class="match-expiry">${expiryLine(data.expiresAt, data.ttlHours)}</p>
       </div>
     `));
 
@@ -113,6 +132,19 @@
     });
   }
 
+  // Result-screen line about the points this link earned.
+  function pointsResult(data) {
+    const p = data.points;
+    if (!p) return '';
+    if (p.awarded) {
+      if (data.viewer === 'a' || data.viewer === 'b') return `<p class="match-points">🏆 +${p.you} points added to your score.</p>`;
+      return '';
+    }
+    if (data.viewer !== 'a' && data.viewer !== 'b') return '';
+    if (p.reason === 'guest') return '<p class="hint">No points for this one — it was answered without a getxmatch account.</p>';
+    return '<p class="hint">No points for this one — you two already earned points together on this quiz.</p>';
+  }
+
   function renderResult(data) {
     if (pollTimer) clearTimeout(pollTimer);
     const r = data.result;
@@ -134,6 +166,7 @@
         <h2>${esc(r.aName)} &amp; ${esc(r.bName)}</h2>
         <p class="match-sub">${esc(verdict)}</p>
         <p class="hint">${r.score} of ${r.total} answers in common on “${esc(quizTitle)}”.</p>
+        ${pointsResult(data)}
       </div>
     `));
 

@@ -688,6 +688,11 @@
       <h2>${quiz ? 'Edit quiz' : 'Create quiz'}</h2>
       <label>Title</label><input id="quizTitle" value="${esc(quiz ? quiz.title : '')}" />
       <label>Description</label><input id="quizDesc" value="${esc(quiz ? quiz.description : '')}" />
+      <label>Quiz type</label>
+      <select id="quizType">
+        <option value="compatibility"${!quiz || quiz.type === 'compatibility' ? ' selected' : ''}>Compatibility Quiz — share a link after attempting</option>
+      </select>
+      <p class="count">Compatibility: after attempting, the member shares a link (active for 24 hours). When a signed-in member answers it, both see their compatibility results; the sharer earns 10 points and the responder 5 (once per quiz for each pair).</p>
       <label>Questions</label>
       <p class="count">Compatibility quiz — there are no right or wrong answers. Two people answer the same questions and get a match score based on how many they pick in common. Set how many points each question is worth and how long members have to answer it: answering in time earns that question's points toward the leaderboard, and a question left unanswered when time runs out earns none.</p>
       <div id="quizQuestions"></div>
@@ -727,7 +732,8 @@
       });
       try {
         const negativeMarks = Number(host.querySelector('#quizNegative').value || 0);
-        const payload = { title, description, questions: questionsOut, negativeMarks, seo: collectSeo(host) };
+        const type = host.querySelector('#quizType').value;
+        const payload = { title, description, type, questions: questionsOut, negativeMarks, seo: collectSeo(host) };
         if (quiz) await api.put('/api/admin/quizzes/' + quiz.id, payload);
         else await api.post('/api/admin/quizzes', payload);
         msg.className = 'msg ok'; msg.textContent = 'Saved.';
@@ -757,7 +763,7 @@
       const item = el(`
         <div class="admin-item">
           <h3>${esc(q.title)}</h3>
-          <div class="count">${q.questions.length} questions · ${q.questions.reduce((n, x) => n + (Number(x.points) || 0), 0)} points · ${q.negativeMarks ? `−${q.negativeMarks} per unanswered` : 'no negative marking'} · ${q.attempts} attempts</div>
+          <div class="count">${q.type === 'compatibility' ? 'Compatibility' : esc(q.type || '')} · ${q.questions.length} questions · ${q.questions.reduce((n, x) => n + (Number(x.points) || 0), 0)} points · ${q.negativeMarks ? `−${q.negativeMarks} per unanswered` : 'no negative marking'} · ${q.attempts} attempts</div>
           <div class="admin-item-actions">
             <button class="ghost small" data-edit>Edit</button>
             <button class="danger small" data-del>Delete</button>
@@ -1522,7 +1528,7 @@
   let leaderboardCache = [];
   async function renderLeaderboardTab() {
     const host = tabHost();
-    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Ranked by points (highest first; equal points share a rank). Points come from ratings, Highway likes, friends, quiz points and polls (5 per poll voted in), minus deductions for stopped quizzes.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Likes</th><th>Polls</th><th>Points</th></tr></thead><tbody id="lbRows"><tr><td colspan="8" class="count">Loading…</td></tr></tbody></table></div><div id="lbPager"></div></div>';
+    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Ranked by points (highest first; equal points share a rank). Points come from ratings, Highway likes, friends, quiz points, polls (5 per poll voted in) and completed compatibility links (10 to the sharer, 5 to the responder), minus deductions for stopped quizzes.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Likes</th><th>Polls</th><th>Points</th></tr></thead><tbody id="lbRows"><tr><td colspan="8" class="count">Loading…</td></tr></tbody></table></div><div id="lbPager"></div></div>';
     const rowsEl = host.querySelector('#lbRows');
     try { leaderboardCache = (await api.get('/api/admin/leaderboard')).leaderboard; }
     catch (e) { if (e.status === 401) return renderLogin(true); rowsEl.innerHTML = `<tr><td colspan="8" class="count">${esc(e.message)}</td></tr>`; return; }

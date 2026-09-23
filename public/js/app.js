@@ -3621,6 +3621,17 @@
       if (isExploreActive('requests')) renderRequests(); // already open: refresh list
     });
 
+    // Someone finished a compatibility link this member shared: the result is
+    // ready for both of them. Show a clickable toast that opens it.
+    s.on('quiz:matched', (d) => {
+      if (!d || !d.token) return;
+      const pts = d.points ? ` · +${d.points} points` : '';
+      const t = el(`<a class="toast toast-link" href="/m/${encodeURIComponent(d.token)}" target="_blank" rel="noopener"></a>`);
+      t.textContent = `💘 ${d.bName} answered “${d.quizTitle}” — ${d.percent}% match${pts}. See results ↗`;
+      document.body.appendChild(t);
+      setTimeout(() => { if (t.parentNode) t.parentNode.removeChild(t); }, 10000);
+    });
+
     // The leaderboard ranking shifted (new rating / accepted friendship).
     s.on('leaderboard:changed', () => {
       if (isExploreActive('leaderboard')) renderLeaderboard(); // open: refresh in place
@@ -5325,6 +5336,7 @@
       const url = '/quizzes/' + q.id;
       const card = el(`
         <div class="tile quiz-tile-link" role="link" tabindex="0" title="Open this quiz in a new tab">
+          <span class="quiz-type">${esc(q.typeLabel || 'Compatibility Quiz')}</span>
           <h3>${esc(q.title)}</h3>
           <p class="rich">${esc(q.description || '')}</p>
           <ul class="quiz-stats">
@@ -5413,7 +5425,7 @@
         const out = await api.post('/api/content/quizzes/' + id + '/match', { answers });
         stepHost.innerHTML = '';
         result.className = 'msg ok';
-        result.textContent = 'Your answers are locked in. Share this link — it stays active for 1 hour.';
+        result.textContent = 'Your answers are locked in. Share this link — it stays active for 24 hours.';
         renderShareBox(share, out.token);
       } catch (e) {
         submitBtn.disabled = false;
@@ -5596,7 +5608,7 @@
   /* ---------- Leaderboard ---------- */
   async function renderLeaderboard() {
     const main = openMainView();
-    main.appendChild(sectionShell('Leaderboard', 'Ranked by points — the more points, the higher the rank. Earn points from ratings, Highway likes, friends, quizzes and polls (5 per poll). Send a friend request to anyone.'));
+    main.appendChild(sectionShell('Leaderboard', 'Ranked by points — the more points, the higher the rank. Earn points from ratings, Highway likes, friends, quizzes, polls (5 per poll) and compatibility links (10 for sharing, 5 for answering). Send a friend request to anyone.'));
     const body = main.querySelector('#sectionBody');
     let rows;
     try { rows = (await api.get('/api/leaderboard')).leaderboard; }

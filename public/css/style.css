@@ -893,6 +893,8 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .tile-meta { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .tile .pill { background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
 .tile button { margin-top: auto; align-self: flex-start; }
+.quiz-type { align-self: flex-start; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 2px 9px; margin-bottom: 8px; }
+a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100vw - 32px); text-align: center; }
 .quiz-stats { list-style: none; margin: 4px 0 10px; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .quiz-stats li { background: var(--bg-3); border-radius: 10px; padding: 7px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .quiz-stats span { color: var(--muted); font-size: 12px; }
@@ -1197,6 +1199,8 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .match-empty, .match-intro, .match-result { text-align: center; }
 .match-emoji { font-size: 44px; margin-bottom: 8px; }
 .match-sub { color: var(--text); margin: 6px 0; font-size: 15px; }
+.match-expiry { display: inline-block; margin: 8px 0 4px; padding: 6px 12px; border-radius: 999px; background: var(--bg-3); border: 1px solid var(--border); color: var(--text); font-size: 13px; font-weight: 600; }
+.match-points { margin: 10px 0 0; font-weight: 700; color: var(--accent); }
 .match-intro { margin-bottom: 18px; }
 .match-intro h2, .match-empty h2, .match-result h2 { margin: 4px 0; }
 

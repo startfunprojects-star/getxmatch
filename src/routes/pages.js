@@ -20,6 +20,7 @@ const ads = require('../ads');
 const hw = require('../highway');
 const ogImage = require('../ogImage');
 const { quizStats, timeLabel, fmtDuration } = require('../quizStats');
+const { typeLabel } = require('../quizTypes');
 const { ageFromDob } = require('../profileFields');
 const { optionalAuth } = require('../auth');
 
@@ -308,6 +309,7 @@ function quizStatsHtml(st) {
 }
 
 const QUIZ_CARD_STYLE = `<style>
+.gx-type { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 2px 9px; margin: 0 0 8px; }
 .gx-stats { list-style: none; margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .gx-stats li { background: var(--bg3); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .gx-stats span { color: var(--muted); font-size: 12px; }
@@ -321,15 +323,16 @@ const QUIZ_CARD_STYLE = `<style>
 </style>`;
 
 router.get('/quizzes', (req, res) => {
-  const rows = db.prepare('SELECT id, title, description, questions, negative_marks, seo, updated_at FROM quizzes ORDER BY created_at DESC').all();
+  const rows = db.prepare('SELECT id, title, description, questions, negative_marks, type, seo, updated_at FROM quizzes ORDER BY created_at DESC').all();
   const items = rows.map((r) => {
     const s = parseJson(r.seo, {});
-    return { id: r.id, title: r.title, description: r.description, stats: quizStats(r), path: itemPath('quizzes', r.id, s.slug || r.title) };
+    return { id: r.id, title: r.title, description: r.description, type: typeLabel(r.type), stats: quizStats(r), path: itemPath('quizzes', r.id, s.slug || r.title) };
   });
 
   const cards = items.length
     ? joinWithInlineAds(items.map((it) => `
       <a class="card" href="${escAttr(it.path)}">
+        <span class="gx-type">${esc(it.type)}</span>
         <h3>${esc(it.title)}</h3>
         ${it.description ? `<p class="excerpt">${esc(summarize(it.description, 160))}</p>` : ''}
         ${quizStatsHtml(it.stats)}
@@ -430,6 +433,7 @@ ${hasQuestions ? `
       <li>Pressing Esc, switching tabs or apps, minimising the window, connecting another display or using remote-control/automation tools counts as leaving the quiz.</li>
       <li>The first time, you get a warning and return to full screen.</li>
       <li><strong>The second time, the quiz stops, you can't attempt it again for 24 hours and 10 points are deducted from your score.</strong></li>
+      <li>This is a compatibility quiz: when you finish, you get a link to share that stays active for 24 hours. When a signed-in member answers it, you both see your compatibility results — you earn 10 points and they earn 5.</li>
     </ul>
     <button type="button" class="cta gx-start">Start quiz in full screen</button>
   </div>

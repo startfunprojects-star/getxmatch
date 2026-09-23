@@ -15,6 +15,11 @@ const WEIGHTS = {
   friend: 8, // per accepted friend
   like: 4, // per like received on the Highway
   poll: 5, // per community poll voted in (changing a vote doesn't count again)
+  // Compatibility quizzes: once a shared link is completed by a signed-in
+  // member, the sharer and the responder both earn points (once per quiz for
+  // each pair of members, so re-sharing to the same person earns nothing).
+  shareCompleted: 10, // to the member who shared the link
+  answerShared: 5, // to the member who answered it
 };
 
 function rankedUsers() {
@@ -33,6 +38,10 @@ function rankedUsers() {
                  JOIN highway_posts hp ON hp.id = hl.post_id
                 WHERE hp.user_id = u.id)                                       AS likes,
               (SELECT COUNT(*) FROM poll_votes pv WHERE pv.user_id = u.id)     AS polls,
+              (SELECT COUNT(*) FROM quiz_matches qm
+                WHERE qm.a_user_id = u.id AND qm.points_awarded = 1)           AS shares_completed,
+              (SELECT COUNT(*) FROM quiz_matches qm
+                WHERE qm.b_user_id = u.id AND qm.points_awarded = 1)           AS shared_answered,
               (SELECT COALESCE(SUM(points), 0) FROM quiz_penalties qp
                 WHERE qp.user_id = u.id)                                       AS penalty
        FROM users u
@@ -54,7 +63,9 @@ function rankedUsers() {
           r.friends * WEIGHTS.friend +
           r.quiz_points +
           r.likes * WEIGHTS.like +
-          r.polls * WEIGHTS.poll
+          r.polls * WEIGHTS.poll +
+          r.shares_completed * WEIGHTS.shareCompleted +
+          r.shared_answered * WEIGHTS.answerShared
       ) - r.penalty;
     return {
       id: r.id,
@@ -69,6 +80,7 @@ function rankedUsers() {
       quizPoints: r.quiz_points,
       likes: r.likes,
       polls: r.polls,
+      matches: r.shares_completed + r.shared_answered,
       penalty: r.penalty,
       points,
       score: points, // legacy name

@@ -10,6 +10,9 @@ const express = require('express');
 
 const db = require('../db');
 const { optionalAuth } = require('../auth');
+const { WEIGHTS } = require('../points');
+const { MATCH_TTL_MS } = require('../quizTypes');
+const { notifyUser, broadcastLeaderboardChange } = require('../socket');
 
 const router = express.Router();
 
@@ -21,6 +24,22 @@ function parseJson(raw, fallback) {
   } catch (_e) {
     return fallback;
   }
+}
+
+// Points the viewer earned (or why not) from a completed link.
+//   awarded: both sides got their points for this link
+//   reason:  why not — 'guest' (answered without an account) or 'repeat'
+//            (this pair already earned points on this quiz)
+function pointsInfo(m, viewer) {
+  const mine = viewer === 'a' ? WEIGHTS.shareCompleted : viewer === 'b' ? WEIGHTS.answerShared : 0;
+  if (m.points_awarded) return { awarded: true, you: mine, sharer: WEIGHTS.shareCompleted, responder: WEIGHTS.answerShared };
+  return {
+    awarded: false,
+    you: 0,
+    sharer: WEIGHTS.shareCompleted,
+    responder: WEIGHTS.answerShared,
+    reason: m.b_user_id ? 'repeat' : 'guest',
+  };
 }
 
 function loadMatch(token) {
@@ -102,12 +121,14 @@ router.get('/:token', optionalAuth, (req, res) => {
 
   // Already completed → show the result to anyone with the link.
   if (m.completed_at) {
+    const ctx = chatContext(m, req.user);
     return res.json({
       state: 'done',
       quizTitle: quiz.title,
       isInitiator,
       result: resultPayload(m, questions),
-      ...chatContext(m, req.user),
+      points: pointsInfo(m, ctx.viewer),
+      ...ctx,
     });
   }
 
@@ -123,7 +144,9 @@ router.get('/:token', optionalAuth, (req, res) => {
       quizTitle: quiz.title,
       aName: m.a_name,
       expiresAt: m.expires_at,
+      ttlHours: MATCH_TTL_MS / 3600000,
       isInitiator: true,
+      points: { sharer: WEIGHTS.shareCompleted, responder: WEIGHTS.answerShared },
     });
   }
 
@@ -133,6 +156,9 @@ router.get('/:token', optionalAuth, (req, res) => {
     quizDescription: quiz.description,
     aName: m.a_name,
     expiresAt: m.expires_at,
+    ttlHours: MATCH_TTL_MS / 3600000,
+    loggedIn: !!req.user,
+    points: { sharer: WEIGHTS.shareCompleted, responder: WEIGHTS.answerShared },
     questions: questions.map((q) => ({
       prompt: q.prompt,
       options: Array.isArray(q.options) ? q.options : [],
@@ -171,18 +197,45 @@ router.post('/:token/answer', optionalAuth, (req, res) => {
   bAns.forEach((b, i) => { if (b === aAns[i]) score += 1; });
 
   const now = Date.now();
-  db.prepare(
+  const bUserId = req.user ? req.user.id : null;
+  // Both sides are now done. Points go to the sharer (A) and the responder (B)
+  // only when B is a signed-in member, and only once per quiz for each pair —
+  // otherwise one person could farm points by answering their own links.
+  const alreadyPaired = bUserId && db
+    .prepare(
+      `SELECT 1 FROM quiz_matches
+        WHERE quiz_id = ? AND points_awarded = 1
+          AND ((a_user_id = ? AND b_user_id = ?) OR (a_user_id = ? AND b_user_id = ?))
+        LIMIT 1`
+    )
+    .get(m.quiz_id, m.a_user_id, bUserId, bUserId, m.a_user_id);
+  const award = bUserId && m.a_user_id && !alreadyPaired ? 1 : 0;
+  const info = db.prepare(
     `UPDATE quiz_matches
-       SET b_user_id = ?, b_name = ?, b_answers = ?, score = ?, completed_at = ?
-     WHERE id = ?`
-  ).run(req.user ? req.user.id : null, finalName, JSON.stringify(bAns), score, now, m.id);
+       SET b_user_id = ?, b_name = ?, b_answers = ?, score = ?, completed_at = ?, points_awarded = ?
+     WHERE id = ? AND completed_at IS NULL`
+  ).run(bUserId, finalName, JSON.stringify(bAns), score, now, award, m.id);
+  // Someone else finished this link a moment earlier.
+  if (!info.changes) return res.status(409).json({ error: 'This quiz has already been answered.' });
 
   const updated = loadMatch(req.params.token);
+  const result = resultPayload(updated, questions);
+  if (award) broadcastLeaderboardChange();
+  // Tell the sharer their result is ready (and whether they earned points).
+  notifyUser(m.a_user_id, 'quiz:matched', {
+    token: m.token,
+    quizTitle: quiz.title,
+    bName: finalName,
+    percent: result.percent,
+    points: award ? WEIGHTS.shareCompleted : 0,
+  });
+  const ctx = chatContext(updated, req.user);
   res.json({
     state: 'done',
     quizTitle: quiz.title,
-    result: resultPayload(updated, questions),
-    ...chatContext(updated, req.user),
+    result,
+    points: pointsInfo(updated, ctx.viewer),
+    ...ctx,
   });
 });
 

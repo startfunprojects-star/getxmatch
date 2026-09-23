@@ -477,7 +477,7 @@ db.exec(`
     ON quiz_attempts (created_at);
 
   -- Compatibility matches: one row per shared quiz link. The initiator (A)
-  -- answers first, gets a token/link valid for one hour, and shares it. The
+  -- answers first, gets a token/link valid for 24 hours, and shares it. The
   -- responder (B) opens the link and answers; the score is how many answers
   -- the two picked in common. B may be anonymous (no account), so b_user_id
   -- is nullable.
@@ -825,5 +825,16 @@ db.exec(`
   if (!acols.includes('duration_ms')) db.exec('ALTER TABLE quiz_attempts ADD COLUMN duration_ms INTEGER;');
 })();
 db.exec('CREATE INDEX IF NOT EXISTS idx_quiz_attempts_quiz ON quiz_attempts (quiz_id, user_id);');
+
+// --- Migration: quiz types + compatibility-link points. quizzes.type is the
+// kind of quiz (see QUIZ_TYPES in src/quizTypes.js; 'compatibility' for every
+// existing quiz). quiz_matches.points_awarded = 1 once a shared link was
+// completed by a signed-in responder and both sides earned their points.
+(function migrateQuizTypes() {
+  const qcols = db.prepare('PRAGMA table_info(quizzes)').all().map((c) => c.name);
+  if (!qcols.includes('type')) db.exec("ALTER TABLE quizzes ADD COLUMN type TEXT NOT NULL DEFAULT 'compatibility';");
+  const mcols = db.prepare('PRAGMA table_info(quiz_matches)').all().map((c) => c.name);
+  if (!mcols.includes('points_awarded')) db.exec('ALTER TABLE quiz_matches ADD COLUMN points_awarded INTEGER NOT NULL DEFAULT 0;');
+})();
 
 module.exports = db;
