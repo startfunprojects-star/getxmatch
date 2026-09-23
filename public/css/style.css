@@ -995,6 +995,11 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
 .blog-body { margin: 14px 0 20px; font-size: 16px; line-height: 1.7; }
 
 /* ---------- Leaderboard ---------- */
+.pro-qr-card { text-align: center; }
+.pro-qr-link { display: inline-block; }
+.pro-qr { width: 200px; max-width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--border); background: #fff; }
+.pro-qr-card .row-actions { justify-content: center; }
+.btn-link { display: inline-flex; align-items: center; text-decoration: none; }
 .follow-counts { color: var(--muted); font-size: 13px; margin-top: 4px; }
 .follow-counts strong { color: var(--text); }
 .following-btn { border-color: var(--accent); color: var(--accent); }

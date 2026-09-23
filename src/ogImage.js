@@ -67,6 +67,8 @@ const GLYPHS = {
   '&': ['01100', '10010', '10010', '01100', '10101', '10010', '01101'],
   '%': ['11001', '11010', '00010', '00100', '01000', '01011', '10011'],
   '+': ['00000', '00100', '00100', '11111', '00100', '00100', '00000'],
+  '_': ['00000', '00000', '00000', '00000', '00000', '00000', '11111'],
+  '@': ['01110', '10001', '10111', '10101', '10111', '10000', '01111'],
 };
 
 const GLYPH_W = 5;
@@ -444,4 +446,17 @@ function clipCorners(c, x, y, w, h, r, rgb) {
   }
 }
 
-module.exports = { renderCard, renderPollCard, W, H };
+module.exports = {
+  renderCard,
+  renderPollCard,
+  W,
+  H,
+  // Drawing primitives, reused by the profile QR card (src/qrCard.js).
+  canvas,
+  fillRect,
+  fillRoundRect,
+  drawText,
+  textWidth,
+  fitText,
+  encodePng,
+};

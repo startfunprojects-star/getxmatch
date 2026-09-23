@@ -22,6 +22,8 @@ const ogImage = require('../ogImage');
 const { quizStats, timeLabel, fmtDuration } = require('../quizStats');
 const { typeLabel } = require('../quizTypes');
 const { ageFromDob } = require('../profileFields');
+const { buildProfile } = require('../profileData');
+const { renderProfileQr } = require('../qrCard');
 const { optionalAuth } = require('../auth');
 
 const router = express.Router();
@@ -759,11 +761,30 @@ function genderGlyph(g) {
   return g === 'Female' ? '♀' : g === 'Male' ? '♂' : '⚧';
 }
 
+// The member's fixed profile QR code (PNG). It encodes their public link
+// /u/<username>, so scanning it opens their profile. ?download=1 saves it.
+router.get('/qr/u/:file', (req, res, next) => {
+  const m = /^(.+)\.png$/i.exec(req.params.file);
+  if (!m) return next();
+  const row = db
+    .prepare('SELECT u.username FROM users u JOIN profiles p ON p.user_id = u.id WHERE u.username = ? COLLATE NOCASE')
+    .get(m[1]);
+  if (!row) return res.status(404).type('text/plain').send('No such profile.');
+  const png = renderProfileQr(row.username, absUrl('/u/' + row.username));
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="getxmatch-${row.username}-qr.png"`);
+  res.send(png);
+});
+
+// Public profile link (/u/<username>) — what the share button and the profile
+// QR code point to. A logged-in member is taken to the profile inside the app;
+// anyone else sees a read-only profile and must join to message, follow, rate
+// or connect. Intimate fields, photos, GIFs and comments stay members-only.
 router.get('/u/:username', optionalAuth, (req, res) => {
   const row = db
     .prepare(
-      `SELECT u.id, u.username, p.display_name, p.avatar, p.gender, p.date_of_birth, p.sexuality
-       FROM users u JOIN profiles p ON p.user_id = u.id
+      `SELECT u.id, u.username FROM users u JOIN profiles p ON p.user_id = u.id
        WHERE u.username = ? COLLATE NOCASE`
     )
     .get(req.params.username);
@@ -772,20 +793,21 @@ router.get('/u/:username', optionalAuth, (req, res) => {
   // A logged-in member lands straight on the profile inside the app.
   if (req.user) return res.redirect(302, '/?view=' + encodeURIComponent(row.username));
 
-  const age = ageFromDob(row.date_of_birth);
-  const name = row.display_name || row.username;
-  const avatar = row.avatar ? `/uploads/${row.avatar}` : null;
+  const pr = buildProfile(row.id, null);
+  const name = pr.displayName || pr.username;
+  const age = pr.age;
+  const avatar = pr.avatar;
 
   // The three facts a shared link must surface: age · gender · sexuality.
-  const factLine = [age != null ? `${age}` : null, row.gender || null, row.sexuality || null]
+  const factLine = [age != null ? `${age}` : null, pr.gender || null, pr.sexuality || null]
     .filter(Boolean)
     .join(' · ');
   const description =
     `${name}${factLine ? ` — ${factLine}` : ''} on ${SITE_NAME}. ` +
-    `Sign up to view ${name}'s full profile, gallery and chat.`;
+    `View ${name}'s profile — join to message, follow, rate or connect.`;
 
   const seoDescriptor = resolveSeo({ noindex: true }, {
-    canonicalPath: '/u/' + row.username,
+    canonicalPath: '/u/' + pr.username,
     title: `${name}${age != null ? `, ${age}` : ''}`,
     description,
     image: avatar || undefined, // the profile picture is the share image
@@ -798,49 +820,103 @@ router.get('/u/:username', optionalAuth, (req, res) => {
     mainEntity: {
       '@type': 'Person',
       name,
-      url: absUrl('/u/' + row.username),
+      url: absUrl('/u/' + pr.username),
       image: avatar ? absUrl(avatar) : undefined,
-      gender: row.gender || undefined,
+      gender: pr.gender || undefined,
     },
   };
 
-  const signupHref = '/?view=' + encodeURIComponent(row.username) + '&signup=1';
-  const loginHref = '/?view=' + encodeURIComponent(row.username);
+  const signupHref = '/?view=' + encodeURIComponent(pr.username) + '&signup=1';
+  const loginHref = '/?view=' + encodeURIComponent(pr.username);
+  const qrSrc = `/qr/u/${encodeURIComponent(pr.username)}.png`;
 
   const badges = [
     age != null ? `<span class="pf-badge">🎂 ${age}</span>` : '',
-    row.gender ? `<span class="pf-badge">${genderGlyph(row.gender)} ${esc(row.gender)}</span>` : '',
-    row.sexuality ? `<span class="pf-badge">🌈 ${esc(row.sexuality)}</span>` : '',
+    pr.gender ? `<span class="pf-badge">${genderGlyph(pr.gender)} ${esc(pr.gender)}</span>` : '',
+    pr.sexuality ? `<span class="pf-badge">🌈 ${esc(pr.sexuality)}</span>` : '',
+    pr.country ? `<span class="pf-badge">📍 ${esc(pr.country)}</span>` : '',
   ].filter(Boolean).join('');
+
+  const details = [
+    ['Relationship', pr.relationshipStatus],
+    ['Diet', pr.diet],
+    ['Drinks', pr.drinks],
+    ['Smokes', pr.smokes],
+  ].filter(([, v]) => v).map(([k, v]) => `<div class="pf-detail"><span>${k}</span><strong>${esc(v)}</strong></div>`).join('');
+
+  const interests = (pr.interests || []).map((t) => `<span class="pf-chip">${esc(t)}</span>`).join('');
+  const rating = pr.rating && pr.rating.count
+    ? `⭐ ${Math.round(pr.rating.average * 10) / 10} (${pr.rating.count} rating${pr.rating.count === 1 ? '' : 's'})`
+    : '⭐ No ratings yet';
+  const f = pr.follow || { followers: 0, following: 0 };
 
   const avatarHtml = avatar
     ? `<img class="pf-avatar" src="${escAttr(avatar)}" alt="${escAttr(name)}" />`
     : '<div class="pf-avatar pf-avatar-ph">👤</div>';
 
+  // Every action is shown but locked for visitors — it leads to sign-up.
+  const lockedAction = (icon, label) =>
+    `<a class="pf-action" href="${escAttr(signupHref)}" title="Join ${escAttr(SITE_NAME)} to ${escAttr(label.toLowerCase())}">${icon} ${esc(label)} <span aria-hidden="true">🔒</span></a>`;
+
   const bodyHtml = `
 <style>
-.pf-card { max-width: 460px; margin: 24px auto; text-align: center; background: var(--bg2);
+.pf-card { max-width: 560px; margin: 24px auto; background: var(--bg2);
   border: 1px solid var(--border); border-radius: 18px; padding: 28px 24px; }
-.pf-avatar { width: 168px; height: 168px; border-radius: 50%; object-fit: cover;
-  border: 3px solid var(--accent); display: block; margin: 0 auto 16px; background: var(--bg); }
-.pf-avatar-ph { display: flex; align-items: center; justify-content: center; font-size: 72px; }
+.pf-head { text-align: center; }
+.pf-avatar { width: 150px; height: 150px; border-radius: 50%; object-fit: cover;
+  border: 3px solid var(--accent); display: block; margin: 0 auto 14px; background: var(--bg); }
+.pf-avatar-ph { display: flex; align-items: center; justify-content: center; font-size: 64px; }
 .pf-name { font-size: 26px; font-weight: 800; margin: 0 0 4px; }
-.pf-handle { color: var(--muted); margin: 0 0 14px; }
-.pf-badges { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 0 0 18px; }
+.pf-handle { color: var(--muted); margin: 0 0 10px; }
+.pf-stats { color: var(--muted); font-size: 14px; margin: 0 0 14px; }
+.pf-stats strong { color: var(--text); }
+.pf-badges { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 0 0 16px; }
 .pf-badge { border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; font-weight: 600; background: var(--bg); }
-.pf-gate { color: var(--muted); font-size: 14px; margin: 14px 0 18px; }
-.pf-card .cta { display: block; margin: 0 0 10px; }
+.pf-sec { border-top: 1px solid var(--border); padding: 16px 0 0; margin: 16px 0 0; }
+.pf-sec h2 { font-size: 15px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.pf-sec p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pf-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.pf-detail { background: var(--bg3); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; }
+.pf-detail span { color: var(--muted); font-size: 12px; }
+.pf-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pf-chip { background: var(--bg3); border-radius: 999px; padding: 4px 10px; font-size: 13px; }
+.pf-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.pf-action { display: block; text-align: center; padding: 10px; border: 1px dashed var(--border); border-radius: 10px; color: var(--muted); font-weight: 600; }
+.pf-action:hover { text-decoration: none; border-color: var(--accent); color: var(--text); }
+.pf-gate { color: var(--muted); font-size: 14px; margin: 12px 0; text-align: center; }
+.pf-card .cta { display: block; text-align: center; margin: 0 0 10px; }
 .pf-login { color: var(--accent); }
+.pf-qr { text-align: center; }
+.pf-qr img { width: 220px; max-width: 70%; height: auto; border-radius: 12px; border: 1px solid var(--border); }
 </style>
-${breadcrumbHtml([{ name: 'Home', path: '/' }, { name, path: '/u/' + row.username }])}
+${breadcrumbHtml([{ name: 'Home', path: '/' }, { name, path: '/u/' + pr.username }])}
 <div class="pf-card">
-  ${avatarHtml}
-  <h1 class="pf-name">${esc(name)}</h1>
-  <p class="pf-handle">@${esc(row.username)}</p>
-  ${badges ? `<div class="pf-badges">${badges}</div>` : ''}
-  <p class="pf-gate">You must sign up to view ${esc(name)}'s full profile and to message, rate or connect.</p>
-  <a class="cta" href="${escAttr(signupHref)}">Sign up to view ${esc(name)}'s profile →</a>
-  <p>Already a member? <a class="pf-login" href="${escAttr(loginHref)}">Log in</a></p>
+  <div class="pf-head">
+    ${avatarHtml}
+    <h1 class="pf-name">${esc(name)}</h1>
+    <p class="pf-handle">@${esc(pr.username)}</p>
+    <p class="pf-stats"><strong>${f.followers}</strong> follower${f.followers === 1 ? '' : 's'} · <strong>${f.following}</strong> following · ${rating}</p>
+    ${badges ? `<div class="pf-badges">${badges}</div>` : ''}
+  </div>
+  ${pr.about ? `<div class="pf-sec"><h2>About me</h2><p>${esc(pr.about)}</p></div>` : ''}
+  ${pr.persona ? `<div class="pf-sec"><h2>What kind of person</h2><p>${esc(pr.persona)}</p></div>` : ''}
+  ${details ? `<div class="pf-sec"><h2>Details</h2><div class="pf-details">${details}</div></div>` : ''}
+  ${interests ? `<div class="pf-sec"><h2>Interests</h2><div class="pf-chips">${interests}</div></div>` : ''}
+  <div class="pf-sec">
+    <div class="pf-actions">
+      ${lockedAction('💬', 'Message')}
+      ${lockedAction('➕', 'Follow')}
+      ${lockedAction('⭐', 'Rate')}
+      ${lockedAction('🤝', 'Connect')}
+    </div>
+    <p class="pf-gate">You’re viewing ${esc(name)}’s profile as a visitor. Join ${esc(SITE_NAME)} to message, follow, rate or connect — and to see photos and more.</p>
+    <a class="cta" href="${escAttr(signupHref)}">Join ${esc(SITE_NAME)} — it’s free →</a>
+    <p class="pf-gate">Already a member? <a class="pf-login" href="${escAttr(loginHref)}">Log in</a></p>
+  </div>
+  <div class="pf-sec pf-qr">
+    <h2>Profile QR code</h2>
+    <a href="/u/${escAttr(pr.username)}" title="Open ${escAttr(name)}’s profile"><img src="${escAttr(qrSrc)}" alt="QR code for ${escAttr(name)}’s getxmatch profile" width="220" height="282" loading="lazy" /></a>
+  </div>
 </div>`;
 
   res.send(renderDocument({ seoDescriptor, jsonLd, bodyHtml }));
@@ -1108,6 +1184,7 @@ Disallow: /m/
 Disallow: /search
 Disallow: /live/
 Disallow: /u/
+Disallow: /qr/
 
 Sitemap: ${absUrl('/sitemap.xml')}
 `

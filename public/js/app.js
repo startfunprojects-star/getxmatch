@@ -4496,6 +4496,17 @@
             </section>
           </div>
           <div class="pro-col-side">
+            <section class="card pro-qr-card">
+              <h3 class="card-title">🔳 Profile QR code</h3>
+              <a class="pro-qr-link" href="/u/${encodeURIComponent(profile.username)}" target="_blank" rel="noopener" title="Open ${esc(profile.displayName || profile.username)}’s profile link">
+                <img class="pro-qr" src="/qr/u/${encodeURIComponent(profile.username)}.png" alt="QR code for @${esc(profile.username)}’s getxmatch profile" width="200" height="256" loading="lazy" />
+              </a>
+              <p class="hint">${isMe ? 'Your permanent getxmatch QR code. Anyone who scans or taps it lands on your profile.' : 'Scan or tap to open this profile.'}</p>
+              <div class="row-actions">
+                <button class="ghost small" id="pvQrShare">📤 Share QR</button>
+                <a class="ghost small btn-link" href="/qr/u/${encodeURIComponent(profile.username)}.png?download=1" download="getxmatch-${esc(profile.username)}-qr.png">⬇ Download</a>
+              </div>
+            </section>
             <section class="card">
               <h3 class="card-title">⭐ Ratings</h3>
               ${!isMe ? '<p class="hint" style="margin:-4px 0 12px">Rate them 1–5 stars on each.</p>' : ''}
@@ -4793,6 +4804,27 @@
 
     // Shareable profile link. Anyone who opens it lands on this member's
     // profile; signing up is required before they can do anything.
+    // Share the QR image itself where the device supports sharing files (most
+    // phones → WhatsApp, Instagram, Telegram …); otherwise share/copy the link.
+    const qrShare = view.querySelector('#pvQrShare');
+    if (qrShare) {
+      qrShare.addEventListener('click', async () => {
+        const link = location.origin + '/u/' + encodeURIComponent(profile.username);
+        const text = `${profile.displayName || profile.username} on getxmatch`;
+        try {
+          const blob = await (await fetch('/qr/u/' + encodeURIComponent(profile.username) + '.png')).blob();
+          const file = new File([blob], `getxmatch-${profile.username}-qr.png`, { type: 'image/png' });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: text, text: `${text}: ${link}` });
+            return;
+          }
+          if (navigator.share) { await navigator.share({ title: text, url: link }); return; }
+        } catch (e) { if (e && e.name === 'AbortError') return; }
+        try { await navigator.clipboard.writeText(link); notifyToast('Profile link copied — the QR opens it too.'); }
+        catch (_e) { prompt('Copy this profile link:', link); }
+      });
+    }
+
     const shareBtn = view.querySelector('#pvShare');
     if (shareBtn) {
       const link = location.origin + '/u/' + encodeURIComponent(profile.username);
