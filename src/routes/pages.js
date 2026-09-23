@@ -750,7 +750,7 @@ ${cards}`;
    Public profile share pages — /u/<username>
 
    Every profile gets a shareable link. The link unfurls (Open Graph / Twitter
-   card) with the member's profile picture and their age · gender · sexuality,
+   card) with the member's profile picture and their age · gender · country,
    so recipients preview who it is. A logged-in visitor is sent straight to the
    profile inside the app; a logged-out visitor sees a preview card and must
    sign up to open the full profile or do anything (message, rate, connect).
@@ -798,8 +798,8 @@ router.get('/u/:username', optionalAuth, (req, res) => {
   const age = pr.age;
   const avatar = pr.avatar;
 
-  // The three facts a shared link must surface: age · gender · sexuality.
-  const factLine = [age != null ? `${age}` : null, pr.gender || null, pr.sexuality || null]
+  // The facts a shared link surfaces: age · gender · country.
+  const factLine = [age != null ? `${age}` : null, pr.gender || null, pr.country || null]
     .filter(Boolean)
     .join(' · ');
   const description =
@@ -833,15 +833,11 @@ router.get('/u/:username', optionalAuth, (req, res) => {
   const badges = [
     age != null ? `<span class="pf-badge">🎂 ${age}</span>` : '',
     pr.gender ? `<span class="pf-badge">${genderGlyph(pr.gender)} ${esc(pr.gender)}</span>` : '',
-    pr.sexuality ? `<span class="pf-badge">🌈 ${esc(pr.sexuality)}</span>` : '',
     pr.country ? `<span class="pf-badge">📍 ${esc(pr.country)}</span>` : '',
   ].filter(Boolean).join('');
 
   const details = [
     ['Relationship', pr.relationshipStatus],
-    ['Diet', pr.diet],
-    ['Drinks', pr.drinks],
-    ['Smokes', pr.smokes],
   ].filter(([, v]) => v).map(([k, v]) => `<div class="pf-detail"><span>${k}</span><strong>${esc(v)}</strong></div>`).join('');
 
   const interests = (pr.interests || []).map((t) => `<span class="pf-chip">${esc(t)}</span>`).join('');
@@ -899,7 +895,6 @@ ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name, path: '/u/' + pr.username
     ${badges ? `<div class="pf-badges">${badges}</div>` : ''}
   </div>
   ${pr.about ? `<div class="pf-sec"><h2>About me</h2><p>${esc(pr.about)}</p></div>` : ''}
-  ${pr.persona ? `<div class="pf-sec"><h2>What kind of person</h2><p>${esc(pr.persona)}</p></div>` : ''}
   ${details ? `<div class="pf-sec"><h2>Details</h2><div class="pf-details">${details}</div></div>` : ''}
   ${interests ? `<div class="pf-sec"><h2>Interests</h2><div class="pf-chips">${interests}</div></div>` : ''}
   <div class="pf-sec">

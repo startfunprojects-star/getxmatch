@@ -341,10 +341,7 @@
   /* ---------- profile field option lists (mirror src/profileFields.js) ---------- */
   const OPT = {
     gender: ['Male', 'Female', 'Non-binary', 'Other', 'Prefer not to say'],
-    sexuality: ['Straight', 'Gay', 'Lesbian', 'Bisexual'],
     yesNo: ['Yes', 'No', 'Occasionally', 'Prefer not to say'],
-    diet: ['Vegetarian', 'Non-vegetarian', 'Vegan', 'Eggetarian'],
-    bedRole: ['Dominating', 'Submissive', 'Mix', 'Go with the flow'],
     relationshipStatus: ['Single', 'In a relationship', 'Married', "It's complicated", 'Prefer not to say'],
     interests: ['Movies', 'Photography', 'Reading', 'Politics', 'Music', 'Travel', 'Sports',
       'Gaming', 'Cooking', 'Fitness', 'Art', 'Technology', 'Fashion', 'Nature', 'Dancing'],
@@ -760,39 +757,13 @@
             ${selectHtml('country', COUNTRIES, e.country, 'Select country')}
           </div>
           <div>
-            <label>Weight (kg) <span class="req">*</span></label>
-            <input type="number" id="weight" min="30" max="400" step="1" value="${esc(e.weight || '')}" placeholder="e.g. 70" />
-          </div>
-          <div>
-            <label>Sexuality</label>
-            ${selectHtml('sexuality', OPT.sexuality, e.sexuality, 'Select…')}
-          </div>
-          <div>
-            <label>Do you smoke?</label>
-            ${selectHtml('smokes', OPT.yesNo, e.smokes, 'Select…')}
-          </div>
-          <div>
-            <label>Do you consume alcohol?</label>
-            ${selectHtml('drinks', OPT.yesNo, e.drinks, 'Select…')}
-          </div>
-          <div>
-            <label>Veg or non-veg?</label>
-            ${selectHtml('diet', OPT.diet, e.diet, 'Select…')}
-          </div>
-          <div>
             <label>Relationship status</label>
             ${selectHtml('relationshipStatus', OPT.relationshipStatus, e.relationshipStatus, 'Select…')}
           </div>
         </div>
 
-        <label>With (partner's @username) — optional</label>
-        <input id="partner" maxlength="20" value="${esc(e.partner ? e.partner.username : '')}" placeholder="e.g. their username" />
-
         <label>About me</label>
         <textarea id="about" maxlength="500" placeholder="Tell people a bit about you">${esc(e.about || '')}</textarea>
-
-        <label>Tell viewers what kind of person you are</label>
-        <textarea id="persona" maxlength="500" placeholder="Your personality, vibe, what you're looking for…">${esc(e.persona || '')}</textarea>
 
         <label>Interests</label>
         <div class="chip-picker" id="interestPicker">
@@ -800,14 +771,6 @@
             `<label class="chip${selectedInterests.has(i) ? ' on' : ''}"><input type="checkbox" value="${esc(i)}"${selectedInterests.has(i) ? ' checked' : ''}/>${esc(i)}</label>`
           ).join('')}
         </div>
-
-        <details class="adult-section">
-          <summary>Intimacy (optional, 18+)</summary>
-          <label>What you like in bed</label>
-          <textarea id="likesInBed" maxlength="500" placeholder="Optional">${esc(e.likesInBed || '')}</textarea>
-          <label>Are you…</label>
-          ${selectHtml('bedRole', OPT.bedRole, e.bedRole, 'Select…')}
-        </details>
 
         <div class="privacy-toggle">
           <label class="switch-row">
@@ -859,17 +822,8 @@
       fd.append('gender', val('gender'));
       fd.append('dateOfBirth', val('dateOfBirth'));
       fd.append('country', val('country'));
-      fd.append('weight', val('weight'));
-      fd.append('sexuality', val('sexuality'));
-      fd.append('smokes', val('smokes'));
-      fd.append('drinks', val('drinks'));
-      fd.append('diet', val('diet'));
       fd.append('relationshipStatus', val('relationshipStatus'));
-      fd.append('partner', val('partner'));
       fd.append('about', val('about'));
-      fd.append('persona', val('persona'));
-      fd.append('likesInBed', val('likesInBed'));
-      fd.append('bedRole', val('bedRole'));
       fd.append('interests', JSON.stringify(interests));
       fd.append('hidden', wrap.querySelector('#hidden').checked ? '1' : '0');
       if (avatarFile) fd.append('avatar', avatarFile);
@@ -3795,11 +3749,6 @@
   /* ======================================================================
      PROFILE VIEW (someone else's profile in the main pane)
   ====================================================================== */
-  // A labelled detail tile with an icon, only rendered when there's a value.
-  function detail(label, value, icon) {
-    if (!value) return '';
-    return `<div class="detail"><span class="di">${icon || ''}</span><div class="dtext"><span class="dl">${esc(label)}</span><span class="dv">${esc(value)}</span></div></div>`;
-  }
   function genderIcon(g) {
     return g === 'Female' ? '♀' : g === 'Male' ? '♂' : '⚧';
   }
@@ -4397,14 +4346,7 @@
       profile.country,
     ].filter(Boolean).join(' · ');
 
-    // Relationship line, with optional link to the partner's profile.
-    let relLine = '';
-    if (profile.relationshipStatus) {
-      relLine = esc(profile.relationshipStatus);
-      if (profile.partner) {
-        relLine += ` with <a href="#" class="partner-link" data-u="${esc(profile.partner.username)}">${esc(profile.partner.displayName)}</a>`;
-      }
-    }
+    const relLine = profile.relationshipStatus ? esc(profile.relationshipStatus) : '';
 
     const badges = [];
     if (profile.age != null) badges.push(`🎂 ${profile.age}`);
@@ -4412,14 +4354,6 @@
     if (profile.country) badges.push(`📍 ${esc(profile.country)}`);
     const badgesHtml = badges.map((b) => `<span class="badge">${b}</span>`).join('');
 
-    const detailsHtml = [
-      detail('Sexuality', profile.sexuality, '🌈'),
-      detail('Weight', profile.weight ? `${profile.weight} kg` : null, '⚖️'),
-      detail('Smokes', profile.smokes, '🚬'),
-      detail('Drinks', profile.drinks, '🍷'),
-      detail('Diet', profile.diet, '🥗'),
-      detail('In bed', profile.bedRole, '🔥'),
-    ].join('');
 
     const score = profile.rating.average ? profile.rating.average.toFixed(1) : '—';
     const card = (icon, title, inner) =>
@@ -4463,8 +4397,6 @@
         <div class="pro-grid">
           <div class="pro-col-main">
             ${profile.about ? card('📝', 'About me', `<p class="rich">${esc(profile.about)}</p>`) : ''}
-            ${profile.persona ? card('✨', 'What kind of person they are', `<p class="rich">${esc(profile.persona)}</p>`) : ''}
-            ${profile.likesInBed ? card('🔥', 'In the bedroom', `<p class="rich">${esc(profile.likesInBed)}</p>`) : ''}
             <section class="card">
               <h3 class="card-title">📷 Gallery <span class="hint" id="galCount"></span>
                 <button class="ghost small gal-slideshow" id="galSlideshow" title="Play as slideshow" style="float:right">▶ Slideshow</button>
@@ -4507,7 +4439,6 @@
               ${!isMe ? '<p class="hint" style="margin:-4px 0 12px">Rate them 1–5 stars on each.</p>' : ''}
               <div id="pvRatings"></div>
             </section>
-            ${detailsHtml ? `<section class="card"><h3 class="card-title">🧬 Details</h3><div class="detail-grid">${detailsHtml}</div></section>` : ''}
             ${profile.interests.length ? card('❤️', 'Interests', `<div class="chip-row">${profile.interests.map((i) => `<span class="chip static">${esc(i)}</span>`).join('')}</div>`) : ''}
             <section class="card">
               <h3 class="card-title">👥 Connections <span class="hint">(${profile.friends.count})</span></h3>
@@ -4787,8 +4718,6 @@
     renderFollow(view, profile, isMe);
 
     /* ----- misc wiring ----- */
-    view.querySelectorAll('.partner-link').forEach((a) =>
-      a.addEventListener('click', (ev) => { ev.preventDefault(); showProfile(a.dataset.u); }));
 
     view.querySelector('#pvBack').addEventListener('click', () => {
       if (state.peer) openChat(state.peer);

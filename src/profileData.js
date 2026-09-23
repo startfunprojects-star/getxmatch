@@ -283,9 +283,8 @@ function buildProfile(userId, viewerId) {
     .prepare(
       `SELECT u.id, u.username,
               p.display_name, p.bio, p.avatar, p.updated_at,
-              p.gender, p.date_of_birth, p.country, p.weight, p.smokes, p.drinks, p.diet,
-              p.sexuality, p.interests, p.persona, p.likes_in_bed, p.bed_role,
-              p.relationship_status, p.partner_user_id, p.friends_visibility,
+              p.gender, p.date_of_birth, p.country, p.interests,
+              p.relationship_status, p.friends_visibility,
               p.gif_visibility, p.hidden
        FROM users u JOIN profiles p ON p.user_id = u.id
        WHERE u.id = ?`
@@ -315,18 +314,6 @@ function buildProfile(userId, viewerId) {
   const bufferPhotos = db
     .prepare('SELECT id, filename FROM profile_buffer_photos WHERE user_id = ? ORDER BY created_at DESC')
     .all(userId);
-
-  // Relationship partner (if linked and still exists).
-  let partner = null;
-  if (row.partner_user_id) {
-    const p = db
-      .prepare(
-        `SELECT u.id, u.username, pr.display_name
-         FROM users u JOIN profiles pr ON pr.user_id = u.id WHERE u.id = ?`
-      )
-      .get(row.partner_user_id);
-    if (p) partner = { id: p.id, username: p.username, displayName: p.display_name };
-  }
 
   // All profile information is public; the friends list is always visible.
   // Email is the only private field and is never included in this payload.
@@ -358,17 +345,8 @@ function buildProfile(userId, viewerId) {
     dateOfBirth: row.date_of_birth || null,
     age: ageFromDob(row.date_of_birth),
     country: row.country || null,
-    weight: row.weight || null,
-    smokes: row.smokes || null,
-    drinks: row.drinks || null,
-    diet: row.diet || null,
-    sexuality: row.sexuality || null,
     interests: parseInterests(row.interests),
-    persona: row.persona || '',
-    likesInBed: row.likes_in_bed || '',
-    bedRole: row.bed_role || null,
     relationshipStatus: row.relationship_status || null,
-    partner,
     gallery,
     gifs,
     // The chosen audience level for the GIF collection. `gifsLocked` tells a

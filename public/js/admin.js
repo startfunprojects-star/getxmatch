@@ -74,10 +74,7 @@
   /* ---- profile field option lists (mirror src/profileFields.js) ---- */
   const OPT = {
     gender: ['Male', 'Female', 'Non-binary', 'Other', 'Prefer not to say'],
-    sexuality: ['Straight', 'Gay', 'Lesbian', 'Bisexual'],
     yesNo: ['Yes', 'No', 'Occasionally', 'Prefer not to say'],
-    diet: ['Vegetarian', 'Non-vegetarian', 'Vegan', 'Eggetarian'],
-    bedRole: ['Dominating', 'Submissive', 'Mix', 'Go with the flow'],
     relationshipStatus: ['Single', 'In a relationship', 'Married', "It's complicated", 'Prefer not to say'],
     interests: ['Movies', 'Photography', 'Reading', 'Politics', 'Music', 'Travel', 'Sports',
       'Gaming', 'Cooking', 'Fitness', 'Art', 'Technology', 'Fashion', 'Nature', 'Dancing'],
@@ -538,22 +535,11 @@
           <div><label>Gender <span class="req">*</span></label>${selectHtml('pfGender', OPT.gender, e.gender, 'Select gender')}</div>
           <div><label>Date of birth <span class="req">*</span></label><input type="date" id="pfDob" value="${esc(e.dateOfBirth || '')}" max="9999-12-31" /></div>
           <div><label>Country <span class="req">*</span></label>${selectHtml('pfCountry', COUNTRIES, e.country, 'Select country')}</div>
-          <div><label>Weight (kg) <span class="req">*</span></label><input type="number" id="pfWeight" min="30" max="400" step="1" value="${esc(e.weight || '')}" placeholder="e.g. 70" /></div>
-          <div><label>Sexuality</label>${selectHtml('pfSexuality', OPT.sexuality, e.sexuality, 'Select…')}</div>
-          <div><label>Smokes?</label>${selectHtml('pfSmokes', OPT.yesNo, e.smokes, 'Select…')}</div>
-          <div><label>Alcohol?</label>${selectHtml('pfDrinks', OPT.yesNo, e.drinks, 'Select…')}</div>
-          <div><label>Veg or non-veg?</label>${selectHtml('pfDiet', OPT.diet, e.diet, 'Select…')}</div>
           <div><label>Relationship status</label>${selectHtml('pfRelStatus', OPT.relationshipStatus, e.relationshipStatus, 'Select…')}</div>
         </div>
 
-        <label>With (partner's @username) — optional</label>
-        <input id="pfPartner" maxlength="20" value="${esc(e.partner ? e.partner.username : '')}" placeholder="e.g. their username" />
-
         <label>About</label>
         <textarea id="pfAbout" maxlength="500" placeholder="A bit about this person">${esc(e.about || '')}</textarea>
-
-        <label>What kind of person they are</label>
-        <textarea id="pfPersona" maxlength="500" placeholder="Personality, vibe, what they're looking for…">${esc(e.persona || '')}</textarea>
 
         <label>Interests</label>
         <div class="chip-picker" id="pfInterests">
@@ -561,14 +547,6 @@
             `<label class="chip${selected.has(i) ? ' on' : ''}"><input type="checkbox" value="${esc(i)}"${selected.has(i) ? ' checked' : ''}/>${esc(i)}</label>`
           ).join('')}
         </div>
-
-        <details class="adult-section">
-          <summary>Intimacy (optional, 18+)</summary>
-          <label>What they like in bed</label>
-          <textarea id="pfLikesInBed" maxlength="500" placeholder="Optional">${esc(e.likesInBed || '')}</textarea>
-          <label>Are they…</label>
-          ${selectHtml('pfBedRole', OPT.bedRole, e.bedRole, 'Select…')}
-        </details>
 
         <div class="msg" id="pfMsg"></div>
         <div class="admin-item-actions">
@@ -603,17 +581,8 @@
       fd.append('gender', val('pfGender'));
       fd.append('dateOfBirth', val('pfDob'));
       fd.append('country', val('pfCountry'));
-      fd.append('weight', val('pfWeight'));
-      fd.append('sexuality', val('pfSexuality'));
-      fd.append('smokes', val('pfSmokes'));
-      fd.append('drinks', val('pfDrinks'));
-      fd.append('diet', val('pfDiet'));
       fd.append('relationshipStatus', val('pfRelStatus'));
-      fd.append('partner', val('pfPartner'));
       fd.append('about', val('pfAbout'));
-      fd.append('persona', val('pfPersona'));
-      fd.append('likesInBed', val('pfLikesInBed'));
-      fd.append('bedRole', val('pfBedRole'));
       fd.append('interests', JSON.stringify(interests));
       if (avatarFile) fd.append('avatar', avatarFile);
       try {

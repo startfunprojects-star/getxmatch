@@ -58,23 +58,12 @@ function saveProfile(userId, body, file) {
   const country = (b.country || '').trim();
   if (!country || country.length > 60) return fail('Please select a country.');
 
-  // --- Mandatory: body weight (kg).
-  const weight = Math.round(Number(b.weight));
-  if (!Number.isFinite(weight) || weight < F.MIN_WEIGHT || weight > F.MAX_WEIGHT) {
-    return fail(`Please enter a valid weight between ${F.MIN_WEIGHT} and ${F.MAX_WEIGHT} kg.`);
-  }
+  // Weight, smoking, alcohol, diet, sexuality, "what kind of person", the
+  // intimacy fields and the partner link are no longer part of the profile:
+  // they aren't collected, shown or returned by the API. Values saved before
+  // are left untouched in the database.
 
   // --- Optional enum fields.
-  const smokes = optionalEnum(b.smokes, F.YES_NO, 'smoking');
-  if (smokes.error) return fail(smokes.error);
-  const drinks = optionalEnum(b.drinks, F.YES_NO, 'alcohol');
-  if (drinks.error) return fail(drinks.error);
-  const diet = optionalEnum(b.diet, F.DIET, 'diet');
-  if (diet.error) return fail(diet.error);
-  const sexuality = optionalEnum(b.sexuality, F.SEXUALITY, 'sexuality');
-  if (sexuality.error) return fail(sexuality.error);
-  const bedRole = optionalEnum(b.bedRole, F.BED_ROLE, 'role');
-  if (bedRole.error) return fail(bedRole.error);
   const relStatus = optionalEnum(b.relationshipStatus, F.RELATIONSHIP_STATUS, 'relationship status');
   if (relStatus.error) return fail(relStatus.error);
 
@@ -111,22 +100,6 @@ function saveProfile(userId, body, file) {
     interests = [...new Set(interests)]; // de-dupe, keep order
   }
 
-  // --- Free-text extras.
-  const persona = (b.persona || '').trim();
-  if (persona.length > 500) return fail('That field must be 500 characters or fewer.');
-  const likesInBed = (b.likesInBed || '').trim();
-  if (likesInBed.length > 500) return fail('That field must be 500 characters or fewer.');
-
-  // --- Relationship partner (optional): a username to link to. Cannot be self.
-  let partnerId = null;
-  const partnerUsername = (b.partner || '').trim();
-  if (partnerUsername) {
-    const partner = db.prepare('SELECT id FROM users WHERE username = ?').get(partnerUsername);
-    if (!partner) return fail('The partner username entered does not exist.');
-    if (partner.id === userId) return fail('A user cannot be listed as their own partner.');
-    partnerId = partner.id;
-  }
-
   const now = Date.now();
   const existing = db.prepare('SELECT avatar FROM profiles WHERE user_id = ?').get(userId);
 
@@ -142,30 +115,23 @@ function saveProfile(userId, body, file) {
     db.prepare(
       `UPDATE profiles SET
          display_name = ?, bio = ?, avatar = ?,
-         gender = ?, date_of_birth = ?, country = ?, weight = ?, smokes = ?, drinks = ?,
-         diet = ?, sexuality = ?, interests = ?, persona = ?, likes_in_bed = ?,
-         bed_role = ?, relationship_status = ?, partner_user_id = ?,
-         friends_visibility = ?, hidden = ?, updated_at = ?
+         gender = ?, date_of_birth = ?, country = ?, interests = ?,
+         relationship_status = ?, friends_visibility = ?, hidden = ?, updated_at = ?
        WHERE user_id = ?`
     ).run(
       displayName, about, avatar,
-      gender, dob, country, weight, smokes.value, drinks.value,
-      diet.value, sexuality.value, interestsJson, persona, likesInBed,
-      bedRole.value, relStatus.value, partnerId,
-      friendsVisibility, hidden, now, userId
+      gender, dob, country, interestsJson,
+      relStatus.value, friendsVisibility, hidden, now, userId
     );
   } else {
     db.prepare(
       `INSERT INTO profiles
-         (user_id, display_name, bio, avatar, gender, date_of_birth, country, weight,
-          smokes, drinks, diet, sexuality, interests, persona, likes_in_bed,
-          bed_role, relationship_status, partner_user_id, friends_visibility, hidden, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (user_id, display_name, bio, avatar, gender, date_of_birth, country, interests,
+          relationship_status, friends_visibility, hidden, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
-      userId, displayName, about, avatar, gender, dob, country, weight,
-      smokes.value, drinks.value, diet.value, sexuality.value, interestsJson,
-      persona, likesInBed, bedRole.value, relStatus.value, partnerId,
-      friendsVisibility, hidden, now
+      userId, displayName, about, avatar, gender, dob, country, interestsJson,
+      relStatus.value, friendsVisibility, hidden, now
     );
   }
 
