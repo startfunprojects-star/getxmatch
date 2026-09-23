@@ -205,6 +205,12 @@ function notifyUser(userId, event, payload) {
   ioRef.to(`user:${userId}`).emit(event, payload || {});
 }
 
+// Tell every connected member to refresh their Notifications badge (e.g. a new
+// quiz or poll was published).
+function broadcastNotify() {
+  if (ioRef) ioRef.emit('notify:new', { at: Date.now() });
+}
+
 // Tell every connected client that the leaderboard ranking may have shifted
 // (a new rating, a new accepted friendship, …) so the UI can flag it as fresh.
 function broadcastLeaderboardChange() {
@@ -1019,4 +1025,4 @@ function initSocket(io) {
   });
 }
 
-module.exports = { initSocket, isOnline, broadcastActivity, broadcastHighway, notifyHighwayEvent, notifyGroup, notifyUser, broadcastLeaderboardChange };
+module.exports = { initSocket, isOnline, broadcastActivity, broadcastHighway, notifyHighwayEvent, notifyGroup, notifyUser, broadcastLeaderboardChange, broadcastNotify };

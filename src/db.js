@@ -830,6 +830,28 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_quiz_attempts_quiz ON quiz_attempts (qui
 // kind of quiz (see QUIZ_TYPES in src/quizTypes.js; 'compatibility' for every
 // existing quiz). quiz_matches.points_awarded = 1 once a shared link was
 // completed by a signed-in responder and both sides earned their points.
+// --- Notifications. Stored rows for compatibility results (both sides of a
+// completed shared link); new quizzes/polls are computed from created_at.
+// users.last_login_at / prev_login_at = this and the previous login, so "new
+// since your last login" means created after prev_login_at. notif_read_at =
+// when the member last opened the Notifications section (unread cut-off).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS notifications (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    data       TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, created_at);
+`);
+(function migrateLoginTimes() {
+  const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!cols.includes('last_login_at')) db.exec('ALTER TABLE users ADD COLUMN last_login_at INTEGER;');
+  if (!cols.includes('prev_login_at')) db.exec('ALTER TABLE users ADD COLUMN prev_login_at INTEGER;');
+  if (!cols.includes('notif_read_at')) db.exec('ALTER TABLE users ADD COLUMN notif_read_at INTEGER;');
+})();
+
 (function migrateQuizTypes() {
   const qcols = db.prepare('PRAGMA table_info(quizzes)').all().map((c) => c.name);
   if (!qcols.includes('type')) db.exec("ALTER TABLE quizzes ADD COLUMN type TEXT NOT NULL DEFAULT 'compatibility';");

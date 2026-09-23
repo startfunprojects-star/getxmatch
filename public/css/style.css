@@ -995,6 +995,17 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
 .blog-body { margin: 14px 0 20px; font-size: 16px; line-height: 1.7; }
 
 /* ---------- Leaderboard ---------- */
+.notif-list { display: flex; flex-direction: column; padding: 6px; gap: 2px; }
+.notif-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px; border-radius: 12px; cursor: pointer; border: 1px solid transparent; }
+.notif-item:hover { background: var(--bg-3); }
+.notif-item.unread { background: rgba(255,77,125,.07); border-color: rgba(255,77,125,.25); }
+.notif-icon { font-size: 22px; line-height: 1.2; flex: none; }
+.notif-main { flex: 1; min-width: 0; }
+.notif-text { line-height: 1.45; overflow-wrap: anywhere; }
+.notif-meta { margin-top: 4px; font-size: 12px; }
+.notif-new { color: var(--accent); font-weight: 700; }
+.notif-pts { color: var(--accent); font-weight: 700; }
+.notif-go { color: var(--muted); flex: none; }
 .lb-list { display: flex; flex-direction: column; padding: 8px; }
 .lb-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; }
 .lb-row:hover { background: var(--bg-3); }

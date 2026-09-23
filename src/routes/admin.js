@@ -11,7 +11,7 @@ const rateLimit = require('express-rate-limit');
 const db = require('../db');
 const config = require('../config');
 const { sendAdminResetLink } = require('../mail');
-const { isOnline } = require('../socket');
+const { isOnline, broadcastNotify } = require('../socket');
 const { rankedUsers } = require('../points');
 const { QUIZ_TYPES } = require('../quizTypes');
 const { imageUpload } = require('../upload');
@@ -373,6 +373,7 @@ router.post('/quizzes', requireAdmin, (req, res) => {
   const info = db.prepare(
     'INSERT INTO quizzes (title, description, questions, negative_marks, type, seo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(title.slice(0, 150), description, JSON.stringify(q.value), neg.value, type.value, seo, now, now);
+  broadcastNotify(); // "new quiz" in members' Notifications
   res.status(201).json({ id: info.lastInsertRowid });
 });
 
@@ -441,6 +442,7 @@ router.post('/polls', requireAdmin, (req, res) => {
   const info = db.prepare(
     'INSERT INTO polls (question, options, closed, seo, created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?)'
   ).run(question.slice(0, 300), JSON.stringify(o.value), seo, now, now);
+  broadcastNotify(); // "new poll" in members' Notifications
   res.status(201).json({ id: info.lastInsertRowid });
 });
 

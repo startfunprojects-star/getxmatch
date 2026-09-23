@@ -125,10 +125,17 @@ router.post('/signup/verify', authLimiter, (req, res) => {
   db.prepare('DELETE FROM email_otps WHERE email = ?').run(emailLc);
 
   const user = { id: info.lastInsertRowid, username: pending.username, email: emailLc };
+  recordLogin(user.id);
   setAuthCookie(res, signToken(user));
 
   res.status(201).json({ user: publicUser(user), hasProfile: false });
 });
+
+// Remember this and the previous login ("new since your last login" in
+// Notifications).
+function recordLogin(userId) {
+  db.prepare('UPDATE users SET prev_login_at = last_login_at, last_login_at = ? WHERE id = ?').run(Date.now(), userId);
+}
 
 // POST /api/auth/login
 router.post('/login', authLimiter, (req, res) => {
@@ -156,6 +163,7 @@ router.post('/login', authLimiter, (req, res) => {
   }
 
   const token = signToken(user);
+  recordLogin(user.id);
   setAuthCookie(res, token);
 
   const profile = db.prepare('SELECT user_id FROM profiles WHERE user_id = ?').get(user.id);

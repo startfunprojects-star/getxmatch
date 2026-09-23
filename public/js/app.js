@@ -912,8 +912,9 @@
             <button data-tab="chats">Chats<span class="ndot"></span></button>
           </div>
           <div class="explore-nav" id="exploreNav">
+            <button data-view="notifications">🔔 Notifications <span class="req-badge hidden" id="notifBadge">0</span></button>
             <button data-view="highway">🌊 Highway</button>
-            <button data-view="requests">🔔 Requests <span class="req-badge hidden" id="reqBadge">0</span></button>
+            <button data-view="requests">🤝 Requests <span class="req-badge hidden" id="reqBadge">0</span></button>
             <button data-view="quizzes">🧠 Quizzes</button>
             <button data-view="polls">📊 Polls</button>
             <button data-view="blogs">📝 Blogs</button>
@@ -977,6 +978,7 @@
     renderList();
     renderMainHome(); // chat box shows the recent-activity feed by default
     refreshRequestBadge();
+    refreshNotifBadge();
     loadGifts(); // preload so live gifts render with the right emoji/name
     loadIgnored(); // so live Highway pushes from ignored users are filtered
 
@@ -998,6 +1000,18 @@
   // (pending friend requests + group invites). When that count grows — and the
   // Requests view isn't already open — blink the button to draw attention.
   let lastReqCount = null;
+  // Unread count on the Notifications nav button.
+  async function refreshNotifBadge() {
+    const badge = document.getElementById('notifBadge');
+    if (!badge) return;
+    try {
+      const { unread } = await api.get('/api/notifications/count');
+      badge.textContent = unread > 99 ? '99+' : unread;
+      badge.classList.toggle('hidden', !unread || isExploreActive('notifications'));
+      if (unread && !isExploreActive('notifications')) markNav('notifications', true);
+    } catch (_e) { /* ignore */ }
+  }
+
   async function refreshRequestBadge() {
     const badge = document.getElementById('reqBadge');
     if (!badge) return;
@@ -3623,7 +3637,16 @@
 
     // Someone finished a compatibility link this member shared: the result is
     // ready for both of them. Show a clickable toast that opens it.
+    // Something new for the Notifications section (a compatibility result, or
+    // a newly published quiz/poll).
+    s.on('notify:new', () => {
+      if (isExploreActive('notifications')) renderNotifications();
+      else refreshNotifBadge();
+    });
+
     s.on('quiz:matched', (d) => {
+      if (isExploreActive('notifications')) renderNotifications();
+      else refreshNotifBadge();
       if (!d || !d.token) return;
       const pts = d.points ? ` · +${d.points} points` : '';
       const t = el(`<a class="toast toast-link" href="/m/${encodeURIComponent(d.token)}" target="_blank" rel="noopener"></a>`);
@@ -4879,6 +4902,7 @@
 
   function openExplore(view) {
     if (view === 'highway') return renderHighway();
+    if (view === 'notifications') return renderNotifications();
     if (view === 'requests') return renderRequests();
     if (view === 'quizzes') return renderQuizzes();
     if (view === 'polls') return renderPolls();
@@ -5181,6 +5205,69 @@
   }
 
   /* ---------- Friend requests ---------- */
+  /* ---------- Notifications ---------- */
+  // Compatibility results (links you shared that someone completed, and links
+  // you completed) plus quizzes and polls published since your last login.
+  async function renderNotifications() {
+    const main = openMainView();
+    main.appendChild(sectionShell('Notifications', 'Compatibility results from shared quizzes, and new quizzes and polls since your last login.'));
+    const body = main.querySelector('#sectionBody');
+    let data;
+    try { data = await api.get('/api/notifications'); }
+    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+
+    // Opening the section marks everything as read.
+    api.post('/api/notifications/read', {}).catch(() => {});
+    const badge = document.getElementById('notifBadge');
+    if (badge) badge.classList.add('hidden');
+    markNav('notifications', false);
+
+    const items = data.items || [];
+    if (!items.length) {
+      body.innerHTML = '<div class="empty-main">🔔 You’re all caught up. When someone takes a quiz you shared — or a new quiz or poll is published — it will show up here.</div>';
+      return;
+    }
+    body.innerHTML = '';
+    const list = el('<div class="notif-list card"></div>');
+    items.forEach((it) => list.appendChild(notificationEl(it)));
+    body.appendChild(list);
+  }
+
+  function notificationEl(it) {
+    let icon = '🔔';
+    let html = '';
+    if (it.kind === 'match_shared') {
+      icon = '💘';
+      html = `<strong>${esc(it.otherName)}</strong> attempted the quiz you shared, <em>“${esc(it.quizTitle)}”</em>. ` +
+        `You’re <strong>${it.percent}% compatible</strong> (${it.score} of ${it.total} answers in common).`;
+    } else if (it.kind === 'match_answered') {
+      icon = '💘';
+      html = `You attempted <strong>${esc(it.otherName)}</strong>’s shared quiz <em>“${esc(it.quizTitle)}”</em>. ` +
+        `You’re <strong>${it.percent}% compatible</strong> (${it.score} of ${it.total} answers in common).`;
+    } else if (it.kind === 'new_quiz') {
+      icon = '🧠';
+      html = `New quiz: <strong>${esc(it.title)}</strong>`;
+    } else if (it.kind === 'new_poll') {
+      icon = '📊';
+      html = `New poll: <strong>${esc(it.title)}</strong>`;
+    }
+    const pts = it.points ? `<span class="notif-pts">+${it.points} pts</span>` : '';
+    const row = el(`
+      <div class="notif-item${it.unread ? ' unread' : ''}" role="link" tabindex="0">
+        <div class="notif-icon">${icon}</div>
+        <div class="notif-main">
+          <div class="notif-text">${html}</div>
+          <div class="notif-meta hint">${it.unread ? '<span class="notif-new">New</span> · ' : ''}${fmtDate(it.at)} · ${fmtTime(it.at)}${pts ? ' · ' + pts : ''}</div>
+        </div>
+        <div class="notif-go">↗</div>
+      </div>
+    `);
+    const open = () => window.open(it.link, '_blank', 'noopener');
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    return row;
+  }
+
   async function renderRequests() {
     const main = openMainView();
     main.appendChild(sectionShell('Relationship Requests', 'People who want to connect with you — friend, crush, and more. View their profile, then accept or decline.'));

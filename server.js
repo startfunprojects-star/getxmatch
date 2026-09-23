@@ -69,6 +69,7 @@ app.use('/api/content', contentRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/groups', groupRoutes);
+app.use('/api/notifications', require('./src/routes/notifications'));
 app.use('/api/match', matchRoutes); // public: shared compatibility-quiz links
 app.use('/api/broadcast', broadcastRoutes); // public: directory of live broadcasts
 app.use('/api/ads', adsRoutes); // public: serve ads + log clicks

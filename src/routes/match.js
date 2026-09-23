@@ -13,6 +13,7 @@ const { optionalAuth } = require('../auth');
 const { WEIGHTS } = require('../points');
 const { MATCH_TTL_MS } = require('../quizTypes');
 const { notifyUser, broadcastLeaderboardChange } = require('../socket');
+const { addMatchNotifications } = require('./notifications');
 
 const router = express.Router();
 
@@ -221,6 +222,17 @@ router.post('/:token/answer', optionalAuth, (req, res) => {
   const updated = loadMatch(req.params.token);
   const result = resultPayload(updated, questions);
   if (award) broadcastLeaderboardChange();
+  // Both people get a notification with the compatibility result.
+  addMatchNotifications({
+    m,
+    quizTitle: quiz.title,
+    bUserId,
+    bName: finalName,
+    result,
+    sharerPoints: award ? WEIGHTS.shareCompleted : 0,
+    responderPoints: award ? WEIGHTS.answerShared : 0,
+  });
+  if (bUserId) notifyUser(bUserId, 'notify:new', {});
   // Tell the sharer their result is ready (and whether they earned points).
   notifyUser(m.a_user_id, 'quiz:matched', {
     token: m.token,
