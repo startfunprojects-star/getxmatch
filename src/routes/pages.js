@@ -222,6 +222,16 @@ const ATTEMPT_STYLE = `<style>
 .gx-proctor-box { max-width: 460px; width: 100%; border: 1px solid var(--accent); border-radius: 14px; padding: 22px 24px; background: var(--bg2); text-align: center; }
 .gx-proctor-box h2 { margin: 0 0 8px; color: var(--accent); font-size: 1.2rem; }
 .gx-proctor-box p { margin: 0 0 16px; }
+.gx-proctor-sum { margin: 0 0 8px; font-weight: 700; }
+.gx-qmeta { margin: 0 0 6px; font-size: .85rem; color: var(--muted); }
+.gx-step[hidden] { display: none; }
+.gx-step { margin: 0 0 14px; }
+.gx-step-row { display: flex; justify-content: space-between; gap: 12px; font-size: .9rem; color: var(--muted); margin: 0 0 6px; }
+.gx-timer { font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.gx-timer.low { color: var(--accent); }
+.gx-timebar { height: 6px; border-radius: 999px; background: var(--bg3); overflow: hidden; }
+.gx-timebar span { display: block; height: 100%; width: 100%; background: var(--grad); transition: width .25s linear; }
+.gx-timebar.untimed { display: none; }
 </style>`;
 
 /* ===========================================================================
@@ -323,14 +333,23 @@ router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
 
   const loggedIn = !!req.user;
   const questions = parseJson(row.questions, []);
+  // Per-question points and time limit, as set by the admin (0 = none).
+  const qPoints = (q) => (Number.isInteger(q.points) && q.points > 0 ? q.points : 0);
+  const qSeconds = (q) => (Number.isInteger(q.seconds) && q.seconds > 0 ? q.seconds : 0);
+  const totalPoints = questions.reduce((a, q) => a + qPoints(q), 0);
   const qHtml = questions.map((q, i) => {
     const opts = Array.isArray(q.options) ? q.options : [];
     const optHtml = opts.map((o, oi) =>
       `<label class="gx-qopt"><input type="radio" name="q${i}" value="${oi}" /><span>${esc(o)}</span></label>`
     ).join('');
+    const meta = [
+      qPoints(q) ? `${qPoints(q)} point${qPoints(q) === 1 ? '' : 's'}` : '',
+      qSeconds(q) ? `${qSeconds(q)} seconds` : 'No time limit',
+    ].filter(Boolean).join(' · ');
     return `
-    <fieldset class="gx-q" data-q="${i}">
+    <fieldset class="gx-q" data-q="${i}" data-points="${qPoints(q)}" data-seconds="${qSeconds(q)}">
       <legend>${i + 1}. ${esc(q.prompt)}</legend>
+      <p class="gx-qmeta">${meta}</p>
       ${optHtml}
     </fieldset>`;
   }).join('');
@@ -369,8 +388,10 @@ ${hasQuestions ? `
 <div id="gxAttempt" class="gx-attempt" data-kind="quiz" data-id="${row.id}" data-logged="${loggedIn ? 1 : 0}">
   <div class="gx-proctor-intro">
     <h2>This quiz runs in full screen</h2>
+    <p class="gx-proctor-sum">${questions.length} question${questions.length === 1 ? '' : 's'}${totalPoints ? ` · up to ${totalPoints} points` : ''}</p>
     <ul>
       <li>The quiz opens in full screen and must stay there until you submit.</li>
+      <li>Questions come one at a time. Each shows its points and time limit — answer before the timer runs out to earn its points. When time is up, the question is skipped and earns nothing.</li>
       <li>Pressing Esc, switching tabs or apps, minimising the window, connecting another display or using remote-control/automation tools counts as leaving the quiz.</li>
       <li>The first time, you get a warning and return to full screen.</li>
       <li><strong>The second time, the quiz stops, you can't attempt it again for 24 hours and 10 points are deducted from your score.</strong></li>
@@ -378,6 +399,10 @@ ${hasQuestions ? `
     <button type="button" class="cta gx-start">Start quiz in full screen</button>
   </div>
   <div class="gx-proctor-bar" hidden><span>Full-screen quiz</span><span class="gx-proctor-strikes"></span></div>
+  <div class="gx-step" hidden>
+    <div class="gx-step-row"><span class="gx-progress"></span><span class="gx-earned"></span><span class="gx-timer" aria-live="polite"></span></div>
+    <div class="gx-timebar"><span></span></div>
+  </div>
   <div class="gx-proctor-warn" role="alertdialog" aria-modal="true" aria-labelledby="gxWarnTitle" hidden>
     <div class="gx-proctor-box">
       <h2 id="gxWarnTitle"></h2>
@@ -387,7 +412,7 @@ ${hasQuestions ? `
   </div>
   <form id="gxQuizForm" hidden>
     ${qHtml}
-    <button type="submit" class="cta gx-submit">Submit my answers</button>
+    <button type="submit" class="cta gx-submit">Next</button>
   </form>
   <p class="gx-hint">${hint}</p>
   <div class="gx-result" hidden></div>

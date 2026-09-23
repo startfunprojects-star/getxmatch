@@ -187,7 +187,7 @@ function buildFeed(viewerId, opts) {
       icon: '🧠',
       actor: a,
       target: null,
-      text: `${a.displayName} attempted the quiz “${qa.title}” and scored ${qa.score}/${qa.total}`,
+      text: `${a.displayName} attempted the quiz “${qa.title}” and earned ${qa.score}/${qa.total} points`,
     });
   });
 

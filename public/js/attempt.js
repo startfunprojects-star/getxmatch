@@ -117,6 +117,13 @@
     var warnMsg = warn.querySelector('.gx-proctor-msg');
     var returnBtn = warn.querySelector('.gx-return');
     var hintEl = root.querySelector('.gx-hint');
+    var step = root.querySelector('.gx-step');
+    var progressEl = step.querySelector('.gx-progress');
+    var earnedEl = step.querySelector('.gx-earned');
+    var timerEl = step.querySelector('.gx-timer');
+    var timebar = step.querySelector('.gx-timebar');
+    var fieldsets = form.querySelectorAll('.gx-q');
+    var submitBtn = form.querySelector('.gx-submit');
 
     var session = null;
     var penalty = 10;
@@ -127,6 +134,12 @@
     // once; count them as a single incident.
     var GRACE_MS = 1500;
     var envTimer = null;
+    // Current question, driven by the server's session state.
+    var qIndex = 0;
+    var qDeadline = 0; // local ms when the current question's time runs out (0 = untimed)
+    var qLimitMs = 0;
+    var qTimer = null;
+    var answering = false;
     var fsSupported = !!(root.requestFullscreen || root.webkitRequestFullscreen);
 
     function fsElement() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
@@ -176,8 +189,13 @@
       strikesEl.classList.toggle('warned', n > 0);
     }
 
+    function stopQuestionTimer() {
+      if (qTimer) { clearInterval(qTimer); qTimer = null; }
+    }
+
     function stopMonitoring() {
       active = false;
+      stopQuestionTimer();
       if (envTimer) { clearInterval(envTimer); envTimer = null; }
     }
 
@@ -186,6 +204,7 @@
       exitFs();
       form.hidden = true;
       bar.hidden = true;
+      step.hidden = true;
       warn.hidden = true;
       if (intro) intro.hidden = true;
       if (hintEl) hintEl.hidden = true;
@@ -203,7 +222,55 @@
       if (canReturn) returnBtn.focus();
     }
 
-    function begin(strikes) {
+    function fmtClock(ms) {
+      var t = Math.max(0, Math.ceil(ms / 1000));
+      var m = Math.floor(t / 60);
+      var sec = t % 60;
+      return m + ':' + (sec < 10 ? '0' : '') + sec;
+    }
+
+    function tick() {
+      if (!qDeadline) return;
+      var left = qDeadline - Date.now();
+      timerEl.textContent = '⏱ ' + fmtClock(left);
+      timerEl.classList.toggle('low', left <= 5000);
+      var fill = timebar.querySelector('span');
+      if (fill) fill.style.width = Math.max(0, Math.min(100, (left / qLimitMs) * 100)) + '%';
+      // Time's up: skip the question (the server records it as unanswered
+      // unless a picked option still lands within its grace window).
+      if (left <= 0) { stopQuestionTimer(); sendAnswer(true); }
+    }
+
+    // Show question `state.index` with its countdown (remainingMs is measured
+    // by the server, so the local clock's accuracy doesn't matter).
+    function showQuestion(state) {
+      stopQuestionTimer();
+      qIndex = state.index;
+      for (var i = 0; i < fieldsets.length; i++) fieldsets[i].hidden = i !== qIndex;
+      var fs = fieldsets[qIndex];
+      var secs = parseInt(fs.getAttribute('data-seconds'), 10) || 0;
+      progressEl.textContent = 'Question ' + (qIndex + 1) + ' of ' + fieldsets.length;
+      earnedEl.textContent = state.maxPoints ? state.points + ' / ' + state.maxPoints + ' pts' : '';
+      submitBtn.textContent = qIndex === fieldsets.length - 1 ? 'Finish quiz' : 'Next';
+      submitBtn.disabled = false;
+      step.hidden = false;
+      if (secs && state.remainingMs != null) {
+        qLimitMs = secs * 1000;
+        qDeadline = Date.now() + state.remainingMs;
+        timebar.classList.remove('untimed');
+        tick();
+        qTimer = setInterval(tick, 250);
+      } else {
+        qDeadline = 0;
+        timerEl.textContent = 'No time limit';
+        timerEl.classList.remove('low');
+        timebar.classList.add('untimed');
+      }
+      var first = fs.querySelector('input[type="radio"]');
+      if (first && warn.hidden) { try { first.focus({ preventScroll: true }); } catch (_e) {} }
+    }
+
+    function begin(strikes, state) {
       active = true;
       finishing = false;
       lastStrikeAt = Date.now(); // ignore the transition into full screen
@@ -217,6 +284,8 @@
         var p = envProblem();
         if (p) violation('environment', p);
       }, 2000);
+      if (state && state.done) finish();
+      else showQuestion(state || { index: 0, remainingMs: null, points: 0, maxPoints: 0 });
     }
 
     function violation(reason, detail) {
@@ -309,31 +378,54 @@
               showNote('Your browser blocked full screen. Allow full screen for this site, then start the quiz again.');
               return;
             }
-            begin(d.strikes || 0);
+            begin(d.strikes || 0, d.state);
           });
         })
         .catch(function () { startBtn.disabled = false; exitFs(); showNote('Network error — please try again.'); });
     });
 
+    // Send the current question's answer (or a timeout) and move on.
+    function sendAnswer(timedOut) {
+      if (!active || answering) return;
+      var picked = fieldsets[qIndex].querySelector('input[type="radio"]:checked');
+      if (!picked && !timedOut) { showNote('Pick an answer, or wait for the timer to skip this question.'); return; }
+      answering = true;
+      stopQuestionTimer();
+      submitBtn.disabled = true;
+      if (note) note.hidden = true;
+      postJson(base + '/proctor/answer', { session: session, index: qIndex, option: picked ? parseInt(picked.value, 10) : -1 })
+        .then(function (r) {
+          answering = false;
+          var d = r.data || {};
+          if (r.status === 423) { showLocked(d.lockedUntil); return; }
+          if (!(r.status >= 200 && r.status < 300 && d.state)) {
+            submitBtn.disabled = false;
+            showNote(esc(d.error || 'Could not save your answer. Please try again.'));
+            return;
+          }
+          if (d.accepted && timedOut && !d.answered) showNote('Time’s up — that question was skipped.');
+          else if (d.accepted && d.late) showNote('Too late — that answer arrived after the time limit and earned no points.');
+          if (d.state.done) finish();
+          else showQuestion(d.state);
+        })
+        .catch(function () {
+          answering = false;
+          submitBtn.disabled = false;
+          showNote('Network error — please try again.');
+        });
+    }
+
     form.addEventListener('submit', function (e) {
       e.preventDefault();
-      if (!active || !session) return;
-      var fieldsets = form.querySelectorAll('.gx-q');
-      var answers = [];
-      var missing = false;
-      for (var i = 0; i < fieldsets.length; i++) {
-        var picked = fieldsets[i].querySelector('input[type="radio"]:checked');
-        if (!picked) { missing = true; break; }
-        answers.push(parseInt(picked.value, 10));
-      }
-      if (missing) { showNote('Please answer every question before submitting.'); return; }
+      sendAnswer(false);
+    });
 
-      var submitBtn = form.querySelector('.gx-submit');
-      if (submitBtn) submitBtn.disabled = true;
-      if (note) note.hidden = true;
+    // All questions answered: lock in the attempt and get the share link.
+    function finish() {
       finishing = true;
-
-      postJson(base + '/match', { answers: answers, session: session })
+      stopQuestionTimer();
+      submitBtn.disabled = true;
+      postJson(base + '/match', { session: session })
         .then(function (r) {
           var d = r.data || {};
           if (r.status === 423) { showLocked(d.lockedUntil); return; }
@@ -341,14 +433,18 @@
             stopMonitoring();
             exitFs();
             bar.hidden = true;
+            step.hidden = true;
             var link = window.location.origin + '/m/' + d.token;
             var result = root.querySelector('.gx-result');
             form.hidden = true;
             if (hintEl) hintEl.hidden = true;
             if (result) {
+              var summary = (d.maxPoints ? 'You earned <strong>' + d.points + ' of ' + d.maxPoints + ' points</strong>' : 'You finished the quiz') +
+                ' and answered ' + d.answered + ' of ' + d.total + ' question' + (d.total === 1 ? '' : 's') + ' in time.';
               result.hidden = false;
               result.innerHTML =
                 '<h2>Your answers are locked in 🎉</h2>' +
+                '<p>' + summary + '</p>' +
                 '<p>Share this link — it stays active for one hour. When someone else answers, you’ll both see how well you match.</p>' +
                 '<div class="gx-share">' +
                 '<input type="text" readonly value="' + esc(link) + '" />' +
@@ -370,10 +466,10 @@
             return;
           }
           finishing = false;
-          if (submitBtn) submitBtn.disabled = false;
+          submitBtn.disabled = false;
           showNote(esc(d.error || 'Could not submit your answers. Please try again.'));
         })
-        .catch(function () { finishing = false; if (submitBtn) submitBtn.disabled = false; showNote('Network error — please try again.'); });
-    });
+        .catch(function () { finishing = false; submitBtn.disabled = false; showNote('Network error — please try again.'); });
+    }
   }
 })();

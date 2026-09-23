@@ -1137,6 +1137,9 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .qb-question { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 10px; background: var(--bg); }
 .qb-option-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .qb-option-row input[type=text] { flex: 1; }
+.qb-settings { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0 4px; }
+.qb-setting { flex: 1; min-width: 160px; margin: 0; font-size: 13px; color: var(--muted); }
+.qb-setting input { margin-top: 4px; }
 .admin-item { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; background: var(--bg); }
 .admin-item h3 { margin: 0 0 4px; font-size: 16px; }
 .admin-item-actions { display: flex; gap: 8px; margin-top: 8px; }

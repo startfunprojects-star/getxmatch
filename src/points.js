@@ -7,12 +7,12 @@
 
 const db = require('./db');
 
-// Points per unit of each activity.
+// Points per unit of each activity. Quizzes add the points the admin set on
+// each question the member answered in time (best attempt per quiz).
 const WEIGHTS = {
   ratingAvg: 20, // × average star rating received (0–5)
   rating: 5, // per rating received
   friend: 8, // per accepted friend
-  quiz: 3, // per quiz attempted
   like: 4, // per like received on the Highway
 };
 
@@ -25,14 +25,20 @@ function rankedUsers() {
               (SELECT COUNT(*) FROM friendships f
                  WHERE (f.requester_id = u.id OR f.addressee_id = u.id)
                    AND f.status = 'accepted')                                  AS friends,
-              (SELECT COUNT(*) FROM quiz_attempts q WHERE q.user_id = u.id)    AS quizzes,
+              (SELECT COUNT(DISTINCT quiz_id) FROM quiz_attempts q
+                WHERE q.user_id = u.id)                                        AS quizzes,
+              COALESCE(qb.quiz_points, 0)                                      AS quiz_points,
               (SELECT COUNT(*) FROM highway_likes hl
                  JOIN highway_posts hp ON hp.id = hl.post_id
                 WHERE hp.user_id = u.id)                                       AS likes,
               (SELECT COALESCE(SUM(points), 0) FROM quiz_penalties qp
                 WHERE qp.user_id = u.id)                                       AS penalty
        FROM users u
-       JOIN profiles p ON p.user_id = u.id`
+       JOIN profiles p ON p.user_id = u.id
+       LEFT JOIN (SELECT user_id, SUM(best) AS quiz_points
+                    FROM (SELECT user_id, quiz_id, MAX(score) AS best
+                            FROM quiz_attempts GROUP BY user_id, quiz_id)
+                   GROUP BY user_id) qb ON qb.user_id = u.id`
     )
     .all();
 
@@ -44,7 +50,7 @@ function rankedUsers() {
         avg * WEIGHTS.ratingAvg +
           r.rating_count * WEIGHTS.rating +
           r.friends * WEIGHTS.friend +
-          r.quizzes * WEIGHTS.quiz +
+          r.quiz_points +
           r.likes * WEIGHTS.like
       ) - r.penalty;
     return {
@@ -57,6 +63,7 @@ function rankedUsers() {
       ratingCount: r.rating_count,
       friends: r.friends,
       quizzes: r.quizzes,
+      quizPoints: r.quiz_points,
       likes: r.likes,
       penalty: r.penalty,
       points,

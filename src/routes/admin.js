@@ -291,8 +291,8 @@ function normalizeSeo(raw, fallbackTitle) {
 }
 
 // Validate + normalise a quiz's questions array. Returns { value } or { error }.
-// Compatibility quizzes have no "correct" option — every question is just a
-// prompt plus the choices two people can match on.
+// Compatibility quizzes have no "correct" option — every question is a prompt,
+// the choices two people can match on, the points it's worth and its time limit.
 function normalizeQuestions(raw) {
   const arr = parseJson(raw, null);
   if (!Array.isArray(arr) || arr.length === 0) return { error: 'A quiz needs at least one question.' };
@@ -304,7 +304,17 @@ function normalizeQuestions(raw) {
       : [];
     if (!prompt) return { error: 'Every question needs a prompt.' };
     if (options.length < 2) return { error: 'Every question needs at least two options.' };
-    out.push({ prompt: prompt.slice(0, 300), options: options.slice(0, 8) });
+    // Points a member earns for answering within the time limit, and the time
+    // limit in seconds (0 = untimed).
+    const points = Number(q.points == null || q.points === '' ? 0 : q.points);
+    if (!Number.isInteger(points) || points < 0 || points > 1000) {
+      return { error: 'Points for each question must be a whole number from 0 to 1000.' };
+    }
+    const seconds = Number(q.seconds == null || q.seconds === '' ? 0 : q.seconds);
+    if (!Number.isInteger(seconds) || seconds < 0 || seconds > 3600 || (seconds > 0 && seconds < 5)) {
+      return { error: 'Time for each question must be 0 (no limit) or 5 to 3600 seconds.' };
+    }
+    out.push({ prompt: prompt.slice(0, 300), options: options.slice(0, 8), points, seconds });
   }
   return { value: out };
 }

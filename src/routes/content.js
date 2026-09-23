@@ -95,6 +95,35 @@ function activeLockout(userId, quizId) {
   return row && row.until > Date.now() ? row.until : null;
 }
 
+// Allowance for network latency on top of a question's time limit.
+const ANSWER_GRACE_MS = 2000;
+
+function questionMeta(q) {
+  return {
+    points: Number.isInteger(q && q.points) && q.points > 0 ? q.points : 0,
+    seconds: Number.isInteger(q && q.seconds) && q.seconds > 0 ? q.seconds : 0,
+  };
+}
+
+// Where a session is in the quiz: the current question and how long is left
+// on it (by the server's clock), plus points earned so far.
+function sessionState(sess, questions) {
+  const index = sess.q_index || 0;
+  const done = index >= questions.length;
+  let remainingMs = null;
+  if (!done) {
+    const { seconds } = questionMeta(questions[index]);
+    if (seconds) remainingMs = Math.max(0, seconds * 1000 - (Date.now() - (sess.q_started_at || Date.now())));
+  }
+  return {
+    index,
+    done,
+    remainingMs,
+    points: sess.points || 0,
+    maxPoints: questions.reduce((a, q) => a + questionMeta(q).points, 0),
+  };
+}
+
 function lockedResponse(res, until) {
   return res.status(423).json({
     error: 'You were stopped from this quiz for leaving full screen. You can attempt it again after the lock expires.',
@@ -117,27 +146,35 @@ router.get('/quizzes/:id/proctor', requireAuth, (req, res) => {
 // An unfinished session is resumed rather than replaced, so reloading the page
 // doesn't wipe an earlier strike.
 router.post('/quizzes/:id/proctor/start', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT id FROM quizzes WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, questions FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Quiz not found.' });
   const until = activeLockout(req.user.id, row.id);
   if (until) return lockedResponse(res, until);
+  const questions = parseJson(row.questions, []);
 
   const now = Date.now();
   let sess = db
     .prepare(
-      `SELECT token, strikes FROM quiz_proctor_sessions
+      `SELECT * FROM quiz_proctor_sessions
         WHERE user_id = ? AND quiz_id = ? AND status = 'active' AND expires_at > ?
         ORDER BY created_at DESC LIMIT 1`
     )
     .get(req.user.id, row.id, now);
   if (!sess) {
-    sess = { token: crypto.randomBytes(18).toString('base64url'), strikes: 0 };
+    // The first question's clock starts now.
+    sess = { token: crypto.randomBytes(18).toString('base64url'), strikes: 0, q_index: 0, q_started_at: now, points: 0 };
     db.prepare(
-      `INSERT INTO quiz_proctor_sessions (token, quiz_id, user_id, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?)`
-    ).run(sess.token, row.id, req.user.id, now, now + PROCTOR_SESSION_MS);
+      `INSERT INTO quiz_proctor_sessions (token, quiz_id, user_id, created_at, expires_at, q_started_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(sess.token, row.id, req.user.id, now, now + PROCTOR_SESSION_MS, now);
   }
-  res.json({ session: sess.token, strikes: sess.strikes, maxStrikes: PROCTOR_MAX_STRIKES, penalty: PROCTOR_PENALTY });
+  res.json({
+    session: sess.token,
+    strikes: sess.strikes,
+    maxStrikes: PROCTOR_MAX_STRIKES,
+    penalty: PROCTOR_PENALTY,
+    state: sessionState(sess, questions),
+  });
 });
 
 // POST /api/content/quizzes/:id/proctor/violation  { session, reason }
@@ -186,7 +223,48 @@ router.post('/quizzes/:id/proctor/violation', requireAuth, (req, res) => {
   res.json({ strikes, terminated: true, lockedUntil: until, penalty: PROCTOR_PENALTY });
 });
 
-// POST /api/content/quizzes/:id/match  { answers: [index, ...], session }
+// POST /api/content/quizzes/:id/proctor/answer  { session, index, option }
+// Records the answer to the current question and moves on to the next. An
+// answer that arrives after the question's time limit (or option -1, sent when
+// the client's timer runs out) is recorded as unanswered and earns no points.
+router.post('/quizzes/:id/proctor/answer', requireAuth, (req, res) => {
+  const row = db.prepare('SELECT id, questions FROM quizzes WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Quiz not found.' });
+  const until = activeLockout(req.user.id, row.id);
+  if (until) return lockedResponse(res, until);
+  const questions = parseJson(row.questions, []);
+
+  const token = String((req.body && req.body.session) || '');
+  const sess = db
+    .prepare('SELECT * FROM quiz_proctor_sessions WHERE token = ? AND user_id = ? AND quiz_id = ?')
+    .get(token, req.user.id, row.id);
+  const now = Date.now();
+  if (!sess || sess.status !== 'active' || sess.expires_at <= now) {
+    return res.status(409).json({ error: 'This quiz must be taken in full screen. Please start it again.' });
+  }
+  const index = Number(req.body && req.body.index);
+  // Out of step (e.g. a retry after the answer already landed): resync.
+  if (index !== sess.q_index || sess.q_index >= questions.length) {
+    return res.json({ accepted: false, state: sessionState(sess, questions) });
+  }
+
+  const q = questions[index];
+  const { points, seconds } = questionMeta(q);
+  const opts = Array.isArray(q.options) ? q.options : [];
+  const option = Number(req.body && req.body.option);
+  const late = seconds > 0 && now - (sess.q_started_at || now) > seconds * 1000 + ANSWER_GRACE_MS;
+  const answer = !late && Number.isInteger(option) && option >= 0 && option < opts.length ? option : -1;
+  const earned = answer >= 0 ? points : 0;
+
+  const answers = parseJson(sess.answers, []);
+  answers[index] = answer;
+  const next = { ...sess, q_index: index + 1, q_started_at: now, points: (sess.points || 0) + earned, answers: JSON.stringify(answers) };
+  db.prepare('UPDATE quiz_proctor_sessions SET q_index = ?, q_started_at = ?, points = ?, answers = ? WHERE token = ?')
+    .run(next.q_index, next.q_started_at, next.points, next.answers, token);
+  res.json({ accepted: true, answered: answer >= 0, late, earned, state: sessionState(next, questions) });
+});
+
+// POST /api/content/quizzes/:id/match  { session }
 // The logged-in initiator records their answers and gets a shareable token.
 // Answers are only accepted from a live proctored session.
 router.post('/quizzes/:id/match', requireAuth, (req, res) => {
@@ -197,7 +275,7 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
   if (until) return lockedResponse(res, until);
   const sessToken = String((req.body && req.body.session) || '');
   const sess = db
-    .prepare('SELECT status, expires_at FROM quiz_proctor_sessions WHERE token = ? AND user_id = ? AND quiz_id = ?')
+    .prepare('SELECT * FROM quiz_proctor_sessions WHERE token = ? AND user_id = ? AND quiz_id = ?')
     .get(sessToken, req.user.id, row.id);
   if (!sess || sess.status !== 'active' || sess.expires_at <= Date.now()) {
     return res.status(409).json({ error: 'This quiz must be taken in full screen. Please start it again.' });
@@ -206,15 +284,14 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
   const questions = parseJson(row.questions, []);
   if (!questions.length) return res.status(400).json({ error: 'This quiz has no questions.' });
 
-  const raw = Array.isArray(req.body && req.body.answers) ? req.body.answers : [];
-  const answers = questions.map((q, i) => {
-    const opts = Array.isArray(q.options) ? q.options : [];
-    const idx = Number(raw[i]);
-    return Number.isInteger(idx) && idx >= 0 && idx < opts.length ? idx : -1;
-  });
-  if (answers.some((a) => a < 0)) {
-    return res.status(400).json({ error: 'Please answer every question before sharing.' });
+  // Answers come from the session (recorded one by one against each
+  // question's timer), never from this request. -1 = ran out of time.
+  if (sess.q_index < questions.length) {
+    return res.status(409).json({ error: 'Please answer every question first.' });
   }
+  const recorded = parseJson(sess.answers, []);
+  const answers = questions.map((q, i) => (Number.isInteger(recorded[i]) ? recorded[i] : -1));
+  const state = sessionState(sess, questions);
 
   const now = Date.now();
   const token = crypto.randomBytes(9).toString('base64url'); // ~12 url-safe chars
@@ -233,8 +310,19 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
     now + MATCH_TTL_MS
   );
   db.prepare("UPDATE quiz_proctor_sessions SET status = 'completed' WHERE token = ?").run(sessToken);
+  // The attempt's points feed the leaderboard (best attempt per quiz counts).
+  db.prepare('INSERT INTO quiz_attempts (quiz_id, user_id, score, total, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(row.id, req.user.id, state.points, state.maxPoints, now);
+  broadcastLeaderboardChange();
 
-  res.status(201).json({ token, expiresAt: now + MATCH_TTL_MS });
+  res.status(201).json({
+    token,
+    expiresAt: now + MATCH_TTL_MS,
+    points: state.points,
+    maxPoints: state.maxPoints,
+    answered: answers.filter((a) => a >= 0).length,
+    total: questions.length,
+  });
 });
 
 /* ===========================================================================

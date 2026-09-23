@@ -644,11 +644,21 @@
   }
 
   function questionBlock(qIdx, q) {
-    q = q || { prompt: '', options: ['', ''] };
+    // New questions default to 10 points and 30 seconds; older questions saved
+    // before these settings existed are worth 0 points and untimed.
+    q = q || { prompt: '', options: ['', ''], points: 10, seconds: 30 };
     const block = el(`
       <div class="qb-question" data-q="${qIdx}">
         <label>Question ${qIdx + 1}</label>
         <input type="text" class="qb-prompt" value="${esc(q.prompt)}" placeholder="Question prompt" />
+        <div class="qb-settings">
+          <label class="qb-setting">Points
+            <input type="number" class="qb-points" min="0" max="1000" step="1" value="${Number(q.points) || 0}" />
+          </label>
+          <label class="qb-setting">Time (seconds, 0 = no limit)
+            <input type="number" class="qb-seconds" min="0" max="3600" step="1" value="${Number(q.seconds) || 0}" />
+          </label>
+        </div>
         <div class="qb-options"></div>
         <div class="admin-item-actions">
           <button type="button" class="ghost small qb-add-opt">+ Add option</button>
@@ -679,7 +689,7 @@
       <label>Title</label><input id="quizTitle" value="${esc(quiz ? quiz.title : '')}" />
       <label>Description</label><input id="quizDesc" value="${esc(quiz ? quiz.description : '')}" />
       <label>Questions</label>
-      <p class="count">Compatibility quiz — there are no right or wrong answers. Two people answer the same questions and get a match score based on how many they pick in common.</p>
+      <p class="count">Compatibility quiz — there are no right or wrong answers. Two people answer the same questions and get a match score based on how many they pick in common. Set how many points each question is worth and how long members have to answer it: answering in time earns that question's points toward the leaderboard, and a question left unanswered when time runs out earns none.</p>
       <div id="quizQuestions"></div>
       ${seoFieldsHtml(quiz && quiz.seo)}
       <div class="admin-item-actions">
@@ -708,7 +718,9 @@
       qBox.querySelectorAll('.qb-question').forEach((block) => {
         const prompt = block.querySelector('.qb-prompt').value.trim();
         const options = Array.from(block.querySelectorAll('.qb-opt')).map((i) => i.value.trim()).filter(Boolean);
-        questionsOut.push({ prompt, options });
+        const points = Number(block.querySelector('.qb-points').value || 0);
+        const seconds = Number(block.querySelector('.qb-seconds').value || 0);
+        questionsOut.push({ prompt, options, points, seconds });
       });
       try {
         const payload = { title, description, questions: questionsOut, seo: collectSeo(host) };
@@ -741,7 +753,7 @@
       const item = el(`
         <div class="admin-item">
           <h3>${esc(q.title)}</h3>
-          <div class="count">${q.questions.length} questions · ${q.attempts} attempts</div>
+          <div class="count">${q.questions.length} questions · ${q.questions.reduce((n, x) => n + (Number(x.points) || 0), 0)} points · ${q.attempts} attempts</div>
           <div class="admin-item-actions">
             <button class="ghost small" data-edit>Edit</button>
             <button class="danger small" data-del>Delete</button>

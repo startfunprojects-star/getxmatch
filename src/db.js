@@ -802,4 +802,16 @@ db.exec(`
   }
 })();
 
+// --- Migration: timed, scored quiz questions. A proctor session walks the
+// quiz one question at a time: q_index is the current question, q_started_at
+// when it was shown (for the per-question time limit), answers the recorded
+// picks (-1 = timed out) and points the total earned so far.
+(function migrateQuizProctorProgress() {
+  const cols = db.prepare('PRAGMA table_info(quiz_proctor_sessions)').all().map((c) => c.name);
+  if (!cols.includes('q_index')) db.exec('ALTER TABLE quiz_proctor_sessions ADD COLUMN q_index INTEGER NOT NULL DEFAULT 0;');
+  if (!cols.includes('q_started_at')) db.exec('ALTER TABLE quiz_proctor_sessions ADD COLUMN q_started_at INTEGER;');
+  if (!cols.includes('answers')) db.exec("ALTER TABLE quiz_proctor_sessions ADD COLUMN answers TEXT NOT NULL DEFAULT '[]';");
+  if (!cols.includes('points')) db.exec('ALTER TABLE quiz_proctor_sessions ADD COLUMN points INTEGER NOT NULL DEFAULT 0;');
+})();
+
 module.exports = db;
