@@ -12,9 +12,10 @@ const { canvas, fillRect, fillRoundRect, drawText, textWidth, fitText, encodePng
 const W = 640;
 const H = 820;
 const WHITE = [255, 255, 255];
-const INK = [17, 19, 26]; // QR modules — dark on white scans most reliably
-const ACCENT = [255, 77, 125]; // brand pink
-const MUTED = [110, 117, 132];
+const PAPER = [255, 253, 248]; // #fffdf8
+const INK = [29, 36, 51]; // #1d2433 — dark on light scans most reliably
+const ACCENT = [31, 78, 140]; // #1f4e8c Oxford blue
+const MUTED = [90, 98, 115];
 
 const cache = new Map();
 const CACHE_MAX = 500;
@@ -35,7 +36,7 @@ function renderProfileQr(username, url) {
   const mod = Math.floor(box / (n + QUIET * 2));
   const qrPx = mod * (n + QUIET * 2);
 
-  const c = canvas(W, H, WHITE);
+  const c = canvas(W, H, PAPER);
   // Brand header.
   fillRect(c, 0, 0, W, 118, ACCENT);
   centered(c, 'GETXMATCH', 36, 7, WHITE);
@@ -43,7 +44,7 @@ function renderProfileQr(username, url) {
   // QR code, centred, with its quiet zone.
   const qx = Math.round((W - qrPx) / 2);
   const qy = 150;
-  fillRoundRect(c, qx - 6, qy - 6, qrPx + 12, qrPx + 12, 14, [236, 238, 243]);
+  fillRoundRect(c, qx - 6, qy - 6, qrPx + 12, qrPx + 12, 14, [226, 217, 198]); // paper-toned frame
   fillRect(c, qx, qy, qrPx, qrPx, WHITE);
   for (let r = 0; r < n; r++) {
     for (let col = 0; col < n; col++) {

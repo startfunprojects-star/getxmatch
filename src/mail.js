@@ -84,7 +84,7 @@ function sendOfflineDigest(email, { name, parts, appUrl }) {
     `<p>${escapeHtml(greeting)}</p>` +
     `<p>While you were away, you received:</p>` +
     `<ul style="font-size:16px;line-height:1.6">${liHtml}</ul>` +
-    `<p><a href="${escapeHtml(appUrl)}" style="display:inline-block;background:#ff4d7d;color:#fff;` +
+    `<p><a href="${escapeHtml(appUrl)}" style="display:inline-block;background:#1f4e8c;color:#fff;` +
     `font-weight:700;padding:12px 22px;border-radius:999px;text-decoration:none">Open getxmatch →</a></p>` +
     `<p style="color:#888;font-size:12px">You're receiving this because you have an account on getxmatch.</p>`;
   return sendMail({ to: email, subject, text, html });

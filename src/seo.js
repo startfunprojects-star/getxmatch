@@ -293,29 +293,30 @@ function breadcrumbHtml(crumbs) {
 // The shared inline stylesheet for public pages — small, fast, theme-aware, and
 // independent of the app's large SPA stylesheet.
 const PAGE_CSS = `
-:root{--bg:#0b0d13;--bg2:#14171f;--bg3:#1c202b;--text:#eef0f6;--muted:#98a0b2;--border:#262c39;--accent:#ff4d7d;--accent2:#7c5cff;--grad:linear-gradient(135deg,var(--accent),var(--accent2));--vote-male:#4f9bff;--vote-female:#ff69b4;--vote-other:#9aa3b5}
-@media (prefers-color-scheme:light){:root{--bg:#f6f7fb;--bg2:#fff;--bg3:#eef0f5;--text:#141824;--muted:#5b6270;--border:#e4e7ee;--accent:#e5356a;--accent2:#6a4bff;--vote-male:#2f6fe0;--vote-female:#e14a95;--vote-other:#8890a0}}
+:root{color-scheme:light;--bg:#f6f3ea;--bg2:#fffdf8;--bg3:#efe9dc;--text:#1d2433;--muted:#5a6273;--border:#e2d9c6;--accent:#1f4e8c;--accent2:#8c2f39;--gold:#b08d3c;--grad:linear-gradient(135deg,#2a5ea8,#173a6b);--vote-male:#3b6fb6;--vote-female:#b5487a;--vote-other:#8a8f9a;--serif:'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,'Times New Roman',serif}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#0e141d;--bg2:#151d29;--bg3:#1c2634;--text:#ece6d8;--muted:#a6adba;--border:#283447;--accent:#8fb4ec;--accent2:#d7a4a9;--gold:#d6b264;--grad:linear-gradient(135deg,#2f62ad,#1d4278);--vote-male:#6f9fe3;--vote-female:#d98bb0;--vote-other:#9aa3b5}}
 *{box-sizing:border-box}
-::selection{background:rgba(255,77,125,.34);color:#fff}
+::selection{background:color-mix(in srgb,var(--accent) 24%,transparent);color:var(--text)}
 *{scrollbar-width:thin;scrollbar-color:var(--border) transparent}
-:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(124,92,255,.38);border-radius:8px}
+:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 30%,transparent);border-radius:8px}
 body{margin:0;font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,'Apple Color Emoji','Segoe UI Emoji',sans-serif;color:var(--text);line-height:1.65;-webkit-font-smoothing:antialiased;
-  background:radial-gradient(1100px 620px at 100% -8%,rgba(124,92,255,.13),transparent 60%),radial-gradient(900px 520px at -8% 112%,rgba(255,77,125,.10),transparent 60%),var(--bg);background-attachment:fixed}
+  background:radial-gradient(1100px 620px at 100% -8%,color-mix(in srgb,var(--accent) 6%,transparent),transparent 60%),radial-gradient(900px 520px at -8% 112%,color-mix(in srgb,var(--gold) 7%,transparent),transparent 60%),var(--bg);background-attachment:fixed}
 a{color:var(--accent);text-decoration:none;transition:color .15s}a:hover{text-decoration:underline}
 .wrap{max-width:840px;margin:0 auto;padding:0 20px}
 header.site{border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--bg2) 78%,transparent);position:sticky;top:0;z-index:20;backdrop-filter:saturate(1.4) blur(10px);-webkit-backdrop-filter:saturate(1.4) blur(10px)}
 header.site .wrap{display:flex;align-items:center;justify-content:space-between;height:62px;gap:16px}
-.brand{font-weight:800;font-size:21px;letter-spacing:.2px;background:linear-gradient(115deg,var(--text) 0%,var(--text) 38%,var(--accent) 74%,var(--accent2) 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}.brand .x{-webkit-text-fill-color:var(--accent)}
+.brand{font-family:var(--serif);font-weight:700;font-size:22px;letter-spacing:.1px;color:var(--text)}.brand .x{color:var(--accent2);font-style:italic}
 nav.top a{color:var(--muted);font-weight:600;margin-left:18px;font-size:15px}
 nav.top a:hover{color:var(--text);text-decoration:none}
 main{padding:28px 0 56px}
-h1{font-size:32px;line-height:1.2;letter-spacing:-.02em;margin:.2em 0 .4em}
+h1,h2,h3{font-family:var(--serif);letter-spacing:0}
+h1{font-size:34px;line-height:1.2;margin:.2em 0 .4em;font-weight:700}
 h2{font-size:22px;margin:1.4em 0 .5em}
 .lede{color:var(--muted);font-size:18px;margin:0 0 20px}
 .crumbs{font-size:13px;color:var(--muted);margin-bottom:14px}
 .crumbs a{color:var(--muted)}.crumbs .sep{margin:0 7px;opacity:.6}
-.card{display:block;background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:18px 20px;margin:0 0 14px;box-shadow:0 1px 2px rgba(0,0,0,.2),0 10px 30px rgba(0,0,0,.14);transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
-a.card:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--accent) 50%,var(--border));box-shadow:0 14px 40px rgba(0,0,0,.28);text-decoration:none}
+.card{display:block;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin:0 0 14px;box-shadow:0 1px 2px rgba(29,36,51,.06),0 6px 22px rgba(29,36,51,.08);transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+a.card:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--accent) 50%,var(--border));box-shadow:0 12px 32px rgba(29,36,51,.14);text-decoration:none}
 .card h3{margin:0 0 6px;font-size:19px}.card h3 a{color:var(--text)}
 .meta{color:var(--muted);font-size:13px;margin:0 0 8px}
 .excerpt{margin:0;color:var(--text)}
@@ -325,8 +326,8 @@ a.card:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--acc
 .opt{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}
 .opt:last-child{border-bottom:none}
 .bar{height:8px;border-radius:6px;background:linear-gradient(90deg,var(--accent),var(--accent2));margin-top:4px}
-.cta{display:inline-block;background:var(--grad);color:#fff;font-weight:700;padding:13px 24px;border-radius:999px;margin:18px 0;box-shadow:0 6px 22px rgba(255,77,125,.32);transition:transform .16s ease,box-shadow .16s ease,filter .16s ease}
-.cta:hover{text-decoration:none;transform:translateY(-2px);box-shadow:0 10px 32px rgba(255,77,125,.45);filter:brightness(1.05)}
+.cta{display:inline-block;background:var(--grad);color:#fff;font-weight:700;padding:13px 24px;border-radius:999px;margin:18px 0;box-shadow:0 4px 14px color-mix(in srgb,var(--accent) 22%,transparent);transition:transform .16s ease,box-shadow .16s ease,filter .16s ease}
+.cta:hover{text-decoration:none;transform:translateY(-2px);box-shadow:0 8px 24px color-mix(in srgb,var(--accent) 30%,transparent);filter:brightness(1.08)}
 .cover{width:100%;max-height:380px;object-fit:cover;border-radius:14px;margin:0 0 20px}
 article.post{font-size:17px}article.post p{margin:0 0 1em}
 footer.site{border-top:1px solid var(--border);color:var(--muted);font-size:13px;padding:24px 0;background:var(--bg2)}
@@ -392,12 +393,13 @@ function renderDocument({ seoDescriptor, jsonLd, bodyHtml, railLeft, railRight }
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#0f1117" />
+  <meta name="theme-color" content="#f6f3ea" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0e141d" media="(prefers-color-scheme: dark)" />
   ${headTags(seoDescriptor)}
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="/favicon-48.png" type="image/png" sizes="48x48" />
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" sizes="180x180" />
-  <link rel="mask-icon" href="/favicon.svg" color="#ff4d7d" />
+  <link rel="mask-icon" href="/favicon.svg" color="#1f4e8c" />
   <link rel="manifest" href="/site.webmanifest" />
   ${jsonLdTag(jsonLd)}
   <style>${PAGE_CSS}</style>

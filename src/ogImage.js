@@ -223,11 +223,12 @@ function encodePng(c) {
 --------------------------------------------------------------------------- */
 const W = 1200;
 const H = 630;
-const BG = [15, 17, 23]; // #0f1117
-const PANEL = [22, 26, 36]; // slightly lifted panel
-const ACCENT = [255, 77, 125]; // brand pink
-const WHITE = [245, 247, 250];
-const MUTED = [154, 162, 177];
+// Scholarly palette: ivory paper, ink text, Oxford-blue accent.
+const BG = [239, 233, 220]; // #efe9dc
+const PANEL = [255, 253, 248]; // #fffdf8 card
+const ACCENT = [31, 78, 140]; // #1f4e8c Oxford blue
+const WHITE = [29, 36, 51]; // main text colour (ink #1d2433)
+const MUTED = [90, 98, 115]; // #5a6273
 
 const cache = new Map(); // key -> Buffer, so a heading is rendered once
 const CACHE_MAX = 300;
@@ -292,10 +293,10 @@ function renderCard(kind, heading, cacheKey) {
    Poll results card: the question plus every option drawn as a result bar,
    split by voter gender in the same colours the poll page uses.
 --------------------------------------------------------------------------- */
-const TRACK = [34, 39, 52];
-const VOTE_MALE = [79, 155, 255]; // #4f9bff
-const VOTE_FEMALE = [255, 105, 180]; // #ff69b4
-const VOTE_OTHER = [154, 163, 181]; // #9aa3b5
+const TRACK = [239, 233, 220];
+const VOTE_MALE = [59, 111, 182]; // #3b6fb6
+const VOTE_FEMALE = [181, 72, 122]; // #b5487a
+const VOTE_OTHER = [138, 143, 154]; // #8a8f9a
 
 // Blend `rgb` over `base` at `a` (0..1) — mirrors the page's color-mix() bars.
 function mix(rgb, base, a) {
