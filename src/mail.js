@@ -16,6 +16,14 @@ if (smtpReady) {
     secure: config.smtp.secure,
     auth: { user: config.smtp.user, pass: config.smtp.pass },
   });
+  // Check the SMTP login once at startup so a wrong password / blocked port
+  // shows up in the server log instead of silently failing on first send.
+  transporter
+    .verify()
+    .then(() => console.log(`mail: SMTP ready (${config.smtp.user} via ${config.smtp.host}:${config.smtp.port})`))
+    .catch((e) => console.error(`mail: SMTP login FAILED for ${config.smtp.user} via ${config.smtp.host}:${config.smtp.port} — ${e.code || ''} ${e.message}`));
+} else {
+  console.warn('mail: SMTP_USER / SMTP_PASS not set — emails are printed to this console instead of being sent.');
 }
 
 async function sendMail({ to, subject, text, html }) {

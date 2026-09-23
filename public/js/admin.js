@@ -283,9 +283,15 @@
     m.className = 'msg';
     if (btn) btn.disabled = true;
     try {
-      await api.post('/api/admin/request-reset', {});
-      m.textContent = 'A one-time link has been sent — you know where. 🙂';
-      m.className = 'msg ok';
+      const out = await api.post('/api/admin/request-reset', {});
+      if (out && out.emailed === false) {
+        // Development without SMTP: nothing was emailed.
+        m.textContent = 'Email isn’t set up on this server, so the link was printed in the server console instead of being emailed.';
+        m.className = 'msg error';
+      } else {
+        m.textContent = 'A one-time link has been sent — you know where. 🙂';
+        m.className = 'msg ok';
+      }
     } catch (err) { m.textContent = err.message; m.className = 'msg error'; }
     finally { if (btn) btn.disabled = false; }
   }

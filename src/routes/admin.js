@@ -10,7 +10,7 @@ const rateLimit = require('express-rate-limit');
 
 const db = require('../db');
 const config = require('../config');
-const { sendAdminResetLink } = require('../mail');
+const { sendAdminResetLink, smtpReady } = require('../mail');
 const { isOnline, broadcastNotify } = require('../socket');
 const { rankedUsers } = require('../points');
 const { QUIZ_TYPES } = require('../quizTypes');
@@ -56,6 +56,13 @@ function getAdmin() {
 // POST /api/admin/request-reset — email a fresh link to the admin address.
 // Every call clears prior tokens, so the previous link stops working.
 router.post('/request-reset', adminLimiter, async (req, res) => {
+  // Without SMTP the link can't be emailed. In production that's an error the
+  // admin must see; in development the link is printed to the server console.
+  if (!smtpReady && config.isProd) {
+    return res.status(503).json({
+      error: 'Email is not configured on this server (SMTP_USER / SMTP_PASS are missing), so the link cannot be sent.',
+    });
+  }
   const rawToken = crypto.randomBytes(32).toString('hex');
   const now = Date.now();
 
@@ -68,10 +75,14 @@ router.post('/request-reset', adminLimiter, async (req, res) => {
   try {
     await sendAdminResetLink(url);
   } catch (e) {
-    return res.status(502).json({ error: 'Could not send the email. Please try again.' });
+    // Log the real reason (bad SMTP password, blocked port, rejected sender …).
+    console.error('admin reset email failed:', e.code || '', e.responseCode || '', e.message);
+    return res.status(502).json({
+      error: 'Could not send the email — the mail server refused it. Check the SMTP settings; the server log has the exact reason.',
+    });
   }
   // Don't reveal the admin address anywhere client-facing; just confirm.
-  res.json({ ok: true });
+  res.json({ ok: true, emailed: smtpReady });
 });
 
 // GET /api/admin/reset/valid?token=... — is this link still usable?
