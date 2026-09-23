@@ -4193,6 +4193,71 @@
   // Non-owners see the GIFs they're allowed to (subject to the owner's chosen
   // visibility); the owner additionally gets a visibility selector and upload +
   // delete controls. Clicking any GIF opens the slideshow at that GIF.
+  // Follower counts, the Follow button (someone else's profile) and the follow
+  // fee setting (your own profile). Following costs the follower the fee the
+  // member has set; the member earns double. The fee is fixed per follow when
+  // it's made, so changing it never touches earlier follows.
+  function renderFollow(view, profile, isMe) {
+    let f = profile.follow || { followers: 0, following: 0, fee: 1, gain: 2, isFollowing: false };
+    const counts = view.querySelector('#pvFollowCounts');
+    const paintCounts = () => {
+      counts.innerHTML = `<strong>${f.followers}</strong> follower${f.followers === 1 ? '' : 's'} · <strong>${f.following}</strong> following`;
+    };
+    paintCounts();
+
+    const slot = view.querySelector('#pvFollow');
+    if (slot) {
+      const paintBtn = () => {
+        slot.innerHTML = '';
+        const btn = f.isFollowing
+          ? el(`<button class="ghost following-btn" title="You paid ${f.paidFee} point${f.paidFee === 1 ? '' : 's'} to follow. Unfollowing refunds it.">✓ Following</button>`)
+          : el(`<button class="ghost" title="Costs you ${f.fee} point${f.fee === 1 ? '' : 's'}; they earn ${f.gain}.">➕ Follow · ${f.fee} pt${f.fee === 1 ? '' : 's'}</button>`);
+        btn.addEventListener('click', async () => {
+          const who = profile.displayName || '@' + profile.username;
+          if (f.isFollowing) {
+            if (!confirm(`Unfollow ${who}? Your ${f.paidFee} point${f.paidFee === 1 ? ' is' : 's are'} refunded and they lose the ${f.paidFee * 2} they earned from your follow.`)) return;
+          } else if (!confirm(`Follow ${who}? It costs you ${f.fee} point${f.fee === 1 ? '' : 's'} and they earn ${f.gain}.`)) return;
+          btn.disabled = true;
+          try {
+            const out = f.isFollowing
+              ? await api.del('/api/follow/' + encodeURIComponent(profile.username))
+              : await api.post('/api/follow/' + encodeURIComponent(profile.username), {});
+            f = out.follow;
+            paintCounts();
+            paintBtn();
+          } catch (e) { btn.disabled = false; alert(e.message); }
+        });
+        slot.appendChild(btn);
+      };
+      paintBtn();
+    }
+
+    const feeBox = view.querySelector('#pvFollowFee');
+    if (isMe && feeBox) {
+      api.get('/api/follow/me').then((me) => {
+        feeBox.innerHTML = `
+          <div class="ff-row">
+            <label for="ffInput">Follow fee</label>
+            <input id="ffInput" type="number" min="0" max="${me.maxFee}" step="1" value="${me.fee}" />
+            <span class="ff-gain">you earn <strong id="ffGain">${me.gain}</strong> per new follower</span>
+            <button class="ghost small" id="ffSave">Save</button>
+          </div>
+          <p class="hint">Each new follower pays this many points (0–${me.maxFee}) and you receive double. Changing it only affects future follows. So far you’ve earned <strong>${me.earned}</strong> from followers and spent <strong>${me.spent}</strong> following others.</p>
+        `;
+        const input = feeBox.querySelector('#ffInput');
+        const gain = feeBox.querySelector('#ffGain');
+        input.addEventListener('input', () => { gain.textContent = (Number(input.value) || 0) * me.multiplier; });
+        feeBox.querySelector('#ffSave').addEventListener('click', async () => {
+          try {
+            const out = await api.put('/api/follow/fee', { fee: Number(input.value) });
+            gain.textContent = out.gain;
+            notifyToast(`Follow fee saved: new followers pay ${out.fee}, you earn ${out.gain}.`);
+          } catch (e) { alert(e.message); }
+        });
+      }).catch(() => {});
+    }
+  }
+
   function renderGifSection(view, profile, isMe) {
     const gifBox = view.querySelector('#pvGifs');
     const gifCount = view.querySelector('#gifCount');
@@ -4378,6 +4443,7 @@
             <div class="pro-id">
               <h2 class="pro-name">${esc(profile.displayName)}</h2>
               <div class="handle">@${esc(profile.username)}</div>
+              <div class="follow-counts" id="pvFollowCounts"></div>
               ${badgesHtml ? `<div class="pro-badges">${badgesHtml}</div>` : ''}
               ${relLine ? `<div class="rel-line">💞 ${relLine}</div>` : ''}
             </div>
@@ -4390,11 +4456,13 @@
           </div>
           <div class="pro-actions pv-actions">
             ${!isMe ? '<button class="primary" id="pvChat">💬 Message</button>' : ''}
+            ${!isMe ? `<span id="pvFollow"></span>` : ''}
             ${!isMe ? `<span id="pvFriend"></span>` : ''}
             ${!isMe ? `<span id="pvBlock"></span>` : ''}
             ${isMe ? '<button class="ghost" id="pvEdit">✎ Edit profile</button>' : ''}
             <button class="ghost" id="pvShare" title="Copy a shareable link to this profile">🔗 Share</button>
           </div>
+          ${isMe ? '<div class="follow-fee-box" id="pvFollowFee"></div>' : ''}
         </div>
 
         <div class="pro-grid">
@@ -4708,6 +4776,9 @@
       form.querySelector('#cSend').addEventListener('click', send);
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
     }
+
+    /* ----- follows ----- */
+    renderFollow(view, profile, isMe);
 
     /* ----- misc wiring ----- */
     view.querySelectorAll('.partner-link').forEach((a) =>
@@ -5244,6 +5315,9 @@
       icon = '💘';
       html = `You attempted <strong>${esc(it.otherName)}</strong>’s shared quiz <em>“${esc(it.quizTitle)}”</em>. ` +
         `You’re <strong>${it.percent}% compatible</strong> (${it.score} of ${it.total} answers in common).`;
+    } else if (it.kind === 'follow') {
+      icon = '➕';
+      html = `<strong>${esc(it.otherName)}</strong> started following you.`;
     } else if (it.kind === 'new_quiz') {
       icon = '🧠';
       html = `New quiz: <strong>${esc(it.title)}</strong>`;
@@ -5259,10 +5333,13 @@
           <div class="notif-text">${html}</div>
           <div class="notif-meta hint">${it.unread ? '<span class="notif-new">New</span> · ' : ''}${fmtDate(it.at)} · ${fmtTime(it.at)}${pts ? ' · ' + pts : ''}</div>
         </div>
-        <div class="notif-go">↗</div>
+        <div class="notif-go">${it.kind === 'follow' ? '›' : '↗'}</div>
       </div>
     `);
-    const open = () => window.open(it.link, '_blank', 'noopener');
+    const open = () => {
+      if (it.kind === 'follow') { if (it.otherUsername) showProfile(it.otherUsername); return; }
+      window.open(it.link, '_blank', 'noopener');
+    };
     row.addEventListener('click', open);
     row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
     return row;
@@ -5695,7 +5772,7 @@
   /* ---------- Leaderboard ---------- */
   async function renderLeaderboard() {
     const main = openMainView();
-    main.appendChild(sectionShell('Leaderboard', 'Ranked by points — the more points, the higher the rank. Earn points from ratings, Highway likes, friends, quizzes, polls (5 per poll) and compatibility links (10 for sharing, 5 for answering). Send a friend request to anyone.'));
+    main.appendChild(sectionShell('Leaderboard', 'Ranked by points — the more points, the higher the rank. Earn points from ratings, Highway likes, friends, quizzes, polls (5 per poll), compatibility links (10 for sharing, 5 for answering) and followers (each follower pays your follow fee, you earn double; following someone costs their fee). Send a friend request to anyone.'));
     const body = main.querySelector('#sectionBody');
     let rows;
     try { rows = (await api.get('/api/leaderboard')).leaderboard; }
@@ -5719,6 +5796,7 @@
             <span title="Friends">👥 ${r.friends}</span>
             <span title="Quizzes">🧠 ${r.quizzes}</span>
             <span title="Polls voted in">📊 ${r.polls || 0}</span>
+            <span title="Followers">➕ ${r.followers || 0}</span>
           </div>
           <div class="lb-score" title="Points${r.penalty ? ` (${r.penalty} deducted for stopped quizzes)` : ''}">${r.points} pts</div>
           <div class="lb-action"></div>

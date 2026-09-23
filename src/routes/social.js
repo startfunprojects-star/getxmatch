@@ -484,6 +484,13 @@ router.post('/block/:username', requireAuth, (req, res) => {
      ON CONFLICT(blocker_id, blocked_id) DO NOTHING`
   ).run(req.user.id, target.id, now);
 
+  // A block ends follows both ways (each follow's points are reversed).
+  db.prepare(
+    `DELETE FROM follows
+     WHERE (follower_id = ? AND followee_id = ?)
+        OR (follower_id = ? AND followee_id = ?)`
+  ).run(req.user.id, target.id, target.id, req.user.id);
+
   // Remove any friendship/request in either direction.
   db.prepare(
     `DELETE FROM friendships

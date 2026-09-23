@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('./db');
+const { followSummary } = require('./follows');
 const { ageFromDob } = require('./profileFields');
 const { blockState, ignoreState } = require('./relations');
 const { isOnline } = require('./socket');
@@ -383,6 +384,9 @@ function buildProfile(userId, viewerId) {
       .prepare('SELECT COUNT(*) AS n FROM highway_likes hl JOIN highway_posts hp ON hp.id = hl.post_id WHERE hp.user_id = ?')
       .get(row.id).n,
     comments: commentsFor(row.id, viewerId),
+    // Followers / following, the fee a new follower pays, and whether the
+    // viewer already follows (src/follows.js).
+    follow: followSummary(row.id, viewerId),
     friends: {
       count: friendList.length,
       list: friendList,

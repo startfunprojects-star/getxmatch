@@ -20,6 +20,9 @@ const WEIGHTS = {
   // each pair of members, so re-sharing to the same person earns nothing).
   shareCompleted: 10, // to the member who shared the link
   answerShared: 5, // to the member who answered it
+  // Follows: each follower pays the fee they followed at; the member followed
+  // earns double (src/follows.js). Default fee 1 → -1 / +2.
+  followGainMultiplier: 2,
 };
 
 function rankedUsers() {
@@ -38,6 +41,11 @@ function rankedUsers() {
                  JOIN highway_posts hp ON hp.id = hl.post_id
                 WHERE hp.user_id = u.id)                                       AS likes,
               (SELECT COUNT(*) FROM poll_votes pv WHERE pv.user_id = u.id)     AS polls,
+              (SELECT COUNT(*) FROM follows fo WHERE fo.followee_id = u.id)    AS followers,
+              (SELECT COALESCE(SUM(fee), 0) FROM follows fo
+                WHERE fo.followee_id = u.id)                                   AS follow_fees_in,
+              (SELECT COALESCE(SUM(fee), 0) FROM follows fo
+                WHERE fo.follower_id = u.id)                                   AS follow_fees_out,
               (SELECT COUNT(*) FROM quiz_matches qm
                 WHERE qm.a_user_id = u.id AND qm.points_awarded = 1)           AS shares_completed,
               (SELECT COUNT(*) FROM quiz_matches qm
@@ -65,7 +73,9 @@ function rankedUsers() {
           r.likes * WEIGHTS.like +
           r.polls * WEIGHTS.poll +
           r.shares_completed * WEIGHTS.shareCompleted +
-          r.shared_answered * WEIGHTS.answerShared
+          r.shared_answered * WEIGHTS.answerShared +
+          r.follow_fees_in * WEIGHTS.followGainMultiplier -
+          r.follow_fees_out
       ) - r.penalty;
     return {
       id: r.id,
@@ -80,6 +90,7 @@ function rankedUsers() {
       quizPoints: r.quiz_points,
       likes: r.likes,
       polls: r.polls,
+      followers: r.followers,
       matches: r.shares_completed + r.shared_answered,
       penalty: r.penalty,
       points,

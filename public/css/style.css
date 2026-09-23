@@ -995,6 +995,16 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
 .blog-body { margin: 14px 0 20px; font-size: 16px; line-height: 1.7; }
 
 /* ---------- Leaderboard ---------- */
+.follow-counts { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.follow-counts strong { color: var(--text); }
+.following-btn { border-color: var(--accent); color: var(--accent); }
+.follow-fee-box { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-3); }
+.follow-fee-box:empty { display: none; }
+.ff-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ff-row label { font-weight: 700; margin: 0; }
+.ff-row input { width: 90px; }
+.ff-gain { color: var(--muted); font-size: 13px; }
+.follow-fee-box .hint { margin: 8px 0 0; }
 .notif-list { display: flex; flex-direction: column; padding: 6px; gap: 2px; }
 .notif-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px; border-radius: 12px; cursor: pointer; border: 1px solid transparent; }
 .notif-item:hover { background: var(--bg-3); }

@@ -4,6 +4,7 @@
 //   - compatibility results: someone completed a quiz link the member shared,
 //     or the member completed someone else's link (stored rows, see
 //     addMatchNotifications), each with the compatibility score;
+//   - new followers, with the points the follow earned the member;
 //   - new quizzes and polls published since the member's previous login
 //     (computed live from created_at).
 // "Unread" = anything newer than when the member last opened the section.
@@ -66,6 +67,14 @@ function buildItems(userId) {
     .all(userId, MATCH_LIMIT)
     .forEach((n) => {
       const d = parseJson(n.data, {});
+      if (n.kind === 'follow') {
+        const who = db
+          .prepare('SELECT u.username, COALESCE(NULLIF(p.display_name, \'\'), u.username) AS name FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?')
+          .get(d.followerId);
+        if (!who) return;
+        items.push({ id: 'n' + n.id, kind: 'follow', at: n.created_at, otherName: who.name, otherUsername: who.username, points: d.points || 0 });
+        return;
+      }
       items.push({
         id: 'n' + n.id,
         kind: n.kind, // match_shared | match_answered

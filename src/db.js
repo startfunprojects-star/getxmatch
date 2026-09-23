@@ -852,6 +852,25 @@ db.exec(`
   if (!cols.includes('notif_read_at')) db.exec('ALTER TABLE users ADD COLUMN notif_read_at INTEGER;');
 })();
 
+// --- Follows. One-way, no approval. `fee` is what the follower paid at the
+// time (the followee earns double); users.follow_fee is what a NEW follower
+// pays now (default 1). Stored per follow so changing the fee never alters
+// earlier follows. See src/follows.js.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS follows (
+    follower_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    followee_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    fee         INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (follower_id, followee_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_follows_followee ON follows (followee_id);
+`);
+(function migrateFollowFee() {
+  const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!cols.includes('follow_fee')) db.exec('ALTER TABLE users ADD COLUMN follow_fee INTEGER NOT NULL DEFAULT 1;');
+})();
+
 (function migrateQuizTypes() {
   const qcols = db.prepare('PRAGMA table_info(quizzes)').all().map((c) => c.name);
   if (!qcols.includes('type')) db.exec("ALTER TABLE quizzes ADD COLUMN type TEXT NOT NULL DEFAULT 'compatibility';");
