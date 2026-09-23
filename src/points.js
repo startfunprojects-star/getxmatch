@@ -14,6 +14,7 @@ const WEIGHTS = {
   rating: 5, // per rating received
   friend: 8, // per accepted friend
   like: 4, // per like received on the Highway
+  poll: 5, // per community poll voted in (changing a vote doesn't count again)
 };
 
 function rankedUsers() {
@@ -31,6 +32,7 @@ function rankedUsers() {
               (SELECT COUNT(*) FROM highway_likes hl
                  JOIN highway_posts hp ON hp.id = hl.post_id
                 WHERE hp.user_id = u.id)                                       AS likes,
+              (SELECT COUNT(*) FROM poll_votes pv WHERE pv.user_id = u.id)     AS polls,
               (SELECT COALESCE(SUM(points), 0) FROM quiz_penalties qp
                 WHERE qp.user_id = u.id)                                       AS penalty
        FROM users u
@@ -51,7 +53,8 @@ function rankedUsers() {
           r.rating_count * WEIGHTS.rating +
           r.friends * WEIGHTS.friend +
           r.quiz_points +
-          r.likes * WEIGHTS.like
+          r.likes * WEIGHTS.like +
+          r.polls * WEIGHTS.poll
       ) - r.penalty;
     return {
       id: r.id,
@@ -65,6 +68,7 @@ function rankedUsers() {
       quizzes: r.quizzes,
       quizPoints: r.quiz_points,
       likes: r.likes,
+      polls: r.polls,
       penalty: r.penalty,
       points,
       score: points, // legacy name

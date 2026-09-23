@@ -814,4 +814,16 @@ db.exec(`
   if (!cols.includes('points')) db.exec('ALTER TABLE quiz_proctor_sessions ADD COLUMN points INTEGER NOT NULL DEFAULT 0;');
 })();
 
+// --- Migration: quiz card stats. negative_marks = points deducted for each
+// question left unanswered when its time runs out (0 = no negative marking);
+// duration_ms = how long an attempt took, used to break ties between equal
+// top scores (faster wins). NULL for attempts recorded before this.
+(function migrateQuizStats() {
+  const qcols = db.prepare('PRAGMA table_info(quizzes)').all().map((c) => c.name);
+  if (!qcols.includes('negative_marks')) db.exec('ALTER TABLE quizzes ADD COLUMN negative_marks INTEGER NOT NULL DEFAULT 0;');
+  const acols = db.prepare('PRAGMA table_info(quiz_attempts)').all().map((c) => c.name);
+  if (!acols.includes('duration_ms')) db.exec('ALTER TABLE quiz_attempts ADD COLUMN duration_ms INTEGER;');
+})();
+db.exec('CREATE INDEX IF NOT EXISTS idx_quiz_attempts_quiz ON quiz_attempts (quiz_id, user_id);');
+
 module.exports = db;

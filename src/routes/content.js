@@ -9,6 +9,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../auth');
 const { broadcastLeaderboardChange } = require('../socket');
+const { quizStats } = require('../quizStats');
 
 const router = express.Router();
 
@@ -43,11 +44,10 @@ function parseJson(raw, fallback) {
 // GET /api/content/quizzes — list quizzes.
 router.get('/quizzes', requireAuth, (req, res) => {
   const rows = db
-    .prepare('SELECT id, title, description, questions, created_at FROM quizzes ORDER BY created_at DESC')
+    .prepare('SELECT id, title, description, questions, negative_marks, created_at FROM quizzes ORDER BY created_at DESC')
     .all();
 
   const quizzes = rows.map((r) => {
-    const questions = parseJson(r.questions, []);
     const matches = db
       .prepare('SELECT COUNT(*) AS n FROM quiz_matches WHERE quiz_id = ?')
       .get(r.id).n;
@@ -55,9 +55,11 @@ router.get('/quizzes', requireAuth, (req, res) => {
       id: r.id,
       title: r.title,
       description: r.description,
-      questionCount: questions.length,
       matches,
       createdAt: r.created_at,
+      // questionCount, totalSeconds, untimedQuestions, totalPoints,
+      // negativeMarks, attemptedBy, topScorers
+      ...quizStats(r),
     };
   });
 
@@ -226,9 +228,10 @@ router.post('/quizzes/:id/proctor/violation', requireAuth, (req, res) => {
 // POST /api/content/quizzes/:id/proctor/answer  { session, index, option }
 // Records the answer to the current question and moves on to the next. An
 // answer that arrives after the question's time limit (or option -1, sent when
-// the client's timer runs out) is recorded as unanswered and earns no points.
+// the client's timer runs out) is recorded as unanswered: it earns no points,
+// and costs the quiz's negative marks if it has any.
 router.post('/quizzes/:id/proctor/answer', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT id, questions FROM quizzes WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, questions, negative_marks FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Quiz not found.' });
   const until = activeLockout(req.user.id, row.id);
   if (until) return lockedResponse(res, until);
@@ -254,7 +257,8 @@ router.post('/quizzes/:id/proctor/answer', requireAuth, (req, res) => {
   const option = Number(req.body && req.body.option);
   const late = seconds > 0 && now - (sess.q_started_at || now) > seconds * 1000 + ANSWER_GRACE_MS;
   const answer = !late && Number.isInteger(option) && option >= 0 && option < opts.length ? option : -1;
-  const earned = answer >= 0 ? points : 0;
+  // Negative marking: an unanswered (timed-out) question costs points.
+  const earned = answer >= 0 ? points : -(row.negative_marks || 0);
 
   const answers = parseJson(sess.answers, []);
   answers[index] = answer;
@@ -311,8 +315,9 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
   );
   db.prepare("UPDATE quiz_proctor_sessions SET status = 'completed' WHERE token = ?").run(sessToken);
   // The attempt's points feed the leaderboard (best attempt per quiz counts).
-  db.prepare('INSERT INTO quiz_attempts (quiz_id, user_id, score, total, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run(row.id, req.user.id, state.points, state.maxPoints, now);
+  // duration_ms breaks ties between equal top scores on the quiz card.
+  db.prepare('INSERT INTO quiz_attempts (quiz_id, user_id, score, total, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(row.id, req.user.id, state.points, state.maxPoints, now - sess.created_at, now);
   broadcastLeaderboardChange();
 
   res.status(201).json({
@@ -320,6 +325,7 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
     expiresAt: now + MATCH_TTL_MS,
     points: state.points,
     maxPoints: state.maxPoints,
+    durationMs: now - sess.created_at,
     answered: answers.filter((a) => a >= 0).length,
     total: questions.length,
   });
@@ -389,6 +395,7 @@ router.post('/polls/:id/vote', requireAuth, (req, res) => {
      VALUES (?, ?, ?, ?)
      ON CONFLICT(poll_id, user_id) DO UPDATE SET option_index = excluded.option_index, created_at = excluded.created_at`
   ).run(row.id, req.user.id, idx, Date.now());
+  broadcastLeaderboardChange(); // a first vote earns poll points
 
   res.json({ poll: pollPayload(row, req.user.id) });
 });

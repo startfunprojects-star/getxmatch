@@ -691,6 +691,9 @@
       <label>Questions</label>
       <p class="count">Compatibility quiz — there are no right or wrong answers. Two people answer the same questions and get a match score based on how many they pick in common. Set how many points each question is worth and how long members have to answer it: answering in time earns that question's points toward the leaderboard, and a question left unanswered when time runs out earns none.</p>
       <div id="quizQuestions"></div>
+      <label>Negative marking (points deducted per unanswered question)</label>
+      <input id="quizNegative" type="number" min="0" max="1000" step="1" value="${quiz ? Number(quiz.negativeMarks) || 0 : 0}" />
+      <p class="count">0 = no negative marking. Otherwise, each question a member leaves unanswered when its time runs out costs this many points.</p>
       ${seoFieldsHtml(quiz && quiz.seo)}
       <div class="admin-item-actions">
         <button type="button" class="ghost small" id="addQuestion">+ Add question</button>
@@ -723,7 +726,8 @@
         questionsOut.push({ prompt, options, points, seconds });
       });
       try {
-        const payload = { title, description, questions: questionsOut, seo: collectSeo(host) };
+        const negativeMarks = Number(host.querySelector('#quizNegative').value || 0);
+        const payload = { title, description, questions: questionsOut, negativeMarks, seo: collectSeo(host) };
         if (quiz) await api.put('/api/admin/quizzes/' + quiz.id, payload);
         else await api.post('/api/admin/quizzes', payload);
         msg.className = 'msg ok'; msg.textContent = 'Saved.';
@@ -753,7 +757,7 @@
       const item = el(`
         <div class="admin-item">
           <h3>${esc(q.title)}</h3>
-          <div class="count">${q.questions.length} questions · ${q.questions.reduce((n, x) => n + (Number(x.points) || 0), 0)} points · ${q.attempts} attempts</div>
+          <div class="count">${q.questions.length} questions · ${q.questions.reduce((n, x) => n + (Number(x.points) || 0), 0)} points · ${q.negativeMarks ? `−${q.negativeMarks} per unanswered` : 'no negative marking'} · ${q.attempts} attempts</div>
           <div class="admin-item-actions">
             <button class="ghost small" data-edit>Edit</button>
             <button class="danger small" data-del>Delete</button>
@@ -1518,10 +1522,10 @@
   let leaderboardCache = [];
   async function renderLeaderboardTab() {
     const host = tabHost();
-    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Ranked by points (highest first; equal points share a rank). Points come from ratings, Highway likes, friends and quizzes, minus deductions for stopped quizzes.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Likes</th><th>Points</th></tr></thead><tbody id="lbRows"><tr><td colspan="7" class="count">Loading…</td></tr></tbody></table></div><div id="lbPager"></div></div>';
+    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Ranked by points (highest first; equal points share a rank). Points come from ratings, Highway likes, friends, quiz points and polls (5 per poll voted in), minus deductions for stopped quizzes.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Likes</th><th>Polls</th><th>Points</th></tr></thead><tbody id="lbRows"><tr><td colspan="8" class="count">Loading…</td></tr></tbody></table></div><div id="lbPager"></div></div>';
     const rowsEl = host.querySelector('#lbRows');
     try { leaderboardCache = (await api.get('/api/admin/leaderboard')).leaderboard; }
-    catch (e) { if (e.status === 401) return renderLogin(true); rowsEl.innerHTML = `<tr><td colspan="7" class="count">${esc(e.message)}</td></tr>`; return; }
+    catch (e) { if (e.status === 401) return renderLogin(true); rowsEl.innerHTML = `<tr><td colspan="8" class="count">${esc(e.message)}</td></tr>`; return; }
     paintLeaderboard();
   }
 
@@ -1529,7 +1533,7 @@
     const rowsEl = document.getElementById('lbRows');
     if (!rowsEl) return;
     const rows = leaderboardCache;
-    if (!rows.length) { rowsEl.innerHTML = '<tr><td colspan="7" class="count">No ranked users yet.</td></tr>'; return; }
+    if (!rows.length) { rowsEl.innerHTML = '<tr><td colspan="8" class="count">No ranked users yet.</td></tr>'; return; }
     const { slice, pager } = pageFor('leaderboard', rows, paintLeaderboard);
     rowsEl.innerHTML = '';
     slice.forEach((r) => {
@@ -1541,6 +1545,7 @@
           <td>${r.friends}</td>
           <td>${r.quizzes}</td>
           <td>${r.likes}</td>
+          <td>${r.polls}</td>
           <td><strong>${r.points}</strong>${r.penalty ? `<div class="pill" title="Deducted for stopped quizzes">−${r.penalty}</div>` : ''}</td>
         </tr>
       `));

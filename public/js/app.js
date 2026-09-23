@@ -5294,6 +5294,21 @@
   }
 
   /* ---------- Quizzes (compatibility matching) ---------- */
+  // "2 min 30 s" / "45 s".
+  function fmtSecs(total) {
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    if (!m) return `${s} s`;
+    return s ? `${m} min ${s} s` : `${m} min`;
+  }
+
+  // A quiz card's total time: sum of the per-question limits.
+  function quizTimeLabel(q) {
+    if (!q.questionCount) return '—';
+    if (!q.totalSeconds) return 'No time limit';
+    return fmtSecs(q.totalSeconds) + (q.untimedQuestions ? ` + ${q.untimedQuestions} untimed` : '');
+  }
+
   async function renderQuizzes() {
     const main = openMainView();
     main.appendChild(sectionShell('Compatibility Quizzes', 'Answer a quiz, then share your link — see how well you match.'));
@@ -5312,13 +5327,29 @@
         <div class="tile quiz-tile-link" role="link" tabindex="0" title="Open this quiz in a new tab">
           <h3>${esc(q.title)}</h3>
           <p class="rich">${esc(q.description || '')}</p>
-          <div class="tile-meta">
-            <span class="pill">${q.questionCount} question${q.questionCount === 1 ? '' : 's'}</span>
-            <span class="pill">${q.matches} match${q.matches === 1 ? '' : 'es'}</span>
-          </div>
+          <ul class="quiz-stats">
+            <li><span>Questions</span><strong>${q.questionCount}</strong></li>
+            <li><span>Total time</span><strong>${esc(quizTimeLabel(q))}</strong></li>
+            <li><span>Negative marking</span><strong>${q.negativeMarks ? `Yes · −${q.negativeMarks} per unanswered` : 'No'}</strong></li>
+            <li><span>Attempted by</span><strong>${q.attemptedBy} ${q.attemptedBy === 1 ? 'person' : 'people'}</strong></li>
+          </ul>
+          <div class="quiz-top-h">Top scorers</div>
+          <div class="quiz-top"></div>
           <button class="primary small" data-take="${q.id}">Attempt &amp; share ↗</button>
         </div>
       `);
+      const topBox = card.querySelector('.quiz-top');
+      if (!q.topScorers || !q.topScorers.length) topBox.appendChild(el('<div class="hint">No attempts yet — be the first!</div>'));
+      (q.topScorers || []).forEach((t, i) => {
+        const rowEl = el(`<button type="button" class="quiz-top-row" title="View profile">
+          <span class="quiz-medal">${['🥇', '🥈', '🥉'][i] || '#' + (i + 1)}</span>
+          <img class="avatar xs" src="${avatarUrl(t.avatar)}" alt="" />
+          <span class="quiz-top-name">${esc(t.displayName)}</span>
+          <span class="quiz-top-pts">${t.points} pts${t.durationMs != null ? ' · ' + fmtSecs(Math.max(1, Math.round(t.durationMs / 1000))) : ''}</span>
+        </button>`);
+        rowEl.addEventListener('click', (e) => { e.stopPropagation(); showProfile(t.username); });
+        topBox.appendChild(rowEl);
+      });
       const open = () => window.open(url, '_blank', 'noopener');
       card.querySelector('[data-take]').addEventListener('click', (e) => { e.stopPropagation(); open(); });
       card.addEventListener('click', open);
@@ -5565,7 +5596,7 @@
   /* ---------- Leaderboard ---------- */
   async function renderLeaderboard() {
     const main = openMainView();
-    main.appendChild(sectionShell('Leaderboard', 'Ranked by points — the more points, the higher the rank. Earn points from ratings, Highway likes, friends and quizzes. Send a friend request to anyone.'));
+    main.appendChild(sectionShell('Leaderboard', 'Ranked by points — the more points, the higher the rank. Earn points from ratings, Highway likes, friends, quizzes and polls (5 per poll). Send a friend request to anyone.'));
     const body = main.querySelector('#sectionBody');
     let rows;
     try { rows = (await api.get('/api/leaderboard')).leaderboard; }
@@ -5588,6 +5619,7 @@
             <span title="Likes received on the Highway">❤️ ${r.likes || 0}</span>
             <span title="Friends">👥 ${r.friends}</span>
             <span title="Quizzes">🧠 ${r.quizzes}</span>
+            <span title="Polls voted in">📊 ${r.polls || 0}</span>
           </div>
           <div class="lb-score" title="Points${r.penalty ? ` (${r.penalty} deducted for stopped quizzes)` : ''}">${r.points} pts</div>
           <div class="lb-action"></div>

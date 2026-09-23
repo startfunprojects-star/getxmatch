@@ -19,6 +19,7 @@ const settings = require('../settings');
 const ads = require('../ads');
 const hw = require('../highway');
 const ogImage = require('../ogImage');
+const { quizStats, timeLabel, fmtDuration } = require('../quizStats');
 const { ageFromDob } = require('../profileFields');
 const { optionalAuth } = require('../auth');
 
@@ -286,20 +287,52 @@ router.get('/og/quiz/:id.png', (req, res, next) => {
    Quizzes
 =========================================================================== */
 
+// The stats block on a quiz card: questions, total time, negative marking,
+// how many people attempted it and the top scorers (points, then time).
+function quizStatsHtml(st) {
+  const top = st.topScorers.length
+    ? `<ol class="gx-top">${st.topScorers.map((t, i) => `
+        <li><span class="gx-medal">${['🥇', '🥈', '🥉'][i] || `#${i + 1}`}</span>
+          <span class="gx-top-name">${esc(t.displayName)}</span>
+          <span class="gx-top-pts">${t.points} pts${t.durationMs != null ? ` · ${fmtDuration(Math.max(1, Math.round(t.durationMs / 1000)))}` : ''}</span></li>`).join('')}</ol>`
+    : '<p class="gx-top-empty">No attempts yet — be the first!</p>';
+  return `
+        <ul class="gx-stats">
+          <li><span>Questions</span><strong>${st.questionCount}</strong></li>
+          <li><span>Total time</span><strong>${esc(timeLabel(st))}</strong></li>
+          <li><span>Negative marking</span><strong>${st.negativeMarks ? `Yes · −${st.negativeMarks} per unanswered` : 'No'}</strong></li>
+          <li><span>Attempted by</span><strong>${st.attemptedBy} ${st.attemptedBy === 1 ? 'person' : 'people'}</strong></li>
+        </ul>
+        <p class="gx-top-h">Top scorers</p>
+        ${top}`;
+}
+
+const QUIZ_CARD_STYLE = `<style>
+.gx-stats { list-style: none; margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.gx-stats li { background: var(--bg3); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.gx-stats span { color: var(--muted); font-size: 12px; }
+.gx-stats strong { color: var(--text); font-size: 14px; overflow-wrap: anywhere; }
+.gx-top-h { margin: 12px 0 4px; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.gx-top { list-style: none; margin: 0; padding: 0; }
+.gx-top li { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--text); font-size: 14px; }
+.gx-top-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gx-top-pts { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.gx-top-empty { margin: 0; color: var(--muted); font-size: 13px; }
+</style>`;
+
 router.get('/quizzes', (req, res) => {
-  const rows = db.prepare('SELECT id, title, description, questions, seo, updated_at FROM quizzes ORDER BY created_at DESC').all();
+  const rows = db.prepare('SELECT id, title, description, questions, negative_marks, seo, updated_at FROM quizzes ORDER BY created_at DESC').all();
   const items = rows.map((r) => {
     const s = parseJson(r.seo, {});
-    const qCount = parseJson(r.questions, []).length;
-    return { id: r.id, title: r.title, description: r.description, qCount, path: itemPath('quizzes', r.id, s.slug || r.title) };
+    return { id: r.id, title: r.title, description: r.description, stats: quizStats(r), path: itemPath('quizzes', r.id, s.slug || r.title) };
   });
 
   const cards = items.length
     ? joinWithInlineAds(items.map((it) => `
       <a class="card" href="${escAttr(it.path)}">
         <h3>${esc(it.title)}</h3>
-        <p class="meta">${it.qCount} question${it.qCount === 1 ? '' : 's'}</p>
         ${it.description ? `<p class="excerpt">${esc(summarize(it.description, 160))}</p>` : ''}
+        ${quizStatsHtml(it.stats)}
       </a>`))
     : '<p class="empty">No quizzes published yet. Check back soon!</p>';
 
@@ -317,6 +350,7 @@ router.get('/quizzes', (req, res) => {
     },
   ];
   const bodyHtml = `
+${QUIZ_CARD_STYLE}
 ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Quizzes', path: '/quizzes' }])}
 <h1>Compatibility Quizzes</h1>
 <p class="lede">Answer a few playful questions and discover how well you match. Share a link and compare answers with anyone.</p>
@@ -325,7 +359,7 @@ ${cards}`;
 });
 
 router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
-  const row = db.prepare('SELECT id, title, description, questions, seo, created_at, updated_at FROM quizzes WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, title, description, questions, negative_marks, seo, created_at, updated_at FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return notFound(res, req.path.split('/')[1].replace(/s$/,''));
   const s = parseJson(row.seo, {});
   const chk = canonicalCheck('quizzes', req, row.id, s.slug || row.title);
@@ -337,6 +371,7 @@ router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
   const qPoints = (q) => (Number.isInteger(q.points) && q.points > 0 ? q.points : 0);
   const qSeconds = (q) => (Number.isInteger(q.seconds) && q.seconds > 0 ? q.seconds : 0);
   const totalPoints = questions.reduce((a, q) => a + qPoints(q), 0);
+  const negMarks = row.negative_marks || 0;
   const qHtml = questions.map((q, i) => {
     const opts = Array.isArray(q.options) ? q.options : [];
     const optHtml = opts.map((o, oi) =>
@@ -391,7 +426,7 @@ ${hasQuestions ? `
     <p class="gx-proctor-sum">${questions.length} question${questions.length === 1 ? '' : 's'}${totalPoints ? ` · up to ${totalPoints} points` : ''}</p>
     <ul>
       <li>The quiz opens in full screen and must stay there until you submit.</li>
-      <li>Questions come one at a time. Each shows its points and time limit — answer before the timer runs out to earn its points. When time is up, the question is skipped and earns nothing.</li>
+      <li>Questions come one at a time. Each shows its points and time limit — answer before the timer runs out to earn its points. When time is up, the question is skipped${negMarks ? ` and <strong>${negMarks} point${negMarks === 1 ? ' is' : 's are'} deducted (negative marking)</strong>` : ' and earns nothing (no negative marking)'}.</li>
       <li>Pressing Esc, switching tabs or apps, minimising the window, connecting another display or using remote-control/automation tools counts as leaving the quiz.</li>
       <li>The first time, you get a warning and return to full screen.</li>
       <li><strong>The second time, the quiz stops, you can't attempt it again for 24 hours and 10 points are deducted from your score.</strong></li>

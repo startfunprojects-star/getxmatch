@@ -893,6 +893,16 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .tile-meta { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .tile .pill { background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
 .tile button { margin-top: auto; align-self: flex-start; }
+.quiz-stats { list-style: none; margin: 4px 0 10px; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.quiz-stats li { background: var(--bg-3); border-radius: 10px; padding: 7px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.quiz-stats span { color: var(--muted); font-size: 12px; }
+.quiz-stats strong { font-size: 14px; overflow-wrap: anywhere; }
+.quiz-top-h { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 2px 0 4px; }
+.quiz-top { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
+.tile .quiz-top-row { margin: 0; align-self: stretch; display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 6px; border-radius: 8px; background: none; border: 0; color: var(--text); text-align: left; cursor: pointer; font: inherit; font-size: 14px; }
+.tile .quiz-top-row:hover { background: var(--bg-3); }
+.quiz-top-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quiz-top-pts { color: var(--muted); font-size: 12px; white-space: nowrap; }
 
 /* ---------- Highway (shared post pool) ---------- */
 .highway-composer { margin-bottom: 18px; }

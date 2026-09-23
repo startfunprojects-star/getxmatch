@@ -321,15 +321,26 @@ function normalizeQuestions(raw) {
 
 /* ---------------- Quizzes ---------------- */
 
+// Negative marking: points deducted for each question left unanswered when its
+// time runs out (0 = none). Returns { value } or { error }.
+function normalizeNegative(raw) {
+  const n = Number(raw == null || raw === '' ? 0 : raw);
+  if (!Number.isInteger(n) || n < 0 || n > 1000) {
+    return { error: 'Negative marking must be a whole number from 0 to 1000.' };
+  }
+  return { value: n };
+}
+
 // GET /api/admin/quizzes — full quizzes including correct answers.
 router.get('/quizzes', requireAdmin, (req, res) => {
-  const rows = db.prepare('SELECT id, title, description, questions, seo, created_at, updated_at FROM quizzes ORDER BY created_at DESC').all();
+  const rows = db.prepare('SELECT id, title, description, questions, negative_marks, seo, created_at, updated_at FROM quizzes ORDER BY created_at DESC').all();
   res.json({
     quizzes: rows.map((r) => ({
       id: r.id,
       title: r.title,
       description: r.description,
       questions: parseJson(r.questions, []),
+      negativeMarks: r.negative_marks || 0,
       seo: parseJson(r.seo, {}),
       attempts: db.prepare('SELECT COUNT(*) AS n FROM quiz_attempts WHERE quiz_id = ?').get(r.id).n,
       createdAt: r.created_at,
@@ -345,12 +356,14 @@ router.post('/quizzes', requireAdmin, (req, res) => {
   const description = ((req.body && req.body.description) || '').trim().slice(0, 500);
   const q = normalizeQuestions(req.body && req.body.questions);
   if (q.error) return res.status(400).json({ error: q.error });
+  const neg = normalizeNegative(req.body && req.body.negativeMarks);
+  if (neg.error) return res.status(400).json({ error: neg.error });
 
   const seo = normalizeSeo(req.body && req.body.seo, title);
   const now = Date.now();
   const info = db.prepare(
-    'INSERT INTO quizzes (title, description, questions, seo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(title.slice(0, 150), description, JSON.stringify(q.value), seo, now, now);
+    'INSERT INTO quizzes (title, description, questions, negative_marks, seo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(title.slice(0, 150), description, JSON.stringify(q.value), neg.value, seo, now, now);
   res.status(201).json({ id: info.lastInsertRowid });
 });
 
@@ -363,10 +376,12 @@ router.put('/quizzes/:id', requireAdmin, (req, res) => {
   const description = ((req.body && req.body.description) || '').trim().slice(0, 500);
   const q = normalizeQuestions(req.body && req.body.questions);
   if (q.error) return res.status(400).json({ error: q.error });
+  const neg = normalizeNegative(req.body && req.body.negativeMarks);
+  if (neg.error) return res.status(400).json({ error: neg.error });
 
   const seo = normalizeSeo(req.body && req.body.seo, title);
-  db.prepare('UPDATE quizzes SET title = ?, description = ?, questions = ?, seo = ?, updated_at = ? WHERE id = ?')
-    .run(title.slice(0, 150), description, JSON.stringify(q.value), seo, Date.now(), row.id);
+  db.prepare('UPDATE quizzes SET title = ?, description = ?, questions = ?, negative_marks = ?, seo = ?, updated_at = ? WHERE id = ?')
+    .run(title.slice(0, 150), description, JSON.stringify(q.value), neg.value, seo, Date.now(), row.id);
   res.json({ ok: true });
 });
 

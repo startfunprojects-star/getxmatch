@@ -403,8 +403,9 @@
             showNote(esc(d.error || 'Could not save your answer. Please try again.'));
             return;
           }
-          if (d.accepted && timedOut && !d.answered) showNote('Time’s up — that question was skipped.');
-          else if (d.accepted && d.late) showNote('Too late — that answer arrived after the time limit and earned no points.');
+          var lost = d.earned < 0 ? ' ' + (-d.earned) + ' point' + (d.earned === -1 ? ' was' : 's were') + ' deducted.' : '';
+          if (d.accepted && timedOut && !d.answered) showNote('Time’s up — that question was skipped.' + lost);
+          else if (d.accepted && d.late) showNote('Too late — that answer arrived after the time limit and earned no points.' + lost);
           if (d.state.done) finish();
           else showQuestion(d.state);
         })
