@@ -7,6 +7,7 @@
 //
 // Also serves /sitemap.xml and /robots.txt.
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
@@ -221,11 +222,33 @@ function sendOg(res, png) {
   res.send(png);
 }
 
+// The poll image shows the live results, so it is versioned by a hash of the
+// question, options and tallies: the page links /og/poll/:id.png?v=<hash>, and a
+// new vote yields a new URL that WhatsApp / Facebook / Telegram etc. fetch
+// afresh instead of reusing a stale cached preview.
+function pollOgState(row) {
+  const options = parseJson(row.options, []);
+  const tally = pollTally(row.id, options);
+  const version = crypto
+    .createHash('sha1')
+    .update(JSON.stringify([row.question, options, row.closed, tally.counts, tally.genders]))
+    .digest('hex')
+    .slice(0, 12);
+  return { options, tally, version };
+}
+
 router.get('/og/poll/:id.png', (req, res, next) => {
-  const row = db.prepare('SELECT id, question, updated_at, created_at FROM polls WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, question, options, closed FROM polls WHERE id = ?').get(req.params.id);
   if (!row) return next();
-  const key = `poll:${row.id}:${row.updated_at || row.created_at || ''}`;
-  sendOg(res, ogImage.renderCard('Poll', row.question, key));
+  const { options, tally, version } = pollOgState(row);
+  const png = ogImage.renderPollCard(
+    { question: row.question, options, counts: tally.counts, genders: tally.genders, total: tally.total, closed: !!row.closed },
+    `poll:${row.id}:${version}`
+  );
+  res.set('Content-Type', 'image/png');
+  // A versioned URL never changes content; the bare URL tracks live votes.
+  res.set('Cache-Control', req.query.v === version ? 'public, max-age=604800, immutable' : 'public, max-age=300');
+  res.send(png);
 });
 
 router.get('/og/quiz/:id.png', (req, res, next) => {
@@ -433,8 +456,9 @@ router.get('/polls/:id/:slug?', optionalAuth, (req, res, next) => {
   const chk = canonicalCheck('polls', req, row.id, s.slug || row.question);
   if (chk.redirect) return res.redirect(301, chk.redirect);
 
-  const options = parseJson(row.options, []);
-  const { counts, total, genders } = pollTally(row.id, options);
+  const og = pollOgState(row);
+  const { options } = og;
+  const { counts, total, genders } = og.tally;
 
   const loggedIn = !!req.user;
   let myVote = null;
@@ -457,11 +481,14 @@ router.get('/polls/:id/:slug?', optionalAuth, (req, res, next) => {
     ? 'This poll is closed.'
     : (loggedIn ? 'Tap an option to cast or change your vote.' : 'Tap an option — you’ll be asked to register to vote.');
 
-  const seoDescriptor = resolveSeo(s, {
+  // The share image is always the live poll results card (never an admin
+  // override), so a shared link previews the poll exactly as people voted.
+  const pollImage = `/og/poll/${row.id}.png?v=${og.version}`;
+  const seoDescriptor = resolveSeo({ ...s, ogImage: '', twitterImage: '' }, {
     canonicalPath: chk.canonical,
     title: row.question,
-    description: row.question ? `Vote: ${summarize(row.question, 150)} — join the poll on ${SITE_NAME}.` : undefined,
-    image: `/og/poll/${row.id}.png`,
+    description: row.question ? `Vote: ${summarize(row.question, 150)} — ${total} vote${total === 1 ? '' : 's'} so far. Join the poll on ${SITE_NAME}.` : undefined,
+    image: pollImage,
     type: 'article',
   });
   const jsonLd = [

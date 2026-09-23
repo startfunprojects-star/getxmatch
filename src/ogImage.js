@@ -228,6 +228,14 @@ const WHITE = [245, 247, 250];
 const MUTED = [154, 162, 177];
 
 const cache = new Map(); // key -> Buffer, so a heading is rendered once
+const CACHE_MAX = 300;
+
+function cachePut(key, png) {
+  if (!key) return;
+  cache.set(key, png);
+  // Poll-result keys change with every vote, so cap the cache (oldest first).
+  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+}
 
 // Render a feature image. `kind` is 'Poll' or 'Quiz', `heading` the question/
 // title. Returns a PNG Buffer.
@@ -274,8 +282,166 @@ function renderCard(kind, heading, cacheKey) {
   drawText(c, 'GETXMATCH.COM', marginX, H - 128, 5, MUTED);
 
   const png = encodePng(c);
-  if (cacheKey) cache.set(cacheKey, png);
+  cachePut(cacheKey, png);
   return png;
 }
 
-module.exports = { renderCard, W, H };
+/* ---------------------------------------------------------------------------
+   Poll results card: the question plus every option drawn as a result bar,
+   split by voter gender in the same colours the poll page uses.
+--------------------------------------------------------------------------- */
+const TRACK = [34, 39, 52];
+const VOTE_MALE = [79, 155, 255]; // #4f9bff
+const VOTE_FEMALE = [255, 105, 180]; // #ff69b4
+const VOTE_OTHER = [154, 163, 181]; // #9aa3b5
+
+// Blend `rgb` over `base` at `a` (0..1) — mirrors the page's color-mix() bars.
+function mix(rgb, base, a) {
+  return rgb.map((v, i) => Math.round(v * a + base[i] * (1 - a)));
+}
+
+// Rectangle with corners clipped to radius `r`.
+function fillRoundRect(c, x, y, w, h, r, rgb) {
+  r = Math.max(0, Math.min(r, Math.floor(w / 2), Math.floor(h / 2)));
+  for (let yy = 0; yy < h; yy++) {
+    let inset = 0;
+    const dy = yy < r ? r - yy - 0.5 : yy >= h - r ? yy - (h - r) + 0.5 : -1;
+    if (dy >= 0) inset = Math.ceil(r - Math.sqrt(Math.max(0, r * r - dy * dy)));
+    fillRect(c, x + inset, y + yy, w - inset * 2, 1, rgb);
+  }
+}
+
+// Trim `text` with "..." until it fits `maxW` at `scale`.
+function fitText(text, scale, maxW) {
+  if (textWidth(text, scale) <= maxW) return text;
+  let t = text;
+  while (t.length && textWidth(t + '...', scale) > maxW) t = t.slice(0, -1).trimEnd();
+  return t + '...';
+}
+
+const clean = (t) => String(t || '').toUpperCase().replace(/\s+/g, ' ').trim();
+
+// poll = { question, options: [str], counts: [n], genders: [{male,female,other}],
+//          total, closed }. Returns a PNG Buffer.
+function renderPollCard(poll, cacheKey) {
+  if (cacheKey && cache.has(cacheKey)) return cache.get(cacheKey);
+
+  const c = canvas(W, H, BG);
+  fillRect(c, 40, 40, W - 80, H - 80, PANEL);
+  fillRect(c, 40, 40, 14, H - 80, ACCENT);
+
+  const left = 96;
+  const right = W - 84;
+  const maxW = right - left;
+
+  // Header: "POLL" on the left, vote count / status on the right.
+  drawText(c, 'POLL', left, 72, 5, ACCENT);
+  const total = poll.total || 0;
+  const status = (total ? `${total} VOTE${total === 1 ? '' : 'S'}` : 'NO VOTES YET') + (poll.closed ? ' - CLOSED' : '');
+  drawText(c, status, right - textWidth(status, 4), 76, 4, MUTED);
+
+  // Options: show up to 6 (5 + a "+N more" line when there are more).
+  const allOpts = poll.options || [];
+  const MAX_ROWS = 6;
+  const shown = allOpts.length > MAX_ROWS ? MAX_ROWS - 1 : allOpts.length;
+  const more = allOpts.length - shown;
+  const rows = shown + (more ? 1 : 0);
+
+  // Vertical budget between the header and the footer.
+  const top = 140;
+  const bottom = H - 118;
+  const gap = 22;
+  const minRow = 44;
+
+  // Question: largest scale (≤ 3 lines) that still leaves room for the bars.
+  const q = clean(poll.question) || 'UNTITLED POLL';
+  const lineHAt = (s) => GLYPH_H * s + 3 * s;
+  let qScale = 3;
+  let qLines = wrapClamped(q, 3, maxW, 3);
+  for (let s = 8; s >= 3; s -= 1) {
+    const wrapped = wrapAll(q, s, maxW);
+    const qH = wrapped.length * lineHAt(s) - 3 * s;
+    if (wrapped.length <= 3 && qH + gap + rows * minRow <= bottom - top) { qScale = s; qLines = wrapped; break; }
+  }
+  const qH = qLines.length * lineHAt(qScale) - 3 * qScale;
+  const rowH = rows ? Math.min(70, Math.floor((bottom - top - qH - gap) / rows)) : 0;
+  // Centre the question + bars block when a short poll leaves spare room.
+  let y = top + Math.max(0, Math.floor((bottom - top - (qH + gap + rows * rowH)) / 2));
+  for (const line of qLines) {
+    drawText(c, line, left, y, qScale, WHITE);
+    y += lineHAt(qScale);
+  }
+  y += gap - 3 * qScale;
+
+  const barH = Math.max(32, rowH - 10);
+  const tScale = Math.max(3, Math.min(4, Math.floor((barH - 12) / GLYPH_H)));
+  const textY = (by) => by + Math.round((barH - GLYPH_H * tScale) / 2);
+  const counts = poll.counts || [];
+  const lead = Math.max(0, ...counts.slice(0, allOpts.length));
+
+  for (let i = 0; i < shown; i++) {
+    const n = counts[i] || 0;
+    const pct = total ? Math.round((n / total) * 100) : 0;
+    const by = y + i * rowH;
+    fillRoundRect(c, left, by, maxW, barH, 10, TRACK);
+
+    // Filled portion, split by gender.
+    const fillW = Math.round((maxW * n) / Math.max(1, total));
+    if (fillW > 0) {
+      const g = (poll.genders && poll.genders[i]) || { male: 0, female: 0, other: n };
+      const parts = [[g.male, VOTE_MALE], [g.female, VOTE_FEMALE], [g.other, VOTE_OTHER]].filter(([k]) => k > 0);
+      const sum = parts.reduce((a, [k]) => a + k, 0) || 1;
+      let x = left;
+      parts.forEach(([k, col], pi) => {
+        const w = pi === parts.length - 1 ? left + fillW - x : Math.round((fillW * k) / sum);
+        fillRect(c, x, by, w, barH, mix(col, TRACK, 0.55));
+        x += w;
+      });
+      // Re-clip the bar's corners back to the panel colour.
+      clipCorners(c, left, by, maxW, barH, 10, PANEL);
+    }
+
+    const isLead = total > 0 && n === lead;
+    const meta = `${pct}%  ${n}`;
+    const metaW = textWidth(meta, tScale);
+    drawText(c, meta, left + maxW - 18 - metaW, textY(by), tScale, isLead ? WHITE : MUTED);
+    const label = fitText(clean(allOpts[i]) || '-', tScale, maxW - 54 - metaW);
+    drawText(c, label, left + 18, textY(by), tScale, WHITE);
+  }
+  if (more) {
+    const by = y + shown * rowH;
+    drawText(c, `+ ${more} MORE OPTION${more === 1 ? '' : 'S'}`, left + 18, textY(by), tScale, MUTED);
+  }
+
+  // Footer: brand on the left, colour legend on the right.
+  const fy = H - 96;
+  drawText(c, 'GETXMATCH.COM', left, fy, 4, MUTED);
+  let lx = right;
+  for (const [name, col] of [['OTHER', VOTE_OTHER], ['FEMALE', VOTE_FEMALE], ['MALE', VOTE_MALE]]) {
+    const tw = textWidth(name, 3);
+    lx -= tw;
+    drawText(c, name, lx, fy + 3, 3, MUTED);
+    lx -= 30;
+    fillRoundRect(c, lx, fy + 1, 22, 22, 5, col);
+    lx -= 32;
+  }
+
+  const png = encodePng(c);
+  cachePut(cacheKey, png);
+  return png;
+}
+
+// Paint the pixels outside a rounded rect's corners with `rgb` (used to round
+// off a bar after its square segments were drawn).
+function clipCorners(c, x, y, w, h, r, rgb) {
+  for (let yy = 0; yy < r; yy++) {
+    const dy = r - yy - 0.5;
+    const inset = Math.ceil(r - Math.sqrt(Math.max(0, r * r - dy * dy)));
+    fillRect(c, x, y + yy, inset, 1, rgb);
+    fillRect(c, x + w - inset, y + yy, inset, 1, rgb);
+    fillRect(c, x, y + h - 1 - yy, inset, 1, rgb);
+    fillRect(c, x + w - inset, y + h - 1 - yy, inset, 1, rgb);
+  }
+}
+
+module.exports = { renderCard, renderPollCard, W, H };
