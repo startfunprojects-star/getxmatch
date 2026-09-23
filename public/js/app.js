@@ -16,7 +16,7 @@
     peopleCache: [],
     chatPeers: {},       // id -> peer summary for people we've chatted with
     typingTimer: null,
-    gifts: null,         // naughty-gift catalog, loaded lazily
+    gifts: null,         // gift catalog, loaded lazily
     giftsById: {},       // id -> gift for rendering
     liveByPeer: {},      // otherUserId -> broadcast view when a chat of mine is live
     watching: null,      // token of a broadcast being watched inline, or null
@@ -66,7 +66,7 @@
     });
   }
 
-  // Fetch (and cache) the naughty-gift catalog.
+  // Fetch (and cache) the gift catalog.
   async function loadGifts() {
     if (state.gifts) return state.gifts;
     try {
@@ -1608,7 +1608,7 @@
         <div class="composer">
           <input type="file" id="fileInput" class="hidden" />
           <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
-          <button class="icon-btn" id="giftBtn" title="Send a naughty gift">🎁</button>
+          <button class="icon-btn" id="giftBtn" title="Send a gift">🎁</button>
           <button class="icon-btn" id="pollBtn" title="Create a poll">📊</button>
           <button class="icon-btn" id="quizBtn" title="Take a quiz together">🧩</button>
           <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" dir="auto" />
@@ -1667,7 +1667,7 @@
     });
 
 
-    // Naughty gift picker.
+    // Gift picker.
     const giftPicker = view.querySelector('#giftPicker');
     const giftBtn = view.querySelector('#giftBtn');
     giftBtn.addEventListener('click', async (e) => {
@@ -2637,7 +2637,7 @@
       picker.appendChild(el('<div class="hint" style="padding:10px">No gifts available.</div>'));
       return;
     }
-    picker.appendChild(el('<div class="gift-picker-title">Send a naughty gift</div>'));
+    picker.appendChild(el('<div class="gift-picker-title">Send a gift</div>'));
     const grid = el('<div class="gift-grid"></div>');
     gifts.forEach((g) => {
       const cell = el(`<button class="gift-cell" title="${esc(g.name)}"><span class="gift-emoji">${esc(g.emoji)}</span><span class="gift-cell-name">${esc(g.name)}</span></button>`);

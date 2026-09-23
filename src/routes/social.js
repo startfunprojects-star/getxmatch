@@ -597,7 +597,7 @@ router.post('/report/:username', requireAuth, (req, res) => {
    Gifts
 --------------------------------------------------------------------------- */
 
-// GET /api/social/gifts — catalog of naughty gifts sendable in chat.
+// GET /api/social/gifts — catalog of gifts sendable in chat.
 router.get('/gifts', requireAuth, (_req, res) => {
   res.json({ gifts: GIFTS });
 });

@@ -657,7 +657,7 @@ function initSocket(io) {
       }
     });
 
-    // Naughty gift → persisted like a message (kind='gift', body holds the
+    // Gift → persisted like a message (kind='gift', body holds the
     // gift id) so it shows in history, then delivered live if online.
     socket.on('chat:gift', (payload, ack) => {
       try {

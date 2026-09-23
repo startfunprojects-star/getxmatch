@@ -1140,7 +1140,7 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
 .req-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .req-actions .pill { background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
 
-/* ---------- Naughty gifts ---------- */
+/* ---------- Chat gifts ---------- */
 .pro-actions #pvBlock { display: inline-flex; gap: 8px; align-items: center; }
 .pill.danger-pill { color: var(--danger); border: 1px solid var(--danger); border-radius: 999px; padding: 3px 10px; }
 
