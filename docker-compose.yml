@@ -13,6 +13,10 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    # Pass every setting in .env (SMTP_*, MAIL_FROM, ADMIN_EMAIL, PUBLIC_URL …)
+    # into the container; the entries below override it.
+    env_file:
+      - .env
     environment:
       NODE_ENV: production
       PORT: "3000"
