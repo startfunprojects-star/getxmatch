@@ -992,7 +992,7 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .lb-id .name { font-weight: 700; }
 .lb-id .handle { color: var(--muted); font-size: 13px; }
 .lb-stats { display: flex; gap: 12px; align-items: center; font-size: 13px; color: var(--muted); flex-wrap: wrap; justify-content: flex-end; }
-.lb-score { font-weight: 800; color: var(--text); background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
+.lb-score { flex: none; font-weight: 800; color: var(--text); background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
 .lb-action { flex: none; }
 
 /* ---------- Events feed ---------- */

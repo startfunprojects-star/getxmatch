@@ -5565,7 +5565,7 @@
   /* ---------- Leaderboard ---------- */
   async function renderLeaderboard() {
     const main = openMainView();
-    main.appendChild(sectionShell('Leaderboard', 'Top members by ratings, friends and activity. Send a friend request to anyone.'));
+    main.appendChild(sectionShell('Leaderboard', 'Ranked by points — the more points, the higher the rank. Earn points from ratings, Highway likes, friends and quizzes. Send a friend request to anyone.'));
     const body = main.querySelector('#sectionBody');
     let rows;
     try { rows = (await api.get('/api/leaderboard')).leaderboard; }
@@ -5588,8 +5588,8 @@
             <span title="Likes received on the Highway">❤️ ${r.likes || 0}</span>
             <span title="Friends">👥 ${r.friends}</span>
             <span title="Quizzes">🧠 ${r.quizzes}</span>
-            <span class="lb-score" title="Score">${r.score}</span>
           </div>
+          <div class="lb-score" title="Points${r.penalty ? ` (${r.penalty} deducted for stopped quizzes)` : ''}">${r.points} pts</div>
           <div class="lb-action"></div>
         </div>
       `);

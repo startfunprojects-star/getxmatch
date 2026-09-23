@@ -1506,10 +1506,10 @@
   let leaderboardCache = [];
   async function renderLeaderboardTab() {
     const host = tabHost();
-    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Auto-ranked by ratings, friends and quiz activity.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Score</th></tr></thead><tbody id="lbRows"><tr><td colspan="6" class="count">Loading…</td></tr></tbody></table></div><div id="lbPager"></div></div>';
+    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Ranked by points (highest first; equal points share a rank). Points come from ratings, Highway likes, friends and quizzes, minus deductions for stopped quizzes.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Likes</th><th>Points</th></tr></thead><tbody id="lbRows"><tr><td colspan="7" class="count">Loading…</td></tr></tbody></table></div><div id="lbPager"></div></div>';
     const rowsEl = host.querySelector('#lbRows');
     try { leaderboardCache = (await api.get('/api/admin/leaderboard')).leaderboard; }
-    catch (e) { if (e.status === 401) return renderLogin(true); rowsEl.innerHTML = `<tr><td colspan="6" class="count">${esc(e.message)}</td></tr>`; return; }
+    catch (e) { if (e.status === 401) return renderLogin(true); rowsEl.innerHTML = `<tr><td colspan="7" class="count">${esc(e.message)}</td></tr>`; return; }
     paintLeaderboard();
   }
 
@@ -1517,7 +1517,7 @@
     const rowsEl = document.getElementById('lbRows');
     if (!rowsEl) return;
     const rows = leaderboardCache;
-    if (!rows.length) { rowsEl.innerHTML = '<tr><td colspan="6" class="count">No ranked users yet.</td></tr>'; return; }
+    if (!rows.length) { rowsEl.innerHTML = '<tr><td colspan="7" class="count">No ranked users yet.</td></tr>'; return; }
     const { slice, pager } = pageFor('leaderboard', rows, paintLeaderboard);
     rowsEl.innerHTML = '';
     slice.forEach((r) => {
@@ -1528,7 +1528,8 @@
           <td>${r.ratingAvg || '—'} (${r.ratingCount})</td>
           <td>${r.friends}</td>
           <td>${r.quizzes}</td>
-          <td><strong>${r.score}</strong></td>
+          <td>${r.likes}</td>
+          <td><strong>${r.points}</strong>${r.penalty ? `<div class="pill" title="Deducted for stopped quizzes">−${r.penalty}</div>` : ''}</td>
         </tr>
       `));
     });

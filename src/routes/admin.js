@@ -12,6 +12,7 @@ const db = require('../db');
 const config = require('../config');
 const { sendAdminResetLink } = require('../mail');
 const { isOnline } = require('../socket');
+const { rankedUsers } = require('../points');
 const { imageUpload } = require('../upload');
 const { buildProfile } = require('../profileData');
 const { saveProfile } = require('../profileWrite');
@@ -540,35 +541,7 @@ router.delete('/events/:id', requireAdmin, (req, res) => {
 
 // GET /api/admin/leaderboard — same ranking users see, for oversight.
 router.get('/leaderboard', requireAdmin, (req, res) => {
-  const rows = db.prepare(
-    `SELECT u.id, u.username, p.display_name, p.avatar,
-            (SELECT COUNT(*) FROM ratings r WHERE r.ratee_id = u.id)   AS rating_count,
-            (SELECT AVG(stars) FROM ratings r WHERE r.ratee_id = u.id) AS rating_avg,
-            (SELECT COUNT(*) FROM friendships f
-               WHERE (f.requester_id = u.id OR f.addressee_id = u.id) AND f.status = 'accepted') AS friends,
-            (SELECT COUNT(*) FROM quiz_attempts q WHERE q.user_id = u.id) AS quizzes,
-            (SELECT COALESCE(SUM(points), 0) FROM quiz_penalties qp WHERE qp.user_id = u.id) AS penalty
-     FROM users u JOIN profiles p ON p.user_id = u.id`
-  ).all();
-
-  const scored = rows.map((r) => {
-    const avg = r.rating_avg || 0;
-    return {
-      id: r.id,
-      username: r.username,
-      displayName: r.display_name || r.username,
-      avatar: r.avatar ? `/uploads/${r.avatar}` : null,
-      ratingAvg: avg ? Math.round(avg * 10) / 10 : 0,
-      ratingCount: r.rating_count,
-      friends: r.friends,
-      quizzes: r.quizzes,
-      penalty: r.penalty,
-      score: Math.round(avg * 20 + r.rating_count * 5 + r.friends * 8 + r.quizzes * 3) - r.penalty,
-    };
-  });
-  scored.sort((a, b) => b.score - a.score || b.ratingAvg - a.ratingAvg);
-  scored.forEach((row, i) => { row.rank = i + 1; });
-  res.json({ leaderboard: scored });
+  res.json({ leaderboard: rankedUsers() });
 });
 
 /* ===========================================================================
