@@ -17,11 +17,13 @@ const DEFAULT_OG_TYPE = 'website';
 // meta title. Mirrors the static title baked into public/index.html.
 const DEFAULT_HOME_TITLE = 'getxmatch — profiles, quizzes, polls & real-time chat';
 
-// Brand assets (served from /public). The OG cover is the fallback social-share
-// image used whenever a page has no image of its own; the logo feeds the
-// Organization structured data. Both are site-relative and made absolute below.
-const SITE_LOGO = '/assets/logo.svg';
-const SITE_OG_IMAGE = '/assets/og-cover.svg';
+// Brand assets (served from /public) — the brain / neural-network mark. The OG
+// cover is the fallback social-share image used whenever a page has no image of
+// its own; the logo feeds the Organization structured data. PNG, because
+// Facebook, WhatsApp, X and LinkedIn don't render SVG share images (the .svg
+// sources sit next to them). Both are site-relative and made absolute below.
+const SITE_LOGO = '/assets/icon-512.png';
+const SITE_OG_IMAGE = '/assets/og-cover.png';
 
 // Optional social presence for the Organization `sameAs` and the Twitter card
 // `site` handle. Configured via env as a per-deployment fallback; the admin's
@@ -393,7 +395,8 @@ function renderDocument({ seoDescriptor, jsonLd, bodyHtml, railLeft, railRight }
   <meta name="theme-color" content="#0f1117" />
   ${headTags(seoDescriptor)}
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <link rel="apple-touch-icon" href="/assets/logo.svg" />
+  <link rel="icon" href="/favicon-48.png" type="image/png" sizes="48x48" />
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" sizes="180x180" />
   <link rel="mask-icon" href="/favicon.svg" color="#ff4d7d" />
   <link rel="manifest" href="/site.webmanifest" />
   ${jsonLdTag(jsonLd)}
