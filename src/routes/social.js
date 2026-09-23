@@ -10,7 +10,7 @@ const moderation = require('../moderation');
 const { GIFTS } = require('../gifts');
 const { GALLERY_REACTIONS, GALLERY_REACTION_SET } = require('../galleryReactions');
 const { listActivities } = require('../activities');
-const { isValidRelType, sentText, acceptedText, relEmoji } = require('../relationships');
+const { sentText, acceptedText, relEmoji } = require('../relationships');
 const { broadcastActivity, notifyUser, broadcastLeaderboardChange, isOnline } = require('../socket');
 
 const router = express.Router();
@@ -341,9 +341,9 @@ function existingFriendship(a, b) {
     .get(a, b, b, a);
 }
 
-// POST /api/social/friend/:username — send a relationship request (friend,
-// crush, girlfriend, …), or accept a pending request already received from the
-// target. Body: { type } (defaults to 'friend'; invalid values fall back too).
+// POST /api/social/friend/:username — send a friend request, or accept a
+// pending request already received from the target. Only friend requests
+// exist; any `type` in the body is ignored.
 router.post('/friend/:username', requireAuth, (req, res) => {
   const target = resolveTarget(req, res);
   if (!target) return;
@@ -354,8 +354,7 @@ router.post('/friend/:username', requireAuth, (req, res) => {
     return res.status(403).json({ error: 'You cannot send a request while a block is in place.' });
   }
 
-  let type = (req.body && req.body.type) || 'friend';
-  if (!isValidRelType(type)) type = 'friend';
+  const type = 'friend';
 
   const row = existingFriendship(req.user.id, target.id);
   if (row) {

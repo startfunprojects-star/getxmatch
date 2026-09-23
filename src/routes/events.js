@@ -105,7 +105,7 @@ function buildFeed(viewerId, opts) {
   const includeImages = !opts || opts.includeImages !== false;
   const events = [];
 
-  // 1) Accepted relationships (friend, crush, couple, …).
+  // 1) Accepted friendships.
   db.prepare(
     `SELECT id, requester_id, addressee_id, rel_type, created_at
      FROM friendships WHERE status = 'accepted' ORDER BY created_at DESC LIMIT ?`

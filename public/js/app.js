@@ -372,17 +372,12 @@
     { emoji: '🔥', label: 'Hot' },
   ];
 
-  // Relationship-request kinds (mirror src/relationships.js). Order matches spec.
+  // Connection requests are friend requests only (mirror src/relationships.js).
+  // Older connections stored with other kinds display as friends.
   const REL_TYPES = {
-    friend:     { label: 'Friends',    emoji: '🤝', requestLabel: 'Send Friend Request' },
-    girlfriend: { label: 'Girlfriend', emoji: '💖', requestLabel: 'Be My Girlfriend' },
-    boyfriend:  { label: 'Boyfriend',  emoji: '💙', requestLabel: 'Be My Boyfriend' },
-    wife:       { label: 'Wife',       emoji: '💍', requestLabel: 'Be My Wife' },
-    husband:    { label: 'Husband',    emoji: '💍', requestLabel: 'Be My Husband' },
-    crush:      { label: 'Crush',      emoji: '💘', requestLabel: 'Crush' },
-    colleague:  { label: 'Colleagues', emoji: '💼', requestLabel: 'Colleagues' },
+    friend: { label: 'Friends', emoji: '🤝', requestLabel: 'Send Friend Request' },
   };
-  const REL_ORDER = ['friend', 'girlfriend', 'boyfriend', 'wife', 'husband', 'crush', 'colleague'];
+  const REL_ORDER = ['friend'];
   function relLabel(type) { const t = REL_TYPES[type] || REL_TYPES.friend; return `${t.emoji} ${t.label}`; }
 
   // The four rating dimensions (each 1-5 stars). Mirrors RATING_DIMS in
@@ -3629,7 +3624,7 @@
       refreshRequestBadge(); // blinks "Requests" if a new invite raised the count
     });
 
-    // Someone sent me a relationship request — light up "Requests" live.
+    // Someone sent me a friend request — light up "Requests" live.
     s.on('notify:request', () => {
       refreshRequestBadge(); // recomputes count and blinks the button if it grew
       if (isExploreActive('requests')) renderRequests(); // already open: refresh list
@@ -4903,29 +4898,21 @@
     slot.appendChild(rep);
   }
 
-  // A "Relationship request" dropdown. Picking one of the 7 options sends that
-  // typed request for `username`, then calls `refresh`.
+  // "Add friend" button: sends a friend request to `username`, then calls
+  // `refresh`.
   function relationshipRequestEl(username, refresh) {
     const u = encodeURIComponent(username);
-    const sel = el(`
-      <select class="rel-request small" title="Send a relationship request">
-        <option value="">＋ Relationship request…</option>
-        ${REL_ORDER.map((k) => `<option value="${k}">${esc(REL_TYPES[k].requestLabel)}</option>`).join('')}
-      </select>
-    `);
-    sel.addEventListener('click', (e) => e.stopPropagation());
-    sel.addEventListener('change', async (e) => {
+    const b = el('<button class="primary small" title="Send a friend request">🤝 Add friend</button>');
+    b.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const type = sel.value;
-      if (!type) return;
-      sel.disabled = true;
+      b.disabled = true;
       try {
-        await api.post('/api/social/friend/' + u, { type });
+        await api.post('/api/social/friend/' + u, {});
         refreshRequestBadge();
         refresh();
-      } catch (err) { alert(err.message); sel.value = ''; sel.disabled = false; }
+      } catch (err) { alert(err.message); b.disabled = false; }
     });
-    return sel;
+    return b;
   }
 
   // Render the contextual relationship action(s) into `slot` based on state.
@@ -5379,7 +5366,7 @@
 
   async function renderRequests() {
     const main = openMainView();
-    main.appendChild(sectionShell('Relationship Requests', 'People who want to connect with you — friend, crush, and more. View their profile, then accept or decline.'));
+    main.appendChild(sectionShell('Friend Requests', 'People who want to be your friend. View their profile, then accept or decline.'));
     const body = main.querySelector('#sectionBody');
     let data;
     try { data = await api.get('/api/social/friends'); }
@@ -5403,7 +5390,7 @@
             <img class="avatar sm" src="${avatarUrl(u.avatar)}" />
             <div class="req-id">
               <div class="name">${esc(u.displayName || u.username)}</div>
-              <div class="handle">@${esc(u.username)} · wants ${esc(relLabel(u.relType))}</div>
+              <div class="handle">@${esc(u.username)} · wants to be your friend</div>
             </div>
             <div class="req-actions">
               <button class="ghost small req-view">View profile</button>
