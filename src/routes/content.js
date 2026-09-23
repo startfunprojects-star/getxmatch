@@ -8,6 +8,7 @@ const express = require('express');
 
 const db = require('../db');
 const { requireAuth } = require('../auth');
+const { broadcastLeaderboardChange } = require('../socket');
 
 const router = express.Router();
 
@@ -74,11 +75,133 @@ router.get('/quizzes/:id', requireAuth, (req, res) => {
   res.json({ quiz: { id: row.id, title: row.title, description: row.description, questions, seo: parseJson(row.seo, {}) } });
 });
 
-// POST /api/content/quizzes/:id/match  { answers: [index, ...] }
+/* ---------------------------------------------------------------------------
+   Proctoring. A quiz is attempted in full screen inside a server-side session.
+   The client reports every time the user leaves full screen / the window; the
+   server counts strikes so the rules can't be bypassed by editing the page:
+   strike 1 = warning, strike 2 = attempt stopped, quiz locked for 24h and
+   PROCTOR_PENALTY points deducted from the user's leaderboard score.
+--------------------------------------------------------------------------- */
+const PROCTOR_MAX_STRIKES = 2;
+const PROCTOR_LOCK_MS = 24 * 60 * 60 * 1000;
+const PROCTOR_PENALTY = 10;
+const PROCTOR_SESSION_MS = 2 * 60 * 60 * 1000;
+// One user action (e.g. Alt+Tab) fires blur + visibility + fullscreen events
+// together; strikes closer than this are treated as the same incident.
+const PROCTOR_GRACE_MS = 1500;
+
+function activeLockout(userId, quizId) {
+  const row = db.prepare('SELECT until FROM quiz_lockouts WHERE user_id = ? AND quiz_id = ?').get(userId, quizId);
+  return row && row.until > Date.now() ? row.until : null;
+}
+
+function lockedResponse(res, until) {
+  return res.status(423).json({
+    error: 'You were stopped from this quiz for leaving full screen. You can attempt it again after the lock expires.',
+    lockedUntil: until,
+  });
+}
+
+// GET /api/content/quizzes/:id/proctor — rules + whether the viewer is locked out.
+router.get('/quizzes/:id/proctor', requireAuth, (req, res) => {
+  const quizId = Number(req.params.id);
+  res.json({
+    lockedUntil: activeLockout(req.user.id, quizId),
+    maxStrikes: PROCTOR_MAX_STRIKES,
+    penalty: PROCTOR_PENALTY,
+    lockHours: PROCTOR_LOCK_MS / 3600000,
+  });
+});
+
+// POST /api/content/quizzes/:id/proctor/start — open (or resume) a session.
+// An unfinished session is resumed rather than replaced, so reloading the page
+// doesn't wipe an earlier strike.
+router.post('/quizzes/:id/proctor/start', requireAuth, (req, res) => {
+  const row = db.prepare('SELECT id FROM quizzes WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Quiz not found.' });
+  const until = activeLockout(req.user.id, row.id);
+  if (until) return lockedResponse(res, until);
+
+  const now = Date.now();
+  let sess = db
+    .prepare(
+      `SELECT token, strikes FROM quiz_proctor_sessions
+        WHERE user_id = ? AND quiz_id = ? AND status = 'active' AND expires_at > ?
+        ORDER BY created_at DESC LIMIT 1`
+    )
+    .get(req.user.id, row.id, now);
+  if (!sess) {
+    sess = { token: crypto.randomBytes(18).toString('base64url'), strikes: 0 };
+    db.prepare(
+      `INSERT INTO quiz_proctor_sessions (token, quiz_id, user_id, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(sess.token, row.id, req.user.id, now, now + PROCTOR_SESSION_MS);
+  }
+  res.json({ session: sess.token, strikes: sess.strikes, maxStrikes: PROCTOR_MAX_STRIKES, penalty: PROCTOR_PENALTY });
+});
+
+// POST /api/content/quizzes/:id/proctor/violation  { session, reason }
+// Also sent with navigator.sendBeacon when the page is hidden or closed.
+router.post('/quizzes/:id/proctor/violation', requireAuth, (req, res) => {
+  const quizId = Number(req.params.id);
+  const token = String((req.body && req.body.session) || '');
+  const reason = String((req.body && req.body.reason) || 'left').slice(0, 40);
+  const sess = db
+    .prepare('SELECT * FROM quiz_proctor_sessions WHERE token = ? AND user_id = ? AND quiz_id = ?')
+    .get(token, req.user.id, quizId);
+  if (!sess) return res.status(404).json({ error: 'Quiz session not found.' });
+  if (sess.status === 'terminated') {
+    return res.json({ strikes: sess.strikes, terminated: true, lockedUntil: activeLockout(req.user.id, quizId), penalty: PROCTOR_PENALTY });
+  }
+  if (sess.status !== 'active') return res.json({ strikes: sess.strikes, terminated: false, ignored: true });
+
+  const now = Date.now();
+  if (sess.last_strike_at && now - sess.last_strike_at < PROCTOR_GRACE_MS) {
+    return res.json({ strikes: sess.strikes, terminated: false, duplicate: true });
+  }
+
+  const strikes = sess.strikes + 1;
+  if (strikes < PROCTOR_MAX_STRIKES) {
+    db.prepare('UPDATE quiz_proctor_sessions SET strikes = ?, last_strike_at = ? WHERE token = ?').run(strikes, now, token);
+    return res.json({ strikes, terminated: false, maxStrikes: PROCTOR_MAX_STRIKES, reason });
+  }
+
+  const until = now + PROCTOR_LOCK_MS;
+  db.exec('BEGIN');
+  try {
+    db.prepare("UPDATE quiz_proctor_sessions SET strikes = ?, last_strike_at = ?, status = 'terminated' WHERE token = ?")
+      .run(strikes, now, token);
+    db.prepare(
+      `INSERT INTO quiz_lockouts (user_id, quiz_id, until) VALUES (?, ?, ?)
+       ON CONFLICT(user_id, quiz_id) DO UPDATE SET until = excluded.until`
+    ).run(req.user.id, quizId, until);
+    db.prepare('INSERT INTO quiz_penalties (user_id, quiz_id, points, reason, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(req.user.id, quizId, PROCTOR_PENALTY, `Quiz stopped: ${reason}`, now);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  broadcastLeaderboardChange();
+  res.json({ strikes, terminated: true, lockedUntil: until, penalty: PROCTOR_PENALTY });
+});
+
+// POST /api/content/quizzes/:id/match  { answers: [index, ...], session }
 // The logged-in initiator records their answers and gets a shareable token.
+// Answers are only accepted from a live proctored session.
 router.post('/quizzes/:id/match', requireAuth, (req, res) => {
   const row = db.prepare('SELECT id, questions FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Quiz not found.' });
+
+  const until = activeLockout(req.user.id, row.id);
+  if (until) return lockedResponse(res, until);
+  const sessToken = String((req.body && req.body.session) || '');
+  const sess = db
+    .prepare('SELECT status, expires_at FROM quiz_proctor_sessions WHERE token = ? AND user_id = ? AND quiz_id = ?')
+    .get(sessToken, req.user.id, row.id);
+  if (!sess || sess.status !== 'active' || sess.expires_at <= Date.now()) {
+    return res.status(409).json({ error: 'This quiz must be taken in full screen. Please start it again.' });
+  }
 
   const questions = parseJson(row.questions, []);
   if (!questions.length) return res.status(400).json({ error: 'This quiz has no questions.' });
@@ -109,6 +232,7 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
     now,
     now + MATCH_TTL_MS
   );
+  db.prepare("UPDATE quiz_proctor_sessions SET status = 'completed' WHERE token = ?").run(sessToken);
 
   res.status(201).json({ token, expiresAt: now + MATCH_TTL_MS });
 });

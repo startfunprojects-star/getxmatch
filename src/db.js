@@ -499,6 +499,40 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_quiz_matches_token ON quiz_matches (token);
 
+  -- Proctored quiz attempts. A quiz is taken in full screen; each time the user
+  -- leaves it (Esc, app/tab switch, minimise, extra display, automation) the
+  -- session gets a strike. Strike 1 is a warning; strike 2 terminates the
+  -- attempt, locks that quiz for the user for 24h and records a points penalty.
+  CREATE TABLE IF NOT EXISTS quiz_proctor_sessions (
+    token          TEXT PRIMARY KEY,
+    quiz_id        INTEGER NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
+    user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    strikes        INTEGER NOT NULL DEFAULT 0,
+    status         TEXT NOT NULL DEFAULT 'active', -- active | completed | terminated
+    last_strike_at INTEGER,
+    created_at     INTEGER NOT NULL,
+    expires_at     INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_quiz_proctor_user ON quiz_proctor_sessions (user_id, quiz_id, status);
+
+  CREATE TABLE IF NOT EXISTS quiz_lockouts (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    quiz_id INTEGER NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
+    until   INTEGER NOT NULL,
+    PRIMARY KEY (user_id, quiz_id)
+  );
+
+  -- Points deducted from a user's leaderboard score (e.g. a stopped quiz).
+  CREATE TABLE IF NOT EXISTS quiz_penalties (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    quiz_id    INTEGER REFERENCES quizzes(id) ON DELETE SET NULL,
+    points     INTEGER NOT NULL,
+    reason     TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_quiz_penalties_user ON quiz_penalties (user_id);
+
   /* ---------------- Polls ---------------- */
   CREATE TABLE IF NOT EXISTS polls (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

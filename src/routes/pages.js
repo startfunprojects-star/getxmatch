@@ -208,6 +208,20 @@ const ATTEMPT_STYLE = `<style>
 .gx-result { margin-top: 16px; }
 .gx-share { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .gx-share input { flex: 1; min-width: 220px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg2); color: var(--text); }
+.gx-attempt:fullscreen { background: var(--bg); color: var(--text); overflow-y: auto; padding: 28px max(16px, calc(50vw - 380px)); }
+.gx-attempt::backdrop { background: var(--bg); }
+.gx-proctor-intro { border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; background: var(--bg2); margin: 0 0 14px; }
+.gx-proctor-intro h2 { margin: 0 0 8px; font-size: 1.15rem; }
+.gx-proctor-intro ul { margin: 0 0 14px; padding-left: 20px; color: var(--muted); }
+.gx-proctor-intro li { margin: 4px 0; }
+.gx-proctor-intro strong { color: var(--text); }
+.gx-proctor-bar { display: flex; justify-content: space-between; gap: 12px; font-size: .85rem; color: var(--muted); border-bottom: 1px solid var(--border); padding: 0 0 10px; margin: 0 0 16px; }
+.gx-proctor-bar[hidden], .gx-proctor-warn[hidden] { display: none; }
+.gx-proctor-strikes.warned { color: var(--accent); font-weight: 700; }
+.gx-proctor-warn { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 16px; background: color-mix(in srgb, var(--bg) 92%, transparent); }
+.gx-proctor-box { max-width: 460px; width: 100%; border: 1px solid var(--accent); border-radius: 14px; padding: 22px 24px; background: var(--bg2); text-align: center; }
+.gx-proctor-box h2 { margin: 0 0 8px; color: var(--accent); font-size: 1.2rem; }
+.gx-proctor-box p { margin: 0 0 16px; }
 </style>`;
 
 /* ===========================================================================
@@ -345,7 +359,7 @@ router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
   const hint = !hasQuestions ? ''
     : (loggedIn
         ? 'Answer every question, then submit to get a private link to compare with someone.'
-        : 'Answer every question — you’ll be asked to register when you submit.');
+        : 'Register or sign in to attempt this quiz.');
   const bodyHtml = `
 ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Quizzes', path: '/quizzes' }, { name: row.title, path: chk.canonical }])}
 <h1>${esc(row.title)}</h1>
@@ -353,7 +367,25 @@ ${row.description ? `<p class="lede">${esc(row.description)}</p>` : ''}
 ${ATTEMPT_STYLE}
 ${hasQuestions ? `
 <div id="gxAttempt" class="gx-attempt" data-kind="quiz" data-id="${row.id}" data-logged="${loggedIn ? 1 : 0}">
-  <form id="gxQuizForm">
+  <div class="gx-proctor-intro">
+    <h2>This quiz runs in full screen</h2>
+    <ul>
+      <li>The quiz opens in full screen and must stay there until you submit.</li>
+      <li>Pressing Esc, switching tabs or apps, minimising the window, connecting another display or using remote-control/automation tools counts as leaving the quiz.</li>
+      <li>The first time, you get a warning and return to full screen.</li>
+      <li><strong>The second time, the quiz stops, you can't attempt it again for 24 hours and 10 points are deducted from your score.</strong></li>
+    </ul>
+    <button type="button" class="cta gx-start">Start quiz in full screen</button>
+  </div>
+  <div class="gx-proctor-bar" hidden><span>Full-screen quiz</span><span class="gx-proctor-strikes"></span></div>
+  <div class="gx-proctor-warn" role="alertdialog" aria-modal="true" aria-labelledby="gxWarnTitle" hidden>
+    <div class="gx-proctor-box">
+      <h2 id="gxWarnTitle"></h2>
+      <p class="gx-proctor-msg"></p>
+      <button type="button" class="cta gx-return" hidden>Return to full screen</button>
+    </div>
+  </div>
+  <form id="gxQuizForm" hidden>
     ${qHtml}
     <button type="submit" class="cta gx-submit">Submit my answers</button>
   </form>

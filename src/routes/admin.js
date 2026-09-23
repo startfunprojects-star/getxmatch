@@ -546,7 +546,8 @@ router.get('/leaderboard', requireAdmin, (req, res) => {
             (SELECT AVG(stars) FROM ratings r WHERE r.ratee_id = u.id) AS rating_avg,
             (SELECT COUNT(*) FROM friendships f
                WHERE (f.requester_id = u.id OR f.addressee_id = u.id) AND f.status = 'accepted') AS friends,
-            (SELECT COUNT(*) FROM quiz_attempts q WHERE q.user_id = u.id) AS quizzes
+            (SELECT COUNT(*) FROM quiz_attempts q WHERE q.user_id = u.id) AS quizzes,
+            (SELECT COALESCE(SUM(points), 0) FROM quiz_penalties qp WHERE qp.user_id = u.id) AS penalty
      FROM users u JOIN profiles p ON p.user_id = u.id`
   ).all();
 
@@ -561,7 +562,8 @@ router.get('/leaderboard', requireAdmin, (req, res) => {
       ratingCount: r.rating_count,
       friends: r.friends,
       quizzes: r.quizzes,
-      score: Math.round(avg * 20 + r.rating_count * 5 + r.friends * 8 + r.quizzes * 3),
+      penalty: r.penalty,
+      score: Math.round(avg * 20 + r.rating_count * 5 + r.friends * 8 + r.quizzes * 3) - r.penalty,
     };
   });
   scored.sort((a, b) => b.score - a.score || b.ratingAvg - a.ratingAvg);
