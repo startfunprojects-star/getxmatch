@@ -72,4 +72,55 @@ function prune() {
   return stale.map((s) => s.image).filter(Boolean);
 }
 
-module.exports = { MAX_POSTS, SELECT, orderRows, allOrdered, byId, prune, createPost };
+// --- Audience rule: a member sees a post on the Highway only when its author is
+// "near" them — at least MIN_SHARED_INTERESTS areas of interest in common, the
+// same country, or born in the same decade. Your own posts and admin-pinned
+// posts are always visible.
+const MIN_SHARED_INTERESTS = 5;
+
+function affinityRow(userId) {
+  const r = db.prepare('SELECT country, date_of_birth, interests FROM profiles WHERE user_id = ?').get(userId);
+  let interests = [];
+  try {
+    const arr = JSON.parse((r && r.interests) || '[]');
+    if (Array.isArray(arr)) interests = arr.filter((s) => typeof s === 'string');
+  } catch (_e) { /* treat as none */ }
+  const country = r && r.country ? String(r.country).trim().toLowerCase() : '';
+  const year = r && r.date_of_birth ? parseInt(String(r.date_of_birth).slice(0, 4), 10) : NaN;
+  return {
+    country,
+    decade: Number.isFinite(year) ? Math.floor(year / 10) : null,
+    interests: new Set(interests.map((s) => s.trim().toLowerCase()).filter(Boolean)),
+  };
+}
+
+function isNear(a, b) {
+  if (a.country && a.country === b.country) return true;
+  if (a.decade !== null && a.decade === b.decade) return true;
+  let shared = 0;
+  for (const i of a.interests) {
+    if (b.interests.has(i) && ++shared >= MIN_SHARED_INTERESTS) return true;
+  }
+  return false;
+}
+
+// Returns canSee(authorId) for `viewerId`, caching each author's profile.
+function audienceFilter(viewerId) {
+  const me = affinityRow(viewerId);
+  const cache = new Map();
+  return (authorId) => {
+    if (authorId === viewerId) return true;
+    if (!cache.has(authorId)) cache.set(authorId, isNear(me, affinityRow(authorId)));
+    return cache.get(authorId);
+  };
+}
+
+// Whether `viewerId` may see a new post by `authorId` (used for live pushes).
+function canSeeAuthor(viewerId, authorId) {
+  return viewerId === authorId || isNear(affinityRow(viewerId), affinityRow(authorId));
+}
+
+module.exports = {
+  MAX_POSTS, MIN_SHARED_INTERESTS, SELECT, orderRows, allOrdered, byId, prune, createPost,
+  audienceFilter, canSeeAuthor,
+};

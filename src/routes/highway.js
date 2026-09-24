@@ -109,11 +109,13 @@ function shapePost(r, viewerId) {
 }
 
 // GET /api/highway — the pool in display order (pinned first, then newest),
-// with posts from users the viewer ignores filtered out.
+// limited to authors near the viewer (see hw.audienceFilter; pinned posts are
+// shown to everyone), with posts from users the viewer ignores filtered out.
 router.get('/', requireAuth, (req, res) => {
   const muted = new Set(ignoredIds(req.user.id));
+  const canSee = hw.audienceFilter(req.user.id);
   const posts = hw.allOrdered()
-    .filter((r) => !muted.has(r.user_id))
+    .filter((r) => !muted.has(r.user_id) && (r.pinned || canSee(r.user_id)))
     .map((r) => shapePost(r, req.user.id));
   res.json({ posts, max: hw.MAX_POSTS });
 });
@@ -142,13 +144,13 @@ router.post('/', requireAuth, postLimiter, imageUpload.single('image'), (req, re
 
   const post = shapePost(hw.byId(id), req.user.id);
 
-  // Live-push to everyone. Viewer-specific fields (mine/friendState) are filled
+  // Live-push to the members allowed to see it. Viewer-specific fields (mine/friendState) are filled
   // in per-client, so send the neutral author-centric shape.
   try {
     broadcastHighway({
       id: post.id, body: post.body, image: post.image,
       createdAt: post.createdAt, author: post.author,
-    });
+    }, (viewerId) => hw.canSeeAuthor(viewerId, req.user.id));
   } catch (_e) { /* never block the response */ }
 
   res.status(201).json({ post });

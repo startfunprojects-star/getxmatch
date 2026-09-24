@@ -158,10 +158,13 @@ function broadcastActivity(payload) {
   if (ioRef) ioRef.emit('activity:new', payload);
 }
 
-// Broadcast a new Highway post to every connected client. The client's
-// `highway:new` handler prepends it to an open Highway feed.
-function broadcastHighway(payload) {
-  if (ioRef) ioRef.emit('highway:new', payload);
+// Push a new Highway post to every online member for whom `canSee(userId)` is
+// true. The client's `highway:new` handler prepends it to an open Highway feed.
+function broadcastHighway(payload, canSee) {
+  if (!ioRef) return;
+  for (const userId of online.keys()) {
+    if (!canSee || canSee(userId)) ioRef.to(`user:${userId}`).emit('highway:new', payload);
+  }
 }
 
 // Someone liked/commented on a Highway post that was shared from a conversation.
