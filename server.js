@@ -75,6 +75,7 @@ app.use('/api/match', matchRoutes); // public: shared compatibility-quiz links
 app.use('/api/broadcast', broadcastRoutes); // public: directory of live broadcasts
 app.use('/api/ads', adsRoutes); // public: serve ads + log clicks
 app.use('/api/highway', highwayRoutes); // registered users: shared post pool
+app.use('/api/geo', require('./src/routes/geo')); // public: state / city lists for the location picker
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 

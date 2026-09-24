@@ -227,6 +227,8 @@ db.exec(`
     ['gender', 'TEXT'],
     ['date_of_birth', 'TEXT'],
     ['country', 'TEXT'],
+    ['state', 'TEXT'], // optional, picked after the country
+    ['city', 'TEXT'], // optional: a listed city or one the member typed
     ['weight', 'REAL'], // body weight in kg
 
     ['smokes', 'TEXT'],

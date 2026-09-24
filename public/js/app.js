@@ -343,8 +343,17 @@
     gender: ['Male', 'Female', 'Non-binary', 'Other', 'Prefer not to say'],
     yesNo: ['Yes', 'No', 'Occasionally', 'Prefer not to say'],
     relationshipStatus: ['Single', 'In a relationship', 'Married', "It's complicated", 'Prefer not to say'],
-    interests: ['Movies', 'Photography', 'Reading', 'Politics', 'Music', 'Travel', 'Sports',
-      'Gaming', 'Cooking', 'Fitness', 'Art', 'Technology', 'Fashion', 'Nature', 'Dancing'],
+    // Mirrors INTEREST_GROUPS / MAX_INTERESTS in src/profileFields.js.
+    interestGroups: [
+      { group: "Arts & culture", items: ['Art', 'Music', 'Movies', 'Photography', 'Dancing', 'Theatre', 'Poetry', 'Painting', 'Design', 'Architecture', 'Museums', 'Classical music'] },
+      { group: "Reading & ideas", items: ['Reading', 'Writing', 'Literature', 'Philosophy', 'History', 'Languages', 'Journalism', 'Blogging', 'Debating', 'Mythology'] },
+      { group: "Science & technology", items: ['Technology', 'Science', 'Mathematics', 'Physics', 'Astronomy', 'Biology', 'Chemistry', 'Programming', 'Artificial intelligence', 'Robotics', 'Electronics', 'Medicine'] },
+      { group: "Society & work", items: ['Politics', 'Economics', 'Psychology', 'Sociology', 'Law', 'Education', 'Environment', 'Volunteering', 'Entrepreneurship', 'Finance', 'Public speaking', 'Social causes'] },
+      { group: "Lifestyle", items: ['Travel', 'Cooking', 'Fashion', 'Fitness', 'Yoga', 'Meditation', 'Gardening', 'Pets', 'Food & dining', 'Coffee & tea', 'DIY & crafts', 'Spirituality'] },
+      { group: "Sports & outdoors", items: ['Sports', 'Nature', 'Hiking', 'Cycling', 'Running', 'Swimming', 'Cricket', 'Football', 'Badminton', 'Chess', 'Camping', 'Wildlife'] },
+      { group: "Entertainment", items: ['Gaming', 'Podcasts', 'Stand-up comedy', 'Anime', 'TV series', 'Board games', 'Puzzles', 'Quizzes'] },
+    ],
+    maxInterests: 10,
   };
   const MAX_GALLERY = 25;
   const MAX_BUFFER = 10;
@@ -760,16 +769,31 @@
             <label>Relationship status</label>
             ${selectHtml('relationshipStatus', OPT.relationshipStatus, e.relationshipStatus, 'Select…')}
           </div>
+          <div>
+            <label>State</label>
+            <select id="state" disabled><option value="">Select country first</option></select>
+          </div>
+          <div>
+            <label>City</label>
+            <select id="citySelect" disabled><option value="">Select state first</option></select>
+            <input id="cityCustom" class="hidden" maxlength="80" placeholder="Type your city" style="margin-top:6px" />
+          </div>
         </div>
 
         <label>About me</label>
         <textarea id="about" maxlength="500" placeholder="Tell people a bit about you">${esc(e.about || '')}</textarea>
 
-        <label>Interests</label>
-        <div class="chip-picker" id="interestPicker">
-          ${OPT.interests.map((i) =>
-            `<label class="chip${selectedInterests.has(i) ? ' on' : ''}"><input type="checkbox" value="${esc(i)}"${selectedInterests.has(i) ? ' checked' : ''}/>${esc(i)}</label>`
-          ).join('')}
+        <label>Areas of interest <span class="hint" id="interestCount"></span></label>
+        <div id="interestPicker">
+          ${OPT.interestGroups.map((g) => `
+            <div class="interest-group">
+              <div class="interest-group-title">${esc(g.group)}</div>
+              <div class="chip-picker">
+                ${g.items.map((i) =>
+                  `<label class="chip${selectedInterests.has(i) ? ' on' : ''}"><input type="checkbox" value="${esc(i)}"${selectedInterests.has(i) ? ' checked' : ''}/>${esc(i)}</label>`
+                ).join('')}
+              </div>
+            </div>`).join('')}
         </div>
 
         <div class="privacy-toggle">
@@ -802,11 +826,80 @@
       wrap.querySelector('#avPreview').src = URL.createObjectURL(avatarFile);
     });
 
-    // Toggle chip highlight with its checkbox.
-    wrap.querySelectorAll('#interestPicker .chip').forEach((chip) => {
-      const cb = chip.querySelector('input');
-      cb.addEventListener('change', () => chip.classList.toggle('on', cb.checked));
+    // Toggle chip highlight with its checkbox, allowing at most
+    // OPT.maxInterests picks: once full, the unpicked chips are disabled.
+    const interestBoxes = Array.from(wrap.querySelectorAll('#interestPicker input'));
+    const syncInterests = () => {
+      const n = interestBoxes.filter((c) => c.checked).length;
+      const full = n >= OPT.maxInterests;
+      interestBoxes.forEach((c) => {
+        c.disabled = full && !c.checked;
+        c.closest('.chip').classList.toggle('disabled', c.disabled);
+      });
+      wrap.querySelector('#interestCount').textContent = `${n} / ${OPT.maxInterests} selected`;
+    };
+    interestBoxes.forEach((cb) => {
+      cb.addEventListener('change', () => {
+        cb.closest('.chip').classList.toggle('on', cb.checked);
+        syncInterests();
+      });
     });
+    syncInterests();
+
+    // Cascading location: country → state → city. The city list ends with a
+    // "not listed" option that reveals a free-text box.
+    const CITY_OTHER = '__other__';
+    const countrySel = wrap.querySelector('#country');
+    const stateSel = wrap.querySelector('#state');
+    const citySel = wrap.querySelector('#citySelect');
+    const cityCustom = wrap.querySelector('#cityCustom');
+    const fillSelect = (sel, items, placeholder, current) => {
+      sel.innerHTML = `<option value="">${esc(placeholder)}</option>` +
+        items.map((i) => `<option value="${esc(i)}"${i === current ? ' selected' : ''}>${esc(i)}</option>`).join('');
+    };
+    const showCustomCity = (on, value) => {
+      cityCustom.classList.toggle('hidden', !on);
+      if (value != null) cityCustom.value = value;
+    };
+    async function loadCities(current) {
+      showCustomCity(false, '');
+      const st = stateSel.value;
+      if (!st) {
+        fillSelect(citySel, [], 'Select state first');
+        citySel.disabled = true;
+        return;
+      }
+      let cities = [];
+      try {
+        cities = (await api.get('/api/geo/cities?country=' + encodeURIComponent(countrySel.value) +
+          '&state=' + encodeURIComponent(st))).cities;
+      } catch (_e) { /* fall back to typing the city */ }
+      fillSelect(citySel, cities, 'Select city', current);
+      citySel.insertAdjacentHTML('beforeend', `<option value="${CITY_OTHER}">My city is not listed (type it)</option>`);
+      citySel.disabled = false;
+      if (current && !cities.includes(current)) {
+        citySel.value = CITY_OTHER;
+        showCustomCity(true, current);
+      }
+    }
+    async function loadStates(current, currentCity) {
+      const c = countrySel.value;
+      let states = [];
+      if (c) {
+        try { states = (await api.get('/api/geo/states?country=' + encodeURIComponent(c))).states; } catch (_e) {}
+      }
+      fillSelect(stateSel, states, !c ? 'Select country first' : states.length ? 'Select state' : 'No states listed', current);
+      stateSel.disabled = !states.length;
+      await loadCities(currentCity);
+    }
+    countrySel.addEventListener('change', () => loadStates(null, null));
+    stateSel.addEventListener('change', () => loadCities(null));
+    citySel.addEventListener('change', () => {
+      const other = citySel.value === CITY_OTHER;
+      showCustomCity(other, other ? undefined : '');
+      if (other) cityCustom.focus();
+    });
+    loadStates(e.state || null, e.city || null);
 
     const back = wrap.querySelector('#backBtn');
     if (back) back.addEventListener('click', () => enterApp());
@@ -822,6 +915,8 @@
       fd.append('gender', val('gender'));
       fd.append('dateOfBirth', val('dateOfBirth'));
       fd.append('country', val('country'));
+      fd.append('state', stateSel.value);
+      fd.append('city', citySel.value === CITY_OTHER ? cityCustom.value.trim() : citySel.value);
       fd.append('relationshipStatus', val('relationshipStatus'));
       fd.append('about', val('about'));
       fd.append('interests', JSON.stringify(interests));
@@ -4351,7 +4446,8 @@
     const badges = [];
     if (profile.age != null) badges.push(`🎂 ${profile.age}`);
     if (profile.gender) badges.push(`${genderIcon(profile.gender)} ${esc(profile.gender)}`);
-    if (profile.country) badges.push(`📍 ${esc(profile.country)}`);
+    const place = [profile.city, profile.state, profile.country].filter(Boolean).join(', ');
+    if (place) badges.push(`📍 ${esc(place)}`);
     const badgesHtml = badges.map((b) => `<span class="badge">${b}</span>`).join('');
 
 

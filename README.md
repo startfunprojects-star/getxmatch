@@ -15,10 +15,11 @@ self-host on a single VPS: no external database or storage service required.
   and reset only via a **single-use link emailed to `ADMIN_EMAIL`**; each new
   request invalidates the previous link.
 - **Rich profiles** — created *after* signup. **Gender, date of birth (18+
-  enforced), and country are required**; everything else is optional: sexuality,
-  smoking/alcohol/diet, an "About me", a "what kind of person you are" blurb,
-  a multi-select of interests, relationship status (optionally linked to another
-  user), and an optional 18+ intimacy section. Each profile also has a display
+  enforced), and country are required**; everything else is optional: state
+  and city (cascading pickers — after the country pick a state, then a city, or
+  type the city if it isn't listed; data from `country-state-city`), an "About
+  me", **up to 10 areas of interest** from ~80 grouped choices, and relationship
+  status. Each profile also has a display
   picture and a **photo gallery of up to 25 images**. Profile images are stored
   on the server.
 - **Ratings, comments & friends** — other users can leave a **1–5 star rating**

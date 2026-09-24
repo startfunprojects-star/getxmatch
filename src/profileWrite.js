@@ -7,6 +7,7 @@ const db = require('./db');
 const config = require('./config');
 const { buildProfile } = require('./profileData');
 const F = require('./profileFields');
+const geo = require('./geo');
 
 function removeUpload(filename) {
   if (!filename) return;
@@ -58,6 +59,23 @@ function saveProfile(userId, body, file) {
   const country = (b.country || '').trim();
   if (!country || country.length > 60) return fail('Please select a country.');
 
+  // --- Optional state + city. The state must be one listed for the country;
+  // the city may be a listed one or a name the member typed. When the fields
+  // are absent (the admin editor doesn't render them) keep the saved values,
+  // unless the country changed, which makes them stale.
+  const cur = db.prepare('SELECT country, state, city FROM profiles WHERE user_id = ?').get(userId);
+  let state = null;
+  let city = null;
+  if (b.state == null && b.city == null) {
+    if (cur && cur.country === country) { state = cur.state; city = cur.city; }
+  } else {
+    state = String(b.state || '').trim() || null;
+    if (state && !geo.states(country).includes(state)) return fail('Please select a valid state.');
+    city = String(b.city || '').trim().replace(/\s+/g, ' ') || null;
+    if (city && !state) return fail('Please select a state before the city.');
+    if (city && city.length > 80) return fail('City name must be 80 characters or fewer.');
+  }
+
   // Weight, smoking, alcohol, diet, sexuality, "what kind of person", the
   // intimacy fields and the partner link are no longer part of the profile:
   // they aren't collected, shown or returned by the API. Values saved before
@@ -98,6 +116,9 @@ function saveProfile(userId, body, file) {
     }
     interests = arr.map((s) => String(s).trim()).filter((s) => F.INTERESTS.includes(s));
     interests = [...new Set(interests)]; // de-dupe, keep order
+    if (interests.length > F.MAX_INTERESTS) {
+      return fail(`You can pick up to ${F.MAX_INTERESTS} areas of interest.`);
+    }
   }
 
   const now = Date.now();
@@ -115,22 +136,22 @@ function saveProfile(userId, body, file) {
     db.prepare(
       `UPDATE profiles SET
          display_name = ?, bio = ?, avatar = ?,
-         gender = ?, date_of_birth = ?, country = ?, interests = ?,
+         gender = ?, date_of_birth = ?, country = ?, state = ?, city = ?, interests = ?,
          relationship_status = ?, friends_visibility = ?, hidden = ?, updated_at = ?
        WHERE user_id = ?`
     ).run(
       displayName, about, avatar,
-      gender, dob, country, interestsJson,
+      gender, dob, country, state, city, interestsJson,
       relStatus.value, friendsVisibility, hidden, now, userId
     );
   } else {
     db.prepare(
       `INSERT INTO profiles
-         (user_id, display_name, bio, avatar, gender, date_of_birth, country, interests,
+         (user_id, display_name, bio, avatar, gender, date_of_birth, country, state, city, interests,
           relationship_status, friends_visibility, hidden, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
-      userId, displayName, about, avatar, gender, dob, country, interestsJson,
+      userId, displayName, about, avatar, gender, dob, country, state, city, interestsJson,
       relStatus.value, friendsVisibility, hidden, now
     );
   }

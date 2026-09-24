@@ -833,7 +833,7 @@ router.get('/u/:username', optionalAuth, (req, res) => {
   const badges = [
     age != null ? `<span class="pf-badge">🎂 ${age}</span>` : '',
     pr.gender ? `<span class="pf-badge">${genderGlyph(pr.gender)} ${esc(pr.gender)}</span>` : '',
-    pr.country ? `<span class="pf-badge">📍 ${esc(pr.country)}</span>` : '',
+    pr.country ? `<span class="pf-badge">📍 ${esc([pr.city, pr.state, pr.country].filter(Boolean).join(', '))}</span>` : '',
   ].filter(Boolean).join('');
 
   const details = [

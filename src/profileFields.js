@@ -24,23 +24,19 @@ const FRIENDS_VISIBILITY = ['public', 'friends', 'hidden'];
 //   private — only the owner
 const GIF_VISIBILITY = ['public', 'friends', 'private'];
 
-const INTERESTS = [
-  'Movies',
-  'Photography',
-  'Reading',
-  'Politics',
-  'Music',
-  'Travel',
-  'Sports',
-  'Gaming',
-  'Cooking',
-  'Fitness',
-  'Art',
-  'Technology',
-  'Fashion',
-  'Nature',
-  'Dancing',
+// Areas of interest, grouped for the profile editor. A member may pick up to
+// MAX_INTERESTS of them. The frontend mirrors this list (OPT.interestGroups).
+const INTEREST_GROUPS = [
+  { group: "Arts & culture", items: ['Art', 'Music', 'Movies', 'Photography', 'Dancing', 'Theatre', 'Poetry', 'Painting', 'Design', 'Architecture', 'Museums', 'Classical music'] },
+  { group: "Reading & ideas", items: ['Reading', 'Writing', 'Literature', 'Philosophy', 'History', 'Languages', 'Journalism', 'Blogging', 'Debating', 'Mythology'] },
+  { group: "Science & technology", items: ['Technology', 'Science', 'Mathematics', 'Physics', 'Astronomy', 'Biology', 'Chemistry', 'Programming', 'Artificial intelligence', 'Robotics', 'Electronics', 'Medicine'] },
+  { group: "Society & work", items: ['Politics', 'Economics', 'Psychology', 'Sociology', 'Law', 'Education', 'Environment', 'Volunteering', 'Entrepreneurship', 'Finance', 'Public speaking', 'Social causes'] },
+  { group: "Lifestyle", items: ['Travel', 'Cooking', 'Fashion', 'Fitness', 'Yoga', 'Meditation', 'Gardening', 'Pets', 'Food & dining', 'Coffee & tea', 'DIY & crafts', 'Spirituality'] },
+  { group: "Sports & outdoors", items: ['Sports', 'Nature', 'Hiking', 'Cycling', 'Running', 'Swimming', 'Cricket', 'Football', 'Badminton', 'Chess', 'Camping', 'Wildlife'] },
+  { group: "Entertainment", items: ['Gaming', 'Podcasts', 'Stand-up comedy', 'Anime', 'TV series', 'Board games', 'Puzzles', 'Quizzes'] },
 ];
+const INTERESTS = INTEREST_GROUPS.flatMap((g) => g.items);
+const MAX_INTERESTS = 10;
 
 const MAX_GALLERY_PHOTOS = 25;
 const MAX_BUFFER_PHOTOS = 10;
@@ -74,7 +70,9 @@ module.exports = {
   RELATIONSHIP_STATUS,
   FRIENDS_VISIBILITY,
   GIF_VISIBILITY,
+  INTEREST_GROUPS,
   INTERESTS,
+  MAX_INTERESTS,
   MAX_GALLERY_PHOTOS,
   MAX_BUFFER_PHOTOS,
   MAX_GIFS,

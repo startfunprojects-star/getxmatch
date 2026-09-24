@@ -283,7 +283,7 @@ function buildProfile(userId, viewerId) {
     .prepare(
       `SELECT u.id, u.username,
               p.display_name, p.bio, p.avatar, p.updated_at,
-              p.gender, p.date_of_birth, p.country, p.interests,
+              p.gender, p.date_of_birth, p.country, p.state, p.city, p.interests,
               p.relationship_status, p.friends_visibility,
               p.gif_visibility, p.hidden
        FROM users u JOIN profiles p ON p.user_id = u.id
@@ -345,6 +345,8 @@ function buildProfile(userId, viewerId) {
     dateOfBirth: row.date_of_birth || null,
     age: ageFromDob(row.date_of_birth),
     country: row.country || null,
+    state: row.state || null,
+    city: row.city || null,
     interests: parseInterests(row.interests),
     relationshipStatus: row.relationship_status || null,
     gallery,
