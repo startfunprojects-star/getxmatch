@@ -42,7 +42,10 @@ self-host on a single VPS: no external database or storage service required.
   posted it, and viewers can send that person a relationship request straight
   from the post. Members only see posts from people **near** them — at least
   **5 shared areas of interest**, the **same country**, or born in the **same
-  decade** (their own and admin-pinned posts are always shown). The pool keeps only the **newest 100 posts** — older ones (and
+  decade** (their own and admin-pinned posts are always shown). Every picture a
+  member uploads — profile picture, gallery photo, picture buffer or Recent
+  Activity image — is also posted to the Highway automatically (as a copy) and
+  reaches the same audience. The pool keeps only the **newest 100 posts** — older ones (and
   their images) are pruned automatically as new posts arrive — and updates live
   over the socket. There's a **public, read-only `/highway` page** (linked from
   the homepage menu) so logged-out visitors can browse posts too. From the admin

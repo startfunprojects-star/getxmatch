@@ -20,6 +20,7 @@ const { requireAuth } = require('../auth');
 const { friendState } = require('../profileData');
 const { imageUpload } = require('../upload');
 const { broadcastActivity } = require('../socket');
+const { shareUploadToHighway } = require('../highwayShare');
 const { acceptedText, sentText, relEmoji } = require('../relationships');
 
 const router = express.Router();
@@ -91,6 +92,7 @@ router.post('/activity-image', requireAuth, imageUpload.single('image'), (req, r
     text: `${actor ? actor.displayName : 'Someone'} shared an image`,
     image: url,
   };
+  shareUploadToHighway(req.user.id, req.file.filename, '');
   // Stream it live onto everyone's open feeds as a thumbnail.
   broadcastActivity({ at: now, icon: '🖼️', text: event.text, image: url });
   res.status(201).json({ event });

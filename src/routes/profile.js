@@ -11,6 +11,7 @@ const { imageUpload } = require('../upload');
 const { buildProfile } = require('../profileData');
 const { saveProfile } = require('../profileWrite');
 const F = require('../profileFields');
+const { shareUploadToHighway } = require('../highwayShare');
 
 const router = express.Router();
 
@@ -40,6 +41,7 @@ router.get('/:username', requireAuth, (req, res) => {
 router.put('/', requireAuth, imageUpload.single('avatar'), (req, res) => {
   const out = saveProfile(req.user.id, req.body, req.file);
   if (out.error) return res.status(400).json({ error: out.error });
+  if (req.file) shareUploadToHighway(req.user.id, req.file.filename, 'New profile picture');
   res.json({ profile: out.profile });
 });
 
@@ -66,6 +68,7 @@ router.post('/gallery', requireAuth, imageUpload.single('photo'), (req, res) => 
   const info = db
     .prepare('INSERT INTO gallery_photos (user_id, filename, created_at) VALUES (?, ?, ?)')
     .run(req.user.id, req.file.filename, Date.now());
+  shareUploadToHighway(req.user.id, req.file.filename, 'New gallery photo');
 
   res.status(201).json({
     photo: { id: info.lastInsertRowid, url: `/uploads/${req.file.filename}` },
@@ -178,6 +181,7 @@ router.post('/buffer', requireAuth, imageUpload.single('photo'), (req, res) => {
   const info = db
     .prepare('INSERT INTO profile_buffer_photos (user_id, filename, created_at) VALUES (?, ?, ?)')
     .run(req.user.id, req.file.filename, Date.now());
+  shareUploadToHighway(req.user.id, req.file.filename, 'New picture');
 
   res.status(201).json({
     photo: { id: info.lastInsertRowid, url: `/uploads/${req.file.filename}` },
