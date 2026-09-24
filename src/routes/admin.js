@@ -194,6 +194,7 @@ router.post('/users', requireAdmin, (req, res) => {
   const info = db
     .prepare('INSERT INTO users (username, email, password_hash, created_at) VALUES (?, NULL, ?, ?)')
     .run(username, bcrypt.hashSync(password, 12), now);
+  require('../referrals').ensureCode(info.lastInsertRowid);
 
   // Always seed a minimal profile so the account is browsable and its name
   // resolves everywhere. Without a profile row the user is excluded from the
@@ -658,6 +659,19 @@ function normalizeSiteSeo(body) {
   out.socialLinks = normalizeSocialLinks(o.socialLinks);
   return out;
 }
+
+// GET /api/admin/referrals — the on/off switch plus referral totals.
+router.get('/referrals', requireAdmin, (req, res) => {
+  res.json(require('../referrals').stats());
+});
+
+// PUT /api/admin/referrals { enabled } — switch every Refer button, referral
+// code display and referral link on or off.
+router.put('/referrals', requireAdmin, (req, res) => {
+  const referrals = require('../referrals');
+  referrals.setEnabled(!!(req.body && req.body.enabled));
+  res.json(referrals.stats());
+});
 
 // GET /api/admin/site-seo — current settings, the brand defaults each field
 // falls back to, and the public base URL (for building the live share preview).

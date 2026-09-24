@@ -510,11 +510,18 @@
     } catch (_e) { /* user may not exist / be blocked */ }
   }
 
+  let pendingReferral = '';
+  let referralsOn = false; // admin switch, read at boot
   async function boot() {
     const params = new URLSearchParams(location.search);
     const wantSignup = params.get('signup') === '1';
     pendingChatUser = params.get('chat');
     pendingViewUser = params.get('view');
+    // A referral link (/?ref=CODE) opens sign-up with the code filled in.
+    const ref = (params.get('ref') || '').trim().toUpperCase();
+    if (ref) pendingReferral = ref;
+    try { referralsOn = !!(await api.get('/api/auth/referrals')).enabled; } catch (_e) { referralsOn = false; }
+    if (!referralsOn) pendingReferral = '';
     if (location.search) history.replaceState(null, '', location.pathname); // tidy the URL
     try {
       const { user, hasProfile } = await api.get('/api/auth/me');
@@ -523,7 +530,7 @@
       return enterApp();
     } catch (e) {
       if (e.data && e.data.suspended) return showSuspendedScreen(e.data);
-      return renderAuth(wantSignup ? 'signup' : 'login');
+      return renderAuth(wantSignup || pendingReferral ? 'signup' : 'login');
     }
   }
 
@@ -585,6 +592,8 @@
             <input name="email" type="email" autocomplete="email" placeholder="you@example.com" required />
             <label>Password</label>
             <input name="password" type="password" autocomplete="new-password" placeholder="At least 8 characters" required />
+            ${referralsOn ? `<label>Referral code <span class="hint">(optional)</span></label>
+            <input name="referralCode" maxlength="16" autocomplete="off" placeholder="If someone referred you" value="${esc(pendingReferral)}" style="text-transform:uppercase" />` : ''}
             <div class="checkbox-row">
               <input type="checkbox" name="ageConfirmed" id="age" />
               <label for="age" style="margin:0">I confirm I am 18 years of age or older and agree to the terms.</label>
@@ -630,6 +639,7 @@
             email: fd.get('email'),
             password: fd.get('password'),
             ageConfirmed: fd.get('ageConfirmed') === 'on',
+            referralCode: String(fd.get('referralCode') || '').trim(),
           });
           return renderOtp(String(fd.get('email')).toLowerCase());
         }
@@ -4486,7 +4496,10 @@
             ${!isMe ? `<span id="pvBlock"></span>` : ''}
             ${isMe ? '<button class="ghost" id="pvEdit">✎ Edit profile</button>' : ''}
             <button class="ghost" id="pvShare" title="Copy a shareable link to this profile">🔗 Share</button>
+            ${isMe && profile.referralCode ? '<button class="ghost" id="pvRefer" title="Invite someone to join getxmatch with your referral code">🎟️ Refer</button>' : ''}
           </div>
+          ${isMe && profile.referralCode ? `<div class="referral-box">Your referral code: <b class="referral-code">${esc(profile.referralCode)}</b>
+            <span class="hint">You get 4 points for everyone who joins with it, and they get 2.</span></div>` : ''}
           ${isMe ? '<div class="follow-fee-box" id="pvFollowFee"></div>' : ''}
         </div>
 
@@ -4854,6 +4867,20 @@
           catch (_e) { /* user cancelled or unsupported — fall back to copy */ }
         }
         try { await navigator.clipboard.writeText(link); notifyToast('Profile link copied to share'); }
+        catch (_e) { prompt('Copy this link to share:', link); }
+      });
+    }
+    // Refer: same as Share, but the link invites someone to sign up with my code.
+    const referBtn = view.querySelector('#pvRefer');
+    if (referBtn) {
+      const link = location.origin + '/?ref=' + encodeURIComponent(profile.referralCode);
+      const text = `Join me on getxmatch! Use my referral code ${profile.referralCode} when you sign up.`;
+      referBtn.addEventListener('click', async () => {
+        if (navigator.share) {
+          try { await navigator.share({ title: 'Join getxmatch', text, url: link }); return; }
+          catch (_e) { /* user cancelled or unsupported — fall back to copy */ }
+        }
+        try { await navigator.clipboard.writeText(link); notifyToast('Referral link copied to share'); }
         catch (_e) { prompt('Copy this link to share:', link); }
       });
     }

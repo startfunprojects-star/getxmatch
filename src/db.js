@@ -880,4 +880,17 @@ db.exec(`
   if (!mcols.includes('points_awarded')) db.exec('ALTER TABLE quiz_matches ADD COLUMN points_awarded INTEGER NOT NULL DEFAULT 0;');
 })();
 
+// --- Migration: referrals. users.referral_code is each member's fixed code;
+// users.referred_by links a member to whoever referred them. A pending signup
+// keeps the code it was started with until the email is verified.
+(function migrateReferrals() {
+  const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!cols.includes('referral_code')) db.exec('ALTER TABLE users ADD COLUMN referral_code TEXT;');
+  if (!cols.includes('referred_by')) db.exec('ALTER TABLE users ADD COLUMN referred_by INTEGER;');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code ON users (referral_code);');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users (referred_by);');
+  const ocols = db.prepare('PRAGMA table_info(email_otps)').all().map((c) => c.name);
+  if (!ocols.includes('referral_code')) db.exec('ALTER TABLE email_otps ADD COLUMN referral_code TEXT;');
+})();
+
 module.exports = db;

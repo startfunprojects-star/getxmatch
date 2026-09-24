@@ -22,6 +22,12 @@ self-host on a single VPS: no external database or storage service required.
   status. Each profile also has a display
   picture and a **photo gallery of up to 25 images**. Profile images are stored
   on the server.
+- **Referrals** — every member has a fixed referral code (it can't be changed),
+  shown on their own profile with a **Refer** button that shares a sign-up link
+  (`/?ref=CODE`) just like the profile Share button. When someone joins with the
+  code, the referrer earns **4 points** and the new member **2 points**. The
+  admin dashboard's **Referrals** tab switches all referral buttons, codes and
+  links on or off (points already earned are kept) and lists top referrers.
 - **Ratings, comments & friends** — other users can leave a **1–5 star rating**
   and **public comments** on a profile, and send **friend requests**
   (request → accept/decline → unfriend). The friends list is public.

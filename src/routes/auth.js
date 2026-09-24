@@ -5,6 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
 
+const referrals = require('../referrals');
 const db = require('../db');
 const config = require('../config');
 const { sendSignupOtp } = require('../mail');
@@ -35,6 +36,8 @@ function sha256(s) {
 // stash the pending signup. No user row is created until the code is verified.
 router.post('/signup/start', authLimiter, async (req, res) => {
   const { username, email, password, ageConfirmed } = req.body || {};
+  // Referral codes are ignored while the admin has referrals switched off.
+  const referralCode = referrals.enabled() ? referrals.normalize(req.body && req.body.referralCode) : '';
 
   if (!ageConfirmed) {
     return res.status(400).json({ error: 'You must confirm you are 18 or older.' });
@@ -57,22 +60,27 @@ router.post('/signup/start', authLimiter, async (req, res) => {
     return res.status(409).json({ error: 'That username or email is already taken.' });
   }
 
+  if (referralCode && !referrals.referrerId(referralCode)) {
+    return res.status(400).json({ error: 'That referral code is not valid. Check it or leave it blank.' });
+  }
+
   const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
   const now = Date.now();
   const passwordHash = bcrypt.hashSync(password, 12);
 
   // Upsert the pending signup for this email (replaces any prior attempt).
   db.prepare(
-    `INSERT INTO email_otps (email, username, password_hash, code_hash, attempts, expires_at, created_at)
-     VALUES (?, ?, ?, ?, 0, ?, ?)
+    `INSERT INTO email_otps (email, username, password_hash, code_hash, attempts, expires_at, created_at, referral_code)
+     VALUES (?, ?, ?, ?, 0, ?, ?, ?)
      ON CONFLICT(email) DO UPDATE SET
        username = excluded.username,
+       referral_code = excluded.referral_code,
        password_hash = excluded.password_hash,
        code_hash = excluded.code_hash,
        attempts = 0,
        expires_at = excluded.expires_at,
        created_at = excluded.created_at`
-  ).run(emailLc, username, passwordHash, sha256(code), now + config.otpTtlMs, now);
+  ).run(emailLc, username, passwordHash, sha256(code), now + config.otpTtlMs, now, referralCode || null);
 
   try {
     await sendSignupOtp(emailLc, code);
@@ -125,6 +133,8 @@ router.post('/signup/verify', authLimiter, (req, res) => {
   db.prepare('DELETE FROM email_otps WHERE email = ?').run(emailLc);
 
   const user = { id: info.lastInsertRowid, username: pending.username, email: emailLc };
+  referrals.ensureCode(user.id);
+  if (pending.referral_code) referrals.applyReferral(user.id, pending.referral_code);
   recordLogin(user.id);
   setAuthCookie(res, signToken(user));
 
@@ -177,6 +187,12 @@ router.post('/logout', (req, res) => {
 });
 
 // GET /api/auth/me
+// GET /api/auth/referrals — public: whether referrals are switched on (the
+// sign-up form shows the referral field and honours ?ref= links only then).
+router.get('/referrals', (req, res) => {
+  res.json({ enabled: referrals.enabled() });
+});
+
 router.get('/me', requireAuth, (req, res) => {
   const profile = db.prepare('SELECT user_id FROM profiles WHERE user_id = ?').get(req.user.id);
   res.json({ user: publicUser(req.user), hasProfile: !!profile });

@@ -5,6 +5,7 @@ const { followSummary } = require('./follows');
 const { ageFromDob } = require('./profileFields');
 const { blockState, ignoreState } = require('./relations');
 const { isOnline } = require('./socket');
+const referrals = require('./referrals');
 
 // Compute the friendship state between the viewer and a profile owner.
 // Returns one of: 'self' | 'friends' | 'incoming' | 'outgoing' | 'none'.
@@ -378,6 +379,8 @@ function buildProfile(userId, viewerId) {
     isMe,
     // "Hidden from search" is a private setting — only the owner sees its state.
     hidden: isMe ? !!row.hidden : undefined,
+    // The owner's fixed referral code (only they see it).
+    referralCode: isMe && referrals.enabled() ? referrals.ensureCode(row.id) : undefined,
     updatedAt: row.updated_at,
   };
 }

@@ -23,6 +23,10 @@ const WEIGHTS = {
   // Follows: each follower pays the fee they followed at; the member followed
   // earns double (src/follows.js). Default fee 1 → -1 / +2.
   followGainMultiplier: 2,
+  // Referrals (src/referrals.js): per new member who joined with your code,
+  // and once to a member who joined with someone's code.
+  referrer: 4,
+  referred: 2,
 };
 
 function rankedUsers() {
@@ -50,6 +54,8 @@ function rankedUsers() {
                 WHERE qm.a_user_id = u.id AND qm.points_awarded = 1)           AS shares_completed,
               (SELECT COUNT(*) FROM quiz_matches qm
                 WHERE qm.b_user_id = u.id AND qm.points_awarded = 1)           AS shared_answered,
+              (SELECT COUNT(*) FROM users ru WHERE ru.referred_by = u.id)      AS referrals,
+              (CASE WHEN u.referred_by IS NULL THEN 0 ELSE 1 END)              AS was_referred,
               (SELECT COALESCE(SUM(points), 0) FROM quiz_penalties qp
                 WHERE qp.user_id = u.id)                                       AS penalty
        FROM users u
@@ -74,6 +80,8 @@ function rankedUsers() {
           r.polls * WEIGHTS.poll +
           r.shares_completed * WEIGHTS.shareCompleted +
           r.shared_answered * WEIGHTS.answerShared +
+          r.referrals * WEIGHTS.referrer +
+          r.was_referred * WEIGHTS.referred +
           r.follow_fees_in * WEIGHTS.followGainMultiplier -
           r.follow_fees_out
       ) - r.penalty;
@@ -92,6 +100,7 @@ function rankedUsers() {
       polls: r.polls,
       followers: r.followers,
       matches: r.shares_completed + r.shared_answered,
+      referrals: r.referrals,
       penalty: r.penalty,
       points,
       score: points, // legacy name

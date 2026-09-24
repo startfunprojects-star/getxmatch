@@ -358,6 +358,7 @@
     ['ads', 'Ads'],
     ['highway', 'Highway'],
     ['seo', 'Site SEO'],
+    ['referrals', 'Referrals'],
     ['leaderboard', 'Leaderboard'],
   ];
 
@@ -407,6 +408,7 @@
     if (tab === 'highway') return renderHighwayTab();
     if (tab === 'seo') return renderSeoTab();
     if (tab === 'leaderboard') return renderLeaderboardTab();
+    if (tab === 'referrals') return renderReferralsTab();
   }
 
   function tabHost() { return document.getElementById('tabContent'); }
@@ -1510,9 +1512,37 @@
      Leaderboard tab (read-only oversight)
   ================================================================== */
   let leaderboardCache = [];
+  async function renderReferralsTab() {
+    const host = tabHost();
+    host.innerHTML = '<div class="admin-card"><h2>Referrals</h2><p class="count">Loading…</p></div>';
+    let data;
+    try { data = await api.get('/api/admin/referrals'); }
+    catch (e) { if (e.status === 401) return renderLogin(true); host.innerHTML = `<div class="admin-card"><p class="msg error">${esc(e.message)}</p></div>`; return; }
+    const paint = (d) => {
+      host.innerHTML = `
+        <div class="admin-card">
+          <h2>Referrals</h2>
+          <p class="count">Each member has a fixed referral code. Whoever refers a new member earns <b>4 points</b>; the new member earns <b>2 points</b>.
+            Switching referrals off hides every Refer button and referral code, stops referral links from filling in the code and ignores codes at sign-up. Points already earned are kept.</p>
+          <label class="switch-row"><input type="checkbox" id="refEnabled"${d.enabled ? ' checked' : ''} /> <span>Referrals are <b>${d.enabled ? 'ON' : 'OFF'}</b></span></label>
+          <div class="msg" id="refMsg"></div>
+          <p class="count">${d.totalReferred} member(s) joined with a referral code.</p>
+          <div class="table-scroll"><table class="users"><thead><tr><th>User</th><th>Code</th><th>Referred</th></tr></thead><tbody>
+            ${d.top.length ? d.top.map((r) => `<tr><td><strong>${esc(r.display_name || r.username)}</strong><div class="pill">@${esc(r.username)}</div></td><td><code>${esc(r.referral_code || '')}</code></td><td>${r.referrals}</td></tr>`).join('')
+              : '<tr><td colspan="3" class="count">No referrals yet.</td></tr>'}
+          </tbody></table></div>
+        </div>`;
+      host.querySelector('#refEnabled').addEventListener('change', async (ev) => {
+        try { paint(await api.put('/api/admin/referrals', { enabled: ev.target.checked })); }
+        catch (e) { const m = host.querySelector('#refMsg'); m.textContent = e.message; m.className = 'msg error'; ev.target.checked = !ev.target.checked; }
+      });
+    };
+    paint(data);
+  }
+
   async function renderLeaderboardTab() {
     const host = tabHost();
-    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Ranked by points (highest first; equal points share a rank). Points come from ratings, Highway likes, friends, quiz points, polls (5 per poll voted in), completed compatibility links (10 to the sharer, 5 to the responder) and followers (double each follower’s fee; following costs the followee’s fee), minus deductions for stopped quizzes.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Likes</th><th>Polls</th><th>Points</th></tr></thead><tbody id="lbRows"><tr><td colspan="8" class="count">Loading…</td></tr></tbody></table></div><div id="lbPager"></div></div>';
+    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Ranked by points (highest first; equal points share a rank). Points come from ratings, Highway likes, friends, quiz points, polls (5 per poll voted in), completed compatibility links (10 to the sharer, 5 to the responder), referrals (4 to the referrer, 2 to the new member) and followers (double each follower’s fee; following costs the followee’s fee), minus deductions for stopped quizzes.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Likes</th><th>Polls</th><th>Points</th></tr></thead><tbody id="lbRows"><tr><td colspan="8" class="count">Loading…</td></tr></tbody></table></div><div id="lbPager"></div></div>';
     const rowsEl = host.querySelector('#lbRows');
     try { leaderboardCache = (await api.get('/api/admin/leaderboard')).leaderboard; }
     catch (e) { if (e.status === 401) return renderLogin(true); rowsEl.innerHTML = `<tr><td colspan="8" class="count">${esc(e.message)}</td></tr>`; return; }

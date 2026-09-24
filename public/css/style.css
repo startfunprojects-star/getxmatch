@@ -516,6 +516,9 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .chip input { width: auto; display: none; }
 .chip.on { background: color-mix(in srgb, var(--accent) 15%, transparent); border-color: var(--accent); color: var(--text); }
 .chip.static { cursor: default; }
+.referral-box { margin-top: 10px; font-size: 14px; }
+.referral-box .referral-code { font-family: ui-monospace, monospace; letter-spacing: .08em; }
+.referral-box .hint { display: block; }
 .chip.disabled { opacity: .45; cursor: not-allowed; }
 .interest-group { margin-bottom: 12px; }
 .interest-group-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 6px; }
