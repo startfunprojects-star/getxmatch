@@ -676,11 +676,13 @@
       <label>Description</label><input id="quizDesc" value="${esc(quiz ? quiz.description : '')}" />
       <label>Quiz type</label>
       <select id="quizType">
-        <option value="compatibility"${!quiz || quiz.type === 'compatibility' ? ' selected' : ''}>Compatibility Quiz — share a link after attempting</option>
+        <option value="standard"${!quiz || quiz.type === 'standard' ? ' selected' : ''}>Standard Quiz — timed questions, no sharing</option>
+        <option value="compatibility"${quiz && quiz.type === 'compatibility' ? ' selected' : ''}>Compatibility Quiz — share a link after attempting</option>
       </select>
+      <p class="count">Standard: members answer the timed questions and earn each question's points. Members see a "Compatibility Quiz" badge only on compatibility quizzes.</p>
       <p class="count">Compatibility: after attempting, the member shares a link (active for 24 hours). When a signed-in member answers it, both see their compatibility results; the sharer earns 10 points and the responder 5 (once per quiz for each pair).</p>
       <label>Questions</label>
-      <p class="count">Compatibility quiz — there are no right or wrong answers. Two people answer the same questions and get a match score based on how many they pick in common. Set how many points each question is worth and how long members have to answer it: answering in time earns that question's points toward the leaderboard, and a question left unanswered when time runs out earns none.</p>
+      <p class="count">There are no right or wrong answers. In a compatibility quiz, two people answer the same questions and get a match score based on how many they pick in common. Set how many points each question is worth and how long members have to answer it: answering in time earns that question's points toward the leaderboard, and a question left unanswered when time runs out earns none.</p>
       <div id="quizQuestions"></div>
       <label>Negative marking (points deducted per unanswered question)</label>
       <input id="quizNegative" type="number" min="0" max="1000" step="1" value="${quiz ? Number(quiz.negativeMarks) || 0 : 0}" />
@@ -749,7 +751,7 @@
       const item = el(`
         <div class="admin-item">
           <h3>${esc(q.title)}</h3>
-          <div class="count">${q.type === 'compatibility' ? 'Compatibility' : esc(q.type || '')} · ${q.questions.length} questions · ${q.questions.reduce((n, x) => n + (Number(x.points) || 0), 0)} points · ${q.negativeMarks ? `−${q.negativeMarks} per unanswered` : 'no negative marking'} · ${q.attempts} attempts</div>
+          <div class="count">${q.type === 'compatibility' ? 'Compatibility' : 'Standard'} · ${q.questions.length} questions · ${q.questions.reduce((n, x) => n + (Number(x.points) || 0), 0)} points · ${q.negativeMarks ? `−${q.negativeMarks} per unanswered` : 'no negative marking'} · ${q.attempts} attempts</div>
           <div class="admin-item-actions">
             <button class="ghost small" data-edit>Edit</button>
             <button class="danger small" data-del>Delete</button>

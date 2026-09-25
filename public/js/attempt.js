@@ -430,12 +430,12 @@
         .then(function (r) {
           var d = r.data || {};
           if (r.status === 423) { showLocked(d.lockedUntil); return; }
-          if (r.status >= 200 && r.status < 300 && d.token) {
+          if (r.status >= 200 && r.status < 300 && (d.token || d.total)) {
             stopMonitoring();
             exitFs();
             bar.hidden = true;
             step.hidden = true;
-            var link = window.location.origin + '/m/' + d.token;
+            var link = d.token ? window.location.origin + '/m/' + d.token : '';
             var result = root.querySelector('.gx-result');
             form.hidden = true;
             if (hintEl) hintEl.hidden = true;
@@ -443,6 +443,13 @@
               var summary = (d.maxPoints ? 'You earned <strong>' + d.points + ' of ' + d.maxPoints + ' points</strong>' : 'You finished the quiz') +
                 ' and answered ' + d.answered + ' of ' + d.total + ' question' + (d.total === 1 ? '' : 's') + ' in time.';
               result.hidden = false;
+              if (!link) {
+                result.innerHTML = '<h2>Your answers are locked in 🎉</h2>' +
+                  '<p>' + summary + '</p>' +
+                  '<p>Your points count toward the leaderboard (your best attempt at each quiz counts).</p>' +
+                  '<p style="margin-top:14px"><a class="cta" href="/quizzes">More quizzes →</a></p>';
+                return;
+              }
               result.innerHTML =
                 '<h2>Your answers are locked in 🎉</h2>' +
                 '<p>' + summary + '</p>' +

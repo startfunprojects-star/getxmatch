@@ -1,11 +1,15 @@
 'use strict';
 
-// Kinds of quiz an admin can create. Each type decides how a quiz is played
-// after its questions are answered:
-//   compatibility — the member shares a link; whoever answers it sees how many
-//                   answers the two picked in common, and both earn points.
+// Kinds of quiz an admin can create. The admin picks the type for each quiz;
+// members see a "Compatibility Quiz" badge only on compatibility quizzes.
+//   standard      — a timed quiz: answer each question in time to earn its
+//                   points. Nothing to share afterwards.
+//   compatibility — the same, then the member shares a link; whoever answers it
+//                   sees how many answers the two picked in common, and both
+//                   earn points. Only these can be played together in chat.
 
 const QUIZ_TYPES = {
+  standard: { label: 'Quiz' },
   compatibility: { label: 'Compatibility Quiz' },
 };
 
@@ -16,4 +20,8 @@ function typeLabel(type) {
   return (QUIZ_TYPES[type] || QUIZ_TYPES.compatibility).label;
 }
 
-module.exports = { QUIZ_TYPES, MATCH_TTL_MS, typeLabel };
+function isCompatibility(type) {
+  return (type || 'compatibility') === 'compatibility';
+}
+
+module.exports = { QUIZ_TYPES, MATCH_TTL_MS, typeLabel, isCompatibility };

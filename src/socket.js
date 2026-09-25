@@ -10,6 +10,7 @@ const chatlife = require('./chatlife');
 const broadcast = require('./broadcast');
 const polls = require('./polls');
 const chatQuiz = require('./chatQuiz');
+const { isCompatibility } = require('./quizTypes');
 
 // Emoji reactions a user may place on a message/gift. Server-side allow-list so
 // clients can't store arbitrary strings.
@@ -801,8 +802,9 @@ function initSocket(io) {
         if (areBlocked(me.id, to)) {
           return ack && ack({ error: 'You cannot start a quiz with this user — a block is in place.' });
         }
-        const quiz = db.prepare('SELECT id, questions FROM quizzes WHERE id = ?').get(quizId);
+        const quiz = db.prepare('SELECT id, questions, type FROM quizzes WHERE id = ?').get(quizId);
         if (!quiz) return ack && ack({ error: 'Quiz not found.' });
+        if (!isCompatibility(quiz.type)) return ack && ack({ error: 'Only compatibility quizzes can be played together in chat.' });
         let qcount = 0;
         try { qcount = (JSON.parse(quiz.questions) || []).length; } catch (_e) {}
         if (!qcount) return ack && ack({ error: 'This quiz has no questions.' });

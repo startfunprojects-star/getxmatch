@@ -429,7 +429,7 @@ ${bodyHtml}
   </main>
   <footer class="site">
     <div class="wrap">
-      <span>© ${new Date().getFullYear()} ${esc(SITE_NAME)} — a social space for adults 18+.</span>
+      <span>© ${new Date().getFullYear()} ${esc(SITE_NAME)} — a social space for everyone.</span>
       <nav class="fnav" aria-label="Footer">
         <a href="/highway">Highway</a> · <a href="/about">About</a> · <a href="/how-it-works">How it works</a> · <a href="/quizzes">Quizzes</a> · <a href="/polls">Polls</a> · <a href="/blog">Blog</a> · <a href="/faq">FAQ</a> · <a href="/safety">Safety</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/sitemap.xml">Sitemap</a>
       </nav>

@@ -13,7 +13,7 @@ const { quizStats } = require('../quizStats');
 
 const router = express.Router();
 
-const { MATCH_TTL_MS, typeLabel } = require('../quizTypes'); // shared links live for 24 hours
+const { MATCH_TTL_MS, typeLabel, isCompatibility } = require('../quizTypes'); // shared links live for 24 hours
 
 // Best display name for a logged-in user: their profile name, else @username.
 function userDisplayName(userId) {
@@ -58,6 +58,7 @@ router.get('/quizzes', requireAuth, (req, res) => {
       matches,
       type: r.type,
       typeLabel: typeLabel(r.type),
+      compatibility: isCompatibility(r.type),
       createdAt: r.created_at,
       // questionCount, totalSeconds, untimedQuestions, totalPoints,
       // negativeMarks, attemptedBy, topScorers
@@ -274,7 +275,7 @@ router.post('/quizzes/:id/proctor/answer', requireAuth, (req, res) => {
 // The logged-in initiator records their answers and gets a shareable token.
 // Answers are only accepted from a live proctored session.
 router.post('/quizzes/:id/match', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT id, questions FROM quizzes WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, questions, type FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Quiz not found.' });
 
   const until = activeLockout(req.user.id, row.id);
@@ -300,8 +301,11 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
   const state = sessionState(sess, questions);
 
   const now = Date.now();
-  const token = crypto.randomBytes(9).toString('base64url'); // ~12 url-safe chars
-  db.prepare(
+  // Only compatibility quizzes get a share link; a standard quiz just records
+  // the attempt.
+  const shareable = isCompatibility(row.type);
+  const token = shareable ? crypto.randomBytes(9).toString('base64url') : null; // ~12 url-safe chars
+  if (shareable) db.prepare(
     `INSERT INTO quiz_matches
        (token, quiz_id, a_user_id, a_name, a_answers, total, created_at, expires_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -324,7 +328,7 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
 
   res.status(201).json({
     token,
-    expiresAt: now + MATCH_TTL_MS,
+    expiresAt: shareable ? now + MATCH_TTL_MS : null,
     points: state.points,
     maxPoints: state.maxPoints,
     durationMs: now - sess.created_at,
