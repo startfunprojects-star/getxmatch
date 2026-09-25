@@ -2450,7 +2450,7 @@
     `);
     const box = card.querySelector('.quiz-picker');
     let quizzes = [];
-    try { quizzes = ((await api.get('/api/content/quizzes')).quizzes || []).filter((q) => q.compatibility); }
+    try { quizzes = ((await api.get('/api/content/quizzes')).quizzes || []).filter((q) => q.type === 'compatibility'); }
     catch (_e) { box.innerHTML = '<div class="hint">Could not load quizzes.</div>'; return; }
     if (!quizzes.length) { box.innerHTML = '<div class="hint">No compatibility quizzes are available yet.</div>'; return; }
     box.innerHTML = '<div class="pb-label">Pick a quiz — you’ll both answer it, then see how much you match.</div>';
@@ -5571,7 +5571,7 @@
       const url = '/quizzes/' + q.id;
       const card = el(`
         <div class="tile quiz-tile-link" role="link" tabindex="0" title="Open this quiz in a new tab">
-          ${q.compatibility ? `<span class="quiz-type">${esc(q.typeLabel)}</span>` : ''}
+          ${q.shareable ? `<span class="quiz-type">${esc(q.typeLabel)}</span>` : ''}
           <h3>${esc(q.title)}</h3>
           <p class="rich">${esc(q.description || '')}</p>
           <ul class="quiz-stats">
@@ -5582,7 +5582,7 @@
           </ul>
           <div class="quiz-top-h">Top scorers</div>
           <div class="quiz-top"></div>
-          <button class="primary small" data-take="${q.id}">${q.compatibility ? 'Attempt &amp; share ↗' : 'Attempt ↗'}</button>
+          <button class="primary small" data-take="${q.id}">${q.shareable ? 'Attempt &amp; share ↗' : 'Attempt ↗'}</button>
         </div>
       `);
       const topBox = card.querySelector('.quiz-top');

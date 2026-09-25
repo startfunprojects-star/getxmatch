@@ -13,7 +13,8 @@ const { quizStats } = require('../quizStats');
 
 const router = express.Router();
 
-const { MATCH_TTL_MS, typeLabel, isCompatibility } = require('../quizTypes'); // shared links live for 24 hours
+const { MATCH_TTL_MS, typeLabel, isShareable, isOpen } = require('../quizTypes');
+const { WEIGHTS } = require('../points'); // shared links live for 24 hours
 
 // Best display name for a logged-in user: their profile name, else @username.
 function userDisplayName(userId) {
@@ -58,7 +59,10 @@ router.get('/quizzes', requireAuth, (req, res) => {
       matches,
       type: r.type,
       typeLabel: typeLabel(r.type),
-      compatibility: isCompatibility(r.type),
+      // shareable = finishing gives a link (badge shown); open = anyone
+      // registered can answer that link.
+      shareable: isShareable(r.type),
+      open: isOpen(r.type),
       createdAt: r.created_at,
       // questionCount, totalSeconds, untimedQuestions, totalPoints,
       // negativeMarks, attemptedBy, topScorers
@@ -302,13 +306,14 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
 
   const now = Date.now();
   // Only compatibility quizzes get a share link; a standard quiz just records
-  // the attempt.
-  const shareable = isCompatibility(row.type);
+  // the attempt. An open link can be answered by any registered member.
+  const shareable = isShareable(row.type);
+  const open = isOpen(row.type);
   const token = shareable ? crypto.randomBytes(9).toString('base64url') : null; // ~12 url-safe chars
   if (shareable) db.prepare(
     `INSERT INTO quiz_matches
-       (token, quiz_id, a_user_id, a_name, a_answers, total, created_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+       (token, quiz_id, a_user_id, a_name, a_answers, total, created_at, expires_at, is_open)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     token,
     row.id,
@@ -317,7 +322,8 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
     JSON.stringify(answers),
     questions.length,
     now,
-    now + MATCH_TTL_MS
+    now + MATCH_TTL_MS,
+    open ? 1 : 0
   );
   db.prepare("UPDATE quiz_proctor_sessions SET status = 'completed' WHERE token = ?").run(sessToken);
   // The attempt's points feed the leaderboard (best attempt per quiz counts).
@@ -329,6 +335,10 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
   res.status(201).json({
     token,
     expiresAt: shareable ? now + MATCH_TTL_MS : null,
+    open,
+    sharePoints: open
+      ? { sharer: WEIGHTS.openShareAnswered, responder: WEIGHTS.openAnswer }
+      : { sharer: WEIGHTS.shareCompleted, responder: WEIGHTS.answerShared },
     points: state.points,
     maxPoints: state.maxPoints,
     durationMs: now - sess.created_at,

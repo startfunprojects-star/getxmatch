@@ -20,7 +20,7 @@ const ads = require('../ads');
 const hw = require('../highway');
 const ogImage = require('../ogImage');
 const { quizStats, timeLabel, fmtDuration } = require('../quizStats');
-const { typeLabel, isCompatibility } = require('../quizTypes');
+const { typeLabel, isShareable, isOpen } = require('../quizTypes');
 const { ageFromDob } = require('../profileFields');
 const { buildProfile } = require('../profileData');
 const { renderProfileQr } = require('../qrCard');
@@ -328,7 +328,7 @@ router.get('/quizzes', (req, res) => {
   const rows = db.prepare('SELECT id, title, description, questions, negative_marks, type, seo, updated_at FROM quizzes ORDER BY created_at DESC').all();
   const items = rows.map((r) => {
     const s = parseJson(r.seo, {});
-    return { id: r.id, title: r.title, description: r.description, type: isCompatibility(r.type) ? typeLabel(r.type) : '', stats: quizStats(r), path: itemPath('quizzes', r.id, s.slug || r.title) };
+    return { id: r.id, title: r.title, description: r.description, type: isShareable(r.type) ? typeLabel(r.type) : '', stats: quizStats(r), path: itemPath('quizzes', r.id, s.slug || r.title) };
   });
 
   const cards = items.length
@@ -358,7 +358,7 @@ router.get('/quizzes', (req, res) => {
 ${QUIZ_CARD_STYLE}
 ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Quizzes', path: '/quizzes' }])}
 <h1>Quizzes</h1>
-<p class="lede">Answer timed questions and earn points for the leaderboard. Quizzes marked <strong>Compatibility Quiz</strong> also give you a link to share, so you can compare answers and see how well you match.</p>
+<p class="lede">Answer timed questions and earn points for the leaderboard. Quizzes marked <strong>Compatibility Quiz</strong> also give you a link to share, so you can compare answers and see how well you match. An <strong>Open Compatibility Quiz</strong> link can be answered by any member, and you see your match with each of them.</p>
 ${cards}`;
   sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
@@ -366,7 +366,8 @@ ${cards}`;
 router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
   const row = db.prepare('SELECT id, title, description, questions, negative_marks, type, seo, created_at, updated_at FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return notFound(res, req.path.split('/')[1].replace(/s$/,''));
-  const compat = isCompatibility(row.type);
+  const compat = isShareable(row.type); // compatibility or open compatibility
+  const open = isOpen(row.type);
   const s = parseJson(row.seo, {});
   const chk = canonicalCheck('quizzes', req, row.id, s.slug || row.title);
   if (chk.redirect) return res.redirect(301, chk.redirect);
@@ -418,11 +419,12 @@ router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
   const hasQuestions = questions.length > 0;
   const hint = !hasQuestions ? ''
     : (loggedIn
-        ? (compat ? 'Answer every question, then submit to get a private link to compare with someone.' : 'Answer every question in time to earn its points.')
+        ? (open ? 'Answer every question, then submit to get a link any member can answer — see your compatibility with each of them.'
+          : compat ? 'Answer every question, then submit to get a private link to compare with someone.' : 'Answer every question in time to earn its points.')
         : 'Register or sign in to attempt this quiz.');
   const bodyHtml = `
 ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Quizzes', path: '/quizzes' }, { name: row.title, path: chk.canonical }])}
-${compat ? '<span class="gx-type">Compatibility Quiz</span>' : ''}
+${compat ? `<span class="gx-type">${esc(typeLabel(row.type))}</span>` : ''}
 <h1>${esc(row.title)}</h1>
 ${row.description ? `<p class="lede">${esc(row.description)}</p>` : ''}
 ${ATTEMPT_STYLE}
@@ -437,7 +439,8 @@ ${hasQuestions ? `
       <li>Pressing Esc, switching tabs or apps, minimising the window, connecting another display or using remote-control/automation tools counts as leaving the quiz.</li>
       <li>The first time, you get a warning and return to full screen.</li>
       <li><strong>The second time, the quiz stops, you can't attempt it again for 24 hours and 10 points are deducted from your score.</strong></li>
-      ${compat ? `<li>This is a compatibility quiz: when you finish, you get a link to share that stays active for 24 hours. When a signed-in member answers it, you both see your compatibility results — you earn 10 points and they earn 5.</li>` : ''}
+      ${open ? `<li>This is an open compatibility quiz: when you finish, you get a link to share that stays active for 24 hours. Any registered member can answer it — you see your compatibility with each of them, and each of them sees only their own result with you. You earn 3 points for every member who answers, and they earn 1.</li>` : ''}
+      ${compat && !open ? `<li>This is a compatibility quiz: when you finish, you get a link to share that stays active for 24 hours. When a signed-in member answers it, you both see your compatibility results — you earn 10 points and they earn 5.</li>` : ''}
     </ul>
     <button type="button" class="cta gx-start">Start quiz in full screen</button>
   </div>
@@ -982,7 +985,7 @@ router.get('/how-it-works', (req, res) => {
     ['Build your profile', 'Add your gender, date of birth and country, then pick your state and city, write a few words about yourself and choose up to 10 areas of interest. Add a display picture and a gallery of up to 25 photos.'],
     ['Find your people on the Highway', 'The Highway is the community feed. You see posts from members who share at least 5 of your interests, live in your country or were born in your decade. Post text, pictures and links — every picture you upload is shared there too.'],
     ['Connect', 'Send friend requests, follow members, rate profiles and leave comments. Browse and search members, or send a request straight from a Highway post or the leaderboard.'],
-    ['Take quizzes and vote in polls', 'Quizzes are played in full screen with a timer on each question, and every question you answer in time earns its points. Quizzes marked as a Compatibility Quiz also give you a share link that stays open for 24 hours — when someone answers it, you both see how well you match and both earn points.'],
+    ['Take quizzes and vote in polls', 'Quizzes are played in full screen with a timer on each question, and every question you answer in time earns its points. Quizzes marked as a Compatibility Quiz also give you a share link that stays open for 24 hours — when someone answers it, you both see how well you match and both earn points. An Open Compatibility Quiz link can be answered by any member: you see your compatibility with everyone who answers, and each of them sees their own result with you.'],
     ['Chat in real time', 'Message one-to-one or in groups and send everyday gifts like a thank-you or a warm hug. Shared files are relayed live and never stored on our servers.'],
     ['Earn points and climb the leaderboard', 'Almost everything you do earns points, and the leaderboard ranks every member strictly by points.'],
   ];
@@ -1001,6 +1004,7 @@ router.get('/how-it-works', (req, res) => {
 <ul>
   <li><strong>Quizzes:</strong> the points set on each question you answer in time (your best attempt per quiz counts). Some quizzes take points off for questions left unanswered when time runs out.</li>
   <li><strong>Compatibility quiz links:</strong> 10 points when someone answers the link you shared, and 5 points for answering someone else's — once per quiz for each pair of members.</li>
+  <li><strong>Open compatibility quiz links:</strong> 3 points for every member who answers the link you shared, and 1 point for answering someone else's — once per quiz for each pair of members.</li>
   <li><strong>Polls:</strong> 5 points for each poll you vote in (changing your vote doesn't earn more).</li>
   <li><strong>Highway:</strong> 4 points for every like your posts receive.</li>
   <li><strong>Friends &amp; ratings:</strong> 8 points per friend, 5 per rating you receive, plus 20 × your average star rating.</li>

@@ -454,13 +454,16 @@
                 '<h2>Your answers are locked in 🎉</h2>' +
                 '<p>' + summary + '</p>' +
                 '<p>Share this link — <strong>it stays active for 24 hours</strong>, until ' + esc(fmtUntil(d.expiresAt)) + '. ' +
-                'When someone answers it, you’ll both see your compatibility results. If they’re a signed-in member, ' +
-                'you earn <strong>10 points</strong> and they earn <strong>5 points</strong>.</p>' +
+                (d.open
+                  ? 'Any getxmatch member can answer it. You’ll see your compatibility with each of them, and each of them sees their own result with you. ' +
+                    'You earn <strong>' + d.sharePoints.sharer + ' points</strong> for every member who answers, and they earn <strong>' + d.sharePoints.responder + ' point' + (d.sharePoints.responder === 1 ? '' : 's') + '</strong>.</p>'
+                  : 'When someone answers it, you’ll both see your compatibility results. If they’re a signed-in member, ' +
+                    'you earn <strong>10 points</strong> and they earn <strong>5 points</strong>.</p>') +
                 '<div class="gx-share">' +
                 '<input type="text" readonly value="' + esc(link) + '" />' +
                 '<button type="button" class="cta" id="gxCopy">Copy link</button>' +
                 '</div>' +
-                '<p style="margin-top:14px"><a class="cta" href="' + esc(link) + '">Open the match page →</a></p>';
+                '<p style="margin-top:14px"><a class="cta" href="' + esc(link) + '">' + (d.open ? 'See who answered →' : 'Open the match page →') + '</a></p>';
               var copyBtn = document.getElementById('gxCopy');
               var input = result.querySelector('.gx-share input');
               if (copyBtn && input) {

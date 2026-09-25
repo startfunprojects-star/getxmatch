@@ -678,8 +678,10 @@
       <select id="quizType">
         <option value="standard"${!quiz || quiz.type === 'standard' ? ' selected' : ''}>Standard Quiz — timed questions, no sharing</option>
         <option value="compatibility"${quiz && quiz.type === 'compatibility' ? ' selected' : ''}>Compatibility Quiz — share a link after attempting</option>
+        <option value="open_compatibility"${quiz && quiz.type === 'open_compatibility' ? ' selected' : ''}>Open Compatibility Quiz — share a link anyone registered can answer</option>
       </select>
-      <p class="count">Standard: members answer the timed questions and earn each question's points. Members see a "Compatibility Quiz" badge only on compatibility quizzes.</p>
+      <p class="count">Standard: members answer the timed questions and earn each question's points. Members see a badge only on compatibility and open compatibility quizzes.</p>
+      <p class="count">Open Compatibility: after attempting, the member shares a link (active for 24 hours) that any registered member can answer. The sharer sees their compatibility with every responder; each responder sees only their own compatibility with the sharer. The sharer earns 3 points and the responder 1 for each response (once per quiz for each pair).</p>
       <p class="count">Compatibility: after attempting, the member shares a link (active for 24 hours). When a signed-in member answers it, both see their compatibility results; the sharer earns 10 points and the responder 5 (once per quiz for each pair).</p>
       <label>Questions</label>
       <p class="count">There are no right or wrong answers. In a compatibility quiz, two people answer the same questions and get a match score based on how many they pick in common. Set how many points each question is worth and how long members have to answer it: answering in time earns that question's points toward the leaderboard, and a question left unanswered when time runs out earns none.</p>
@@ -751,7 +753,7 @@
       const item = el(`
         <div class="admin-item">
           <h3>${esc(q.title)}</h3>
-          <div class="count">${q.type === 'compatibility' ? 'Compatibility' : 'Standard'} · ${q.questions.length} questions · ${q.questions.reduce((n, x) => n + (Number(x.points) || 0), 0)} points · ${q.negativeMarks ? `−${q.negativeMarks} per unanswered` : 'no negative marking'} · ${q.attempts} attempts</div>
+          <div class="count">${({ compatibility: 'Compatibility', open_compatibility: 'Open Compatibility' })[q.type] || 'Standard'} · ${q.questions.length} questions · ${q.questions.reduce((n, x) => n + (Number(x.points) || 0), 0)} points · ${q.negativeMarks ? `−${q.negativeMarks} per unanswered` : 'no negative marking'} · ${q.attempts} attempts</div>
           <div class="admin-item-actions">
             <button class="ghost small" data-edit>Edit</button>
             <button class="danger small" data-del>Delete</button>

@@ -880,6 +880,34 @@ db.exec(`
   if (!mcols.includes('points_awarded')) db.exec('ALTER TABLE quiz_matches ADD COLUMN points_awarded INTEGER NOT NULL DEFAULT 0;');
 })();
 
+// --- Open compatibility links. quiz_matches.is_open = 1 for a link from an
+// open_compatibility quiz: it is never "completed"; instead every registered
+// member who answers it gets a row here (one per member per link) with their
+// score against the sharer. points_awarded = 1 when the pair earned points
+// (once per quiz for each pair of members). See src/routes/match.js.
+(function migrateOpenMatches() {
+  const mcols = db.prepare('PRAGMA table_info(quiz_matches)').all().map((c) => c.name);
+  if (!mcols.includes('is_open')) db.exec('ALTER TABLE quiz_matches ADD COLUMN is_open INTEGER NOT NULL DEFAULT 0;');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS open_match_responses (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      match_id       INTEGER NOT NULL REFERENCES quiz_matches(id) ON DELETE CASCADE,
+      quiz_id        INTEGER NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
+      a_user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name           TEXT NOT NULL,
+      answers        TEXT NOT NULL,            -- JSON: [optionIndex, ...]
+      score          INTEGER NOT NULL,
+      total          INTEGER NOT NULL,
+      points_awarded INTEGER NOT NULL DEFAULT 0,
+      created_at     INTEGER NOT NULL,
+      UNIQUE (match_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_open_resp_user ON open_match_responses (user_id);
+    CREATE INDEX IF NOT EXISTS idx_open_resp_sharer ON open_match_responses (a_user_id);
+  `);
+})();
+
 // --- Migration: referrals. users.referral_code is each member's fixed code;
 // users.referred_by links a member to whoever referred them. A pending signup
 // keeps the code it was started with until the email is verified.
