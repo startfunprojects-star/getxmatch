@@ -976,11 +976,13 @@ router.get('/about', (req, res) => {
 // ---- How it works ----------------------------------------------------------
 router.get('/how-it-works', (req, res) => {
   const steps = [
-    ['Create your account', 'Confirm you are 18+ and verify your email with a one-time code. Your email is never shown to anyone else.'],
-    ['Build your profile', 'Add a display picture, a gallery of up to 25 photos, your interests, and a few words about yourself. You control what you share.'],
-    ['Discover people', 'Browse and search members, climb the engagement leaderboard, and see a live feed of community activity.'],
-    ['Play compatibility quizzes', 'Answer a few playful questions, share a private match link with someone, and see how well you match.'],
-    ['Chat in real time', 'Message one-to-one or in small groups. Shared files are relayed live and never stored on our servers.'],
+    ['Create your account', 'Confirm you are 18+ and verify your email with a one-time code. Your email is never shown to anyone else. Joining with a friend’s referral link gets you 2 points to start.'],
+    ['Build your profile', 'Add your gender, date of birth and country, then pick your state and city, write a few words about yourself and choose up to 10 areas of interest. Add a display picture and a gallery of up to 25 photos.'],
+    ['Find your people on the Highway', 'The Highway is the community feed. You see posts from members who share at least 5 of your interests, live in your country or were born in your decade. Post text, pictures and links — every picture you upload is shared there too.'],
+    ['Connect', 'Send friend requests, follow members, rate profiles and leave comments. Browse and search members, or send a request straight from a Highway post or the leaderboard.'],
+    ['Take quizzes and vote in polls', 'Quizzes are played in full screen with a timer on each question. Compatibility quizzes give you a share link that stays open for 24 hours — when someone answers it, you both see how well you match and both earn points.'],
+    ['Chat in real time', 'Message one-to-one or in groups and send everyday gifts like a thank-you or a warm hug. Shared files are relayed live and never stored on our servers.'],
+    ['Earn points and climb the leaderboard', 'Almost everything you do earns points, and the leaderboard ranks every member strictly by points.'],
   ];
   const stepHtml = steps.map((s, i) => `
     <div class="card">
@@ -990,11 +992,32 @@ router.get('/how-it-works', (req, res) => {
   renderInfo(res, {
     pathname: '/how-it-works',
     title: 'How it works',
-    description: `How ${SITE_NAME} works — create a profile, discover people, play compatibility quizzes, vote in polls and chat in real time. Free to join, 18+.`,
+    description: `How ${SITE_NAME} works — build a profile around your interests, meet like-minded people on the Highway, take compatibility quizzes, vote in polls, chat in real time and earn points on the leaderboard. Free to join, 18+.`,
     lede: `Getting started on ${SITE_NAME} takes a minute. Here's the whole journey, step by step.`,
     bodyHtml: stepHtml + `
+<h2>How points work</h2>
+<ul>
+  <li><strong>Quizzes:</strong> the points set on each question you answer in time (your best attempt per quiz counts). Some quizzes take points off for questions left unanswered when time runs out.</li>
+  <li><strong>Compatibility links:</strong> 10 points when someone answers the link you shared, and 5 points for answering someone else's — once per quiz for each pair of members.</li>
+  <li><strong>Polls:</strong> 5 points for each poll you vote in (changing your vote doesn't earn more).</li>
+  <li><strong>Highway:</strong> 4 points for every like your posts receive.</li>
+  <li><strong>Friends &amp; ratings:</strong> 8 points per friend, 5 per rating you receive, plus 20 × your average star rating.</li>
+  <li><strong>Follows:</strong> following someone costs their follow fee (1 point by default) and earns them double. Each member sets their own fee, and unfollowing reverses it.</li>
+  <li><strong>Referrals:</strong> share your personal code with the Refer button on your profile — you earn 4 points for each person who joins with it, and they get 2.</li>
+</ul>
+
+<h2>Fair-play rules for quizzes</h2>
+<p>Quizzes are proctored. Leaving full screen, switching tabs or apps, reloading the page or connecting a second screen counts as a strike. The first strike is a warning; the second stops the quiz, locks that quiz for you for 24 hours and deducts 10 points.</p>
+
+<h2>Privacy and safety</h2>
+<ul>
+  <li>Your email address is never shown to other members.</li>
+  <li>Chat files are relayed live and never stored. When both people close a chat and neither reopens it within 12 hours, the conversation is deleted.</li>
+  <li>You can ignore or report any member. Profiles that collect many reports are suspended for 7 days. Read our <a href="/safety">Safety guidelines</a> for more.</li>
+</ul>
+
 <h2>Explore before you sign up</h2>
-<p>You can browse our <a href="/quizzes">compatibility quizzes</a>, <a href="/polls">community polls</a> and <a href="/blog">blog</a> without an account. When you're ready to chat and match, joining is free.</p>`,
+<p>You can browse the <a href="/highway">Highway</a>, <a href="/quizzes">quizzes</a>, <a href="/polls">community polls</a> and <a href="/blog">blog</a> without an account. When you're ready to connect, chat and earn points, joining is free.</p>`,
     extraLd: [{
       '@context': 'https://schema.org', '@type': 'HowTo',
       name: `How to get started on ${SITE_NAME}`,
