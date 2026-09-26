@@ -36,4 +36,31 @@ function cities(countryName, stateName) {
   return [...new Set(City.getCitiesOfState(cc, sc).map((c) => c.name))].sort((a, b) => a.localeCompare(b));
 }
 
-module.exports = { states, cities };
+// Nearest known city to a coordinate, as "City, State, Country" — used by the
+// camera's "Use my location" button. The city list is loaded on first use.
+let allCities = null;
+const countryNames = new Map(Country.getAllCountries().map((c) => [c.isoCode, c.name]));
+function nearestPlace(lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  if (!allCities) {
+    allCities = City.getAllCities()
+      .map((c) => ({ name: c.name, cc: c.countryCode, sc: c.stateCode, lat: +c.latitude, lon: +c.longitude }))
+      .filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon));
+  }
+  const cosLat = Math.cos((lat * Math.PI) / 180);
+  let best = null;
+  let bestD = Infinity;
+  for (const c of allCities) {
+    const dLat = c.lat - lat;
+    const dLon = (c.lon - lon) * cosLat;
+    const d = dLat * dLat + dLon * dLon;
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  if (!best || bestD > 4) return null; // more than ~200 km from any known city
+  const state = State.getStateByCodeAndCountry(best.sc, best.cc);
+  return [best.name, state && state.name !== best.name ? state.name : null, countryNames.get(best.cc)]
+    .filter(Boolean)
+    .join(', ');
+}
+
+module.exports = { states, cities, nearestPlace };

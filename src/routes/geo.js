@@ -19,4 +19,13 @@ router.get('/cities', (req, res) => {
   res.json({ cities: geo.cities(String(req.query.country || ''), String(req.query.state || '')) });
 });
 
+// POST /api/geo/nearest { lat, lon } — "City, State, Country" for the
+// camera's "Use my location" button. Coordinates aren't stored or logged.
+router.post('/nearest', (req, res) => {
+  const b = req.body || {};
+  const place = geo.nearestPlace(parseFloat(b.lat), parseFloat(b.lon));
+  if (!place) return res.status(404).json({ error: 'No town found near here — type the place instead.' });
+  res.json({ place });
+});
+
 module.exports = router;

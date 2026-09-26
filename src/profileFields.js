@@ -38,9 +38,13 @@ const INTEREST_GROUPS = [
 const INTERESTS = INTEREST_GROUPS.flatMap((g) => g.items);
 const MAX_INTERESTS = 10;
 
-const MAX_GALLERY_PHOTOS = 25; // photos + reels together
-const MAX_REELS = 5;
+// Gallery: no limit on how many photos or reels. A reel is at most 1 minute.
 const MAX_REEL_SECONDS = 60;
+const MAX_CAPTION = 500;   // caption / statement, may include #tags
+const MAX_LOCATION = 120;  // place name
+// Background-music tracks (composed in the browser by public/js/music.js —
+// original, so royalty-free). Keep the ids in sync with that file.
+const MUSIC_TRACKS = ['chill', 'upbeat', 'lofi', 'romantic', 'dreamy'];
 const MAX_BUFFER_PHOTOS = 10;
 const MAX_GIFS = 100;
 const MIN_AGE = 18;
@@ -75,9 +79,10 @@ module.exports = {
   INTEREST_GROUPS,
   INTERESTS,
   MAX_INTERESTS,
-  MAX_GALLERY_PHOTOS,
-  MAX_REELS,
   MAX_REEL_SECONDS,
+  MAX_CAPTION,
+  MAX_LOCATION,
+  MUSIC_TRACKS,
   MAX_BUFFER_PHOTOS,
   MAX_GIFS,
   MIN_AGE,

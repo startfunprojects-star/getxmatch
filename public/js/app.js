@@ -355,9 +355,7 @@
     ],
     maxInterests: 10,
   };
-  const MAX_GALLERY = 25; // photos + reels together
-  const MAX_REELS = 5;
-  const MAX_REEL_SECONDS = 60;
+  const MAX_REEL_SECONDS = 60; // gallery photos and reels: no limit on how many
   const MAX_REEL_MB = 50;
   const MAX_BUFFER = 10;
   const MAX_GIFS = 100;
@@ -3861,6 +3859,369 @@
     return g === 'Female' ? '♀' : g === 'Male' ? '♂' : '⚧';
   }
 
+  /* ----------------------------------------------------------------------
+     In-app camera + post details for the gallery.
+  ---------------------------------------------------------------------- */
+
+  // Caption text with #tags highlighted (input is escaped first).
+  function captionHtml(text) {
+    return esc(text || '').replace(/#([\p{L}\p{N}_]{1,50})/gu, '<span class="hashtag">#$1</span>');
+  }
+
+  // Upload a photo or reel to the gallery with its details. Text fields go
+  // before the file so the server has them when the file arrives.
+  async function postGalleryItem(kind, file, details, onProgress) {
+    const fd = new FormData();
+    fd.append('caption', details.caption || '');
+    fd.append('location', details.location || '');
+    fd.append('music', details.music || '');
+    fd.append('musicMixed', details.musicMixed ? '1' : '0');
+    fd.append(kind === 'reel' ? 'reel' : 'photo', file);
+    const { photo } = await uploadWithProgress(
+      kind === 'reel' ? '/api/profile/gallery/reel' : '/api/profile/gallery',
+      fd,
+      onProgress || function () {}
+    );
+    return photo;
+  }
+
+  // Background-music <select> options.
+  function musicOptions(selected) {
+    return ['<option value="">No music</option>']
+      .concat(gxmMusic.TRACKS.map((t) => `<option value="${t.id}"${t.id === selected ? ' selected' : ''}>${t.emoji} ${esc(t.name)}</option>`))
+      .join('');
+  }
+
+  // The "post details" step shown before a gallery upload: a preview, caption
+  // (with #tags), place and background music. Resolves with
+  // { caption, location, music, musicMixed } or null when cancelled.
+  // `opts.musicMixed` = the music is already recorded into the reel (so it's
+  // shown but can't be changed here).
+  function openPostDetails(opts) {
+    return new Promise((resolve) => {
+      const isReel = opts.kind === 'reel';
+      const mixed = !!opts.musicMixed;
+      const box = el(`
+        <div class="lightbox post-modal">
+          <div class="post-shell">
+            <h3 class="post-title">${isReel ? '🎬 New reel' : '📷 New photo'}</h3>
+            <div class="post-preview${isReel ? ' reel' : ''}">
+              ${isReel ? `<video src="${opts.previewUrl}" controls playsinline></video>` : `<img src="${opts.previewUrl}" alt="" />`}
+            </div>
+            <label class="post-label">Caption
+              <textarea class="post-caption" maxlength="500" rows="3" placeholder="Say something… add #tags like #weekend #travel"></textarea>
+            </label>
+            <div class="post-tags"></div>
+            <label class="post-label">Location</label>
+            <div class="post-loc-row">
+              <input class="post-location" maxlength="120" placeholder="Add a place (optional)" />
+              <button type="button" class="ghost small post-geo" title="Fill in the nearest town">📍 Use my location</button>
+            </div>
+            <label class="post-label">Background music</label>
+            <div class="post-music-row">
+              ${mixed
+                ? `<span class="chip static">🎵 ${esc((gxmMusic.byId(opts.music) || {}).name || 'Music')} — recorded into the reel</span>`
+                : `<select class="post-music">${musicOptions(opts.music || '')}</select>
+                   <button type="button" class="ghost small post-music-try" title="Listen">▶ Listen</button>`}
+            </div>
+            ${isReel && !mixed ? '<p class="hint">Music plays along with the reel’s own sound when people watch it.</p>' : ''}
+            <div class="post-actions">
+              <button type="button" class="ghost post-cancel">Cancel</button>
+              <button type="button" class="primary post-ok">Post to gallery</button>
+            </div>
+          </div>
+        </div>`);
+      const cap = box.querySelector('.post-caption');
+      const tags = box.querySelector('.post-tags');
+      const loc = box.querySelector('.post-location');
+      const musicSel = box.querySelector('.post-music');
+      const tryBtn = box.querySelector('.post-music-try');
+      const vid = box.querySelector('.post-preview video');
+      let player = null;
+      const stopMusic = () => { if (player) { player.stop(); player = null; } if (tryBtn) tryBtn.textContent = '▶ Listen'; };
+
+      cap.addEventListener('input', () => {
+        const found = [...new Set((cap.value.match(/#[\p{L}\p{N}_]{1,50}/gu) || []))];
+        tags.innerHTML = found.map((t) => `<span class="chip static hashtag-chip">${esc(t)}</span>`).join('');
+      });
+      box.querySelector('.post-geo').addEventListener('click', (ev) => {
+        const btn = ev.currentTarget;
+        if (!navigator.geolocation) { alert('Location isn’t available on this device.'); return; }
+        btn.disabled = true;
+        btn.textContent = '📍 Finding…';
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+          try {
+            // Rounded to ~1 km before it leaves the device; only the place name is kept.
+            const { place } = await api.post('/api/geo/nearest', {
+              lat: Math.round(pos.coords.latitude * 100) / 100,
+              lon: Math.round(pos.coords.longitude * 100) / 100,
+            });
+            loc.value = place;
+          } catch (e) { alert(e.message); }
+          btn.disabled = false;
+          btn.textContent = '📍 Use my location';
+        }, () => {
+          alert('Couldn’t get your location. Allow location access, or type the place.');
+          btn.disabled = false;
+          btn.textContent = '📍 Use my location';
+        }, { timeout: 15000, maximumAge: 600000 });
+      });
+      if (tryBtn) {
+        tryBtn.addEventListener('click', () => {
+          if (player) { stopMusic(); return; }
+          if (!musicSel.value) return;
+          player = gxmMusic.play(musicSel.value, { volume: 0.4 });
+          tryBtn.textContent = '⏹ Stop';
+        });
+        musicSel.addEventListener('change', () => { if (player) { stopMusic(); tryBtn.click(); } });
+      }
+
+      const finish = (result) => {
+        stopMusic();
+        if (vid) vid.pause();
+        box.remove();
+        resolve(result);
+      };
+      box.querySelector('.post-cancel').addEventListener('click', () => finish(null));
+      box.querySelector('.post-ok').addEventListener('click', () => finish({
+        caption: cap.value.trim(),
+        location: loc.value.trim(),
+        music: mixed ? opts.music : (musicSel.value || ''),
+        musicMixed: mixed,
+      }));
+      document.body.appendChild(box);
+      cap.focus();
+    });
+  }
+
+  // Full-screen camera: take a photo or record a reel (up to 1 minute) with
+  // the device's camera and microphone, optionally with background music
+  // mixed into the reel. After capture, the details step opens and the item is
+  // uploaded; `onPosted(photo)` then adds it to the gallery grid.
+  function openCamera(onPosted) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert('This browser can’t open the camera. Try Chrome or Safari, or use “Add photo” / “Add reel”.');
+      return;
+    }
+    let mode = 'photo';
+    let facing = 'user';
+    let stream = null;
+    let recorder = null;
+    let recTimer = null;
+    let recStart = 0;
+    let music = null; // player while recording
+    let audioNodes = [];
+
+    const box = el(`
+      <div class="lightbox cam-modal">
+        <div class="cam-shell">
+          <div class="cam-top">
+            <button class="cam-icon cam-close" title="Close">✕</button>
+            <div class="cam-modes">
+              <button class="cam-mode on" data-mode="photo">📷 Photo</button>
+              <button class="cam-mode" data-mode="reel">🎬 Reel</button>
+            </div>
+            <button class="cam-icon cam-flip" title="Switch camera">🔄</button>
+          </div>
+          <div class="cam-stage">
+            <video class="cam-view" autoplay playsinline muted></video>
+            <div class="cam-timer hidden"><span class="cam-dot"></span><span class="cam-time">0:00</span> / 1:00</div>
+            <div class="cam-msg hidden"></div>
+          </div>
+          <div class="cam-music hidden">
+            🎵 <select class="cam-music-sel">${musicOptions('')}</select>
+            <span class="hint">mixed into your reel with your voice</span>
+          </div>
+          <div class="cam-bottom">
+            <button class="cam-shutter" title="Take photo"></button>
+          </div>
+          <div class="cam-hint hint">Tap the button to take a photo.</div>
+        </div>
+      </div>`);
+    const view = box.querySelector('.cam-view');
+    const shutter = box.querySelector('.cam-shutter');
+    const hint = box.querySelector('.cam-hint');
+    const msg = box.querySelector('.cam-msg');
+    const timerEl = box.querySelector('.cam-timer');
+    const timeEl = box.querySelector('.cam-time');
+    const musicRow = box.querySelector('.cam-music');
+    const musicSel = box.querySelector('.cam-music-sel');
+    const modeBtns = box.querySelectorAll('.cam-mode');
+    const flipBtn = box.querySelector('.cam-flip');
+
+    const showMsg = (text) => { msg.textContent = text; msg.classList.toggle('hidden', !text); };
+    const stopStream = () => { if (stream) stream.getTracks().forEach((t) => t.stop()); stream = null; };
+    const hasMic = () => !!(stream && stream.getAudioTracks().length);
+
+    async function startStream() {
+      stopStream();
+      const video = { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } };
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video,
+          audio: { echoCancellation: true, noiseSuppression: true },
+        });
+      } catch (e) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video }); // camera without mic
+        } catch (e2) {
+          showMsg('Camera access was blocked. Allow the camera for this site in your browser settings, then try again.');
+          shutter.disabled = true;
+          return;
+        }
+      }
+      view.srcObject = stream;
+      view.classList.toggle('mirror', facing === 'user');
+      shutter.disabled = false;
+      showMsg('');
+      paintMode();
+    }
+
+    function paintMode() {
+      modeBtns.forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
+      shutter.classList.toggle('reel', mode === 'reel');
+      musicRow.classList.toggle('hidden', mode !== 'reel');
+      shutter.title = mode === 'reel' ? 'Start recording' : 'Take photo';
+      hint.textContent = mode === 'reel'
+        ? (hasMic() ? 'Tap to start recording — talk while you record. Stops by itself at 1 minute.' : 'Microphone is blocked, so the reel will have no voice. Tap to start recording (up to 1 minute).')
+        : 'Tap the button to take a photo.';
+    }
+
+    function takePhoto() {
+      const w = view.videoWidth;
+      const h = view.videoHeight;
+      if (!w || !h) return;
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const g = c.getContext('2d');
+      if (facing === 'user') { g.translate(w, 0); g.scale(-1, 1); } // save selfies as seen
+      g.drawImage(view, 0, 0, w, h);
+      c.toBlob((blob) => {
+        if (blob) finishCapture('photo', new File([blob], 'photo.jpg', { type: 'image/jpeg' }), null);
+      }, 'image/jpeg', 0.9);
+    }
+
+    function pickMime() {
+      const types = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+      return types.find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+    }
+
+    function startRecording() {
+      if (!window.MediaRecorder) { alert('Recording isn’t supported in this browser. Use “Add reel” to upload a video instead.'); return; }
+      // Mix the microphone and any background music into one audio track.
+      const ctx = gxmMusic.getCtx();
+      const mixDest = ctx.createMediaStreamDestination();
+      audioNodes = [];
+      if (hasMic()) {
+        const mic = ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
+        mic.connect(mixDest);
+        audioNodes.push(mic);
+      }
+      const trackId = musicSel.value;
+      if (trackId) {
+        const bus = ctx.createGain();
+        bus.connect(mixDest);
+        bus.connect(ctx.destination); // so you hear it while recording
+        audioNodes.push(bus);
+        music = gxmMusic.play(trackId, { ctx, destination: bus, volume: 0.35 });
+      }
+      const tracks = stream.getVideoTracks().concat(hasMic() || trackId ? mixDest.stream.getAudioTracks() : []);
+      const mime = pickMime();
+      const chunks = [];
+      try {
+        recorder = new MediaRecorder(new MediaStream(tracks), {
+          mimeType: mime || undefined,
+          videoBitsPerSecond: 2500000,
+          audioBitsPerSecond: 128000,
+        });
+      } catch (e) {
+        alert('Couldn’t start recording on this device.');
+        cleanupAudio();
+        return;
+      }
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      recorder.onstop = () => {
+        cleanupAudio();
+        const base = (recorder.mimeType || mime || 'video/webm').split(';')[0];
+        const ext = base === 'video/mp4' ? 'mp4' : 'webm';
+        const file = new File([new Blob(chunks, { type: base })], `reel.${ext}`, { type: base });
+        recorder = null;
+        if (file.size) finishCapture('reel', file, trackId || null);
+      };
+      recorder.start(1000);
+      recStart = Date.now();
+      timerEl.classList.remove('hidden');
+      shutter.classList.add('recording');
+      shutter.title = 'Stop recording';
+      modeBtns.forEach((b) => { b.disabled = true; });
+      flipBtn.disabled = true;
+      musicSel.disabled = true;
+      hint.textContent = 'Recording… tap to stop.';
+      recTimer = setInterval(() => {
+        const secs = (Date.now() - recStart) / 1000;
+        timeEl.textContent = fmtReelTime(Math.min(secs, MAX_REEL_SECONDS));
+        if (secs >= MAX_REEL_SECONDS) stopRecording(); // 1-minute cap
+      }, 200);
+    }
+
+    function stopRecording() {
+      clearInterval(recTimer);
+      recTimer = null;
+      if (recorder && recorder.state !== 'inactive') recorder.stop();
+      timerEl.classList.add('hidden');
+      shutter.classList.remove('recording');
+      modeBtns.forEach((b) => { b.disabled = false; });
+      flipBtn.disabled = false;
+      musicSel.disabled = false;
+    }
+
+    function cleanupAudio() {
+      if (music) { music.stop(); music = null; }
+      audioNodes.forEach((n) => { try { n.disconnect(); } catch (_e) { /* gone */ } });
+      audioNodes = [];
+    }
+
+    async function finishCapture(kind, file, trackId) {
+      stopStream();
+      box.classList.add('hidden');
+      const url = URL.createObjectURL(file);
+      const details = await openPostDetails({ kind, previewUrl: url, music: trackId, musicMixed: !!trackId });
+      URL.revokeObjectURL(url);
+      if (!details) { box.classList.remove('hidden'); startStream(); return; } // back to the camera
+      close();
+      const toast = el('<div class="cam-upload-toast">Uploading… 0%</div>');
+      document.body.appendChild(toast);
+      try {
+        const photo = await postGalleryItem(kind, file, details, (pct) => { toast.textContent = `Uploading… ${pct}%`; });
+        onPosted(photo);
+      } catch (e) { alert(e.message); }
+      toast.remove();
+    }
+
+    function close() {
+      if (recorder && recorder.state !== 'inactive') { recorder.onstop = null; recorder.stop(); }
+      clearInterval(recTimer);
+      cleanupAudio();
+      stopStream();
+      box.remove();
+      document.removeEventListener('keydown', onKey);
+    }
+    function onKey(e) { if (e.key === 'Escape' && !box.classList.contains('hidden')) close(); }
+
+    shutter.addEventListener('click', () => {
+      if (mode === 'photo') takePhoto();
+      else if (recorder) stopRecording();
+      else startRecording();
+    });
+    modeBtns.forEach((b) => b.addEventListener('click', () => { mode = b.dataset.mode; paintMode(); }));
+    flipBtn.addEventListener('click', () => { facing = facing === 'user' ? 'environment' : 'user'; startStream(); });
+    box.querySelector('.cam-close').addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(box);
+    startStream();
+  }
+
   // "0:42"-style label for a reel's length.
   function fmtReelTime(secs) {
     const s = Math.max(0, Math.round(Number(secs) || 0));
@@ -4015,6 +4376,7 @@
   // on your own photos (you can still read reactions and delete comments).
   // `opts.onUpdate({ reactionCount, commentCount, myReaction })` lets the
   // originating gallery cell keep its little activity badges in sync.
+  let musicMuted = false; // gallery viewer background music, per session
   function openPhotoViewer(startPhoto, opts) {
     opts = opts || {};
     const isOwner = !!opts.isOwner;
@@ -4038,6 +4400,7 @@
           <div class="pv-media"><img alt="" /><video class="hidden" controls playsinline preload="metadata"></video></div>
           <div class="pv-panel">
             <div class="pv-count hint"></div>
+            <div class="pv-details"></div>
             <div class="pv-reactions" id="pvReactions"></div>
             <div class="pv-comments-wrap">
               <div class="comments" id="pvPhotoComments"><div class="hint">Loading…</div></div>
@@ -4052,7 +4415,10 @@
     const mediaVid = box.querySelector('.pv-media video');
     const countEl = box.querySelector('.pv-count');
 
-    const close = () => { mediaVid.pause(); box.remove(); document.removeEventListener('keydown', onKey); };
+    const detailsEl = box.querySelector('.pv-details');
+    let bgMusic = null;
+    const stopBgMusic = () => { if (bgMusic) { bgMusic.stop(); bgMusic = null; } };
+    const close = () => { stopBgMusic(); mediaVid.pause(); box.remove(); document.removeEventListener('keydown', onKey); };
     function onKey(e) {
       if (e.key === 'Escape') close();
       else if (multi && e.key === 'ArrowRight') go(1);
@@ -4252,7 +4618,31 @@
 
     // Paint the currently-selected photo, then load its authoritative detail
     // (comments + reaction counts) from the server.
+    // Caption (#tags), place and music for the current item. Music chosen for
+    // a photo — or for an uploaded reel — plays while it's open; music recorded
+    // into a reel is already in its soundtrack.
+    function paintDetails() {
+      stopBgMusic();
+      const track = photo.music && gxmMusic.byId(photo.music);
+      const bits = [];
+      if (photo.caption) bits.push(`<p class="pv-caption">${captionHtml(photo.caption)}</p>`);
+      if (photo.location) bits.push(`<div class="pv-place">📍 ${esc(photo.location)}</div>`);
+      if (track) bits.push(`<div class="pv-music">🎵 ${esc(track.name)}${photo.musicMixed ? '' : ' <button class="ghost small pv-music-toggle"></button>'}</div>`);
+      detailsEl.innerHTML = bits.join('');
+      detailsEl.style.display = bits.length ? '' : 'none';
+      if (!track || photo.musicMixed) return;
+      const btn = detailsEl.querySelector('.pv-music-toggle');
+      const paintBtn = () => { btn.textContent = bgMusic ? '🔇 Mute' : '🔊 Play'; };
+      btn.addEventListener('click', () => {
+        if (bgMusic) { stopBgMusic(); musicMuted = true; } else { bgMusic = gxmMusic.play(photo.music, { volume: 0.35 }); musicMuted = false; }
+        paintBtn();
+      });
+      if (!musicMuted) bgMusic = gxmMusic.play(photo.music, { volume: 0.35 });
+      paintBtn();
+    }
+
     function loadPhoto() {
+      paintDetails();
       const isReel = photo.kind === 'reel';
       mediaImg.classList.toggle('hidden', isReel);
       mediaVid.classList.toggle('hidden', !isReel);
@@ -4557,6 +4947,7 @@
             ${!isMe ? `<span id="pvFriend"></span>` : ''}
             ${!isMe ? `<span id="pvBlock"></span>` : ''}
             ${isMe ? '<button class="ghost" id="pvEdit">✎ Edit profile</button>' : ''}
+            ${isMe ? '<button class="ghost" id="pvCameraTop" title="Take a photo or record a reel for your gallery">📷 Camera</button>' : ''}
             <button class="ghost" id="pvShare" title="Copy a shareable link to this profile">🔗 Share</button>
             ${isMe && profile.referralCode ? '<button class="ghost" id="pvRefer" title="Invite someone to join getxmatch with your referral code">🎟️ Refer</button>' : ''}
           </div>
@@ -4638,7 +5029,7 @@
     const galCount = view.querySelector('#galCount');
     const updateCount = () => {
       const n = gal.querySelectorAll('.cell').length;
-      galCount.textContent = isMe ? `(${n}/${MAX_GALLERY})` : `(${n})`;
+      galCount.textContent = `(${n})`;
     };
     // The photos currently in the grid, in DOM order — the slider pages through
     // exactly these. Each cell keeps a reference to its photo + meta repainter.
@@ -4684,7 +5075,7 @@
         del.addEventListener('click', async (ev) => {
           ev.stopPropagation();
           if (!confirm(isReel ? 'Delete this reel?' : 'Delete this photo?')) return;
-          try { await api.del('/api/profile/gallery/' + ph.id); metaUpdaters.delete(ph.id); cell.remove(); updateCount(); refreshAddBtn(); refreshReelBtn(); syncGalSlideBtn(); }
+          try { await api.del('/api/profile/gallery/' + ph.id); metaUpdaters.delete(ph.id); cell.remove(); updateCount(); syncGalSlideBtn(); }
           catch (e) { alert(e.message); }
         });
         cell.appendChild(del);
@@ -4707,54 +5098,48 @@
       syncGalSlideBtn();
     }
 
-    let addBtn = null;
-    function refreshAddBtn() {
-      if (!addBtn) return;
-      const full = gal.querySelectorAll('.cell').length >= MAX_GALLERY;
-      addBtn.disabled = full;
-      addBtn.textContent = full ? 'Gallery full (25)' : '＋ Add photo';
-    }
-    let reelBtn = null;
-    function refreshReelBtn() {
-      if (!reelBtn) return;
-      const full = gal.querySelectorAll('.cell').length >= MAX_GALLERY;
-      const reels = gal.querySelectorAll('.reel-cell').length;
-      reelBtn.disabled = full || reels >= MAX_REELS;
-      reelBtn.textContent = full ? 'Gallery full (25)' : reels >= MAX_REELS ? `Reels full (${MAX_REELS})` : `＋ Add reel (${reels}/${MAX_REELS})`;
-    }
+    // Adding to the gallery (own profile): pick a photo or reel from the
+    // device, or capture one with the in-app camera. There's no limit on how
+    // many; each item can carry a caption with #tags, a place and music.
+    const addPosted = (photo) => {
+      const hint = gal.querySelector('.hint');
+      if (hint) hint.remove();
+      gal.prepend(makeCell(photo));
+      updateCount();
+      syncGalSlideBtn();
+    };
     if (isMe) {
-      addBtn = el('<button class="ghost small" id="pvAdd" style="margin-top:12px">＋ Add photo</button>');
+      const bar = el(`<div class="gal-add-row">
+        <button class="primary small" id="pvCamera" title="Take a photo or record a reel">📷 Camera</button>
+        <button class="ghost small" id="pvAdd">＋ Add photo</button>
+        <button class="ghost small" id="pvAddReel">＋ Add reel</button>
+        <span class="hint gal-upload-status"></span>
+      </div>`);
+      const status = bar.querySelector('.gal-upload-status');
       const fileIn = el('<input type="file" accept="image/*" class="hidden" />');
-      addBtn.addEventListener('click', () => fileIn.click());
+      const reelIn = el('<input type="file" accept="video/mp4,video/quicktime,video/webm,video/*" class="hidden" />');
+      bar.querySelector('#pvCamera').addEventListener('click', () => openCamera(addPosted));
+      bar.querySelector('#pvAdd').addEventListener('click', () => fileIn.click());
+      bar.querySelector('#pvAddReel').addEventListener('click', () => reelIn.click());
+
       fileIn.addEventListener('change', async () => {
         const picked = fileIn.files[0];
         fileIn.value = '';
         if (!picked) return;
         const cropped = await cropImage(picked);
         if (!cropped) return;
-        const fd = new FormData();
-        fd.append('photo', cropped);
+        const url = URL.createObjectURL(cropped);
+        const details = await openPostDetails({ kind: 'photo', previewUrl: url });
+        URL.revokeObjectURL(url);
+        if (!details) return;
         try {
-          const { photo } = await api.postForm('/api/profile/gallery', fd);
-          const hint = gal.querySelector('.hint');
-          if (hint) hint.remove();
-          gal.prepend(makeCell(photo));
-          updateCount();
-          refreshAddBtn();
-          refreshReelBtn();
-          syncGalSlideBtn();
+          addPosted(await postGalleryItem('photo', cropped, details, (pct) => { status.textContent = `Uploading… ${pct}%`; }));
         } catch (e) { alert(e.message); }
-        fileIn.value = '';
+        status.textContent = '';
       });
-      view.appendChild(fileIn);
-      gal.after(addBtn);
-      refreshAddBtn();
 
-      // Reels: a short video (max 1 minute). Length and size are checked here
-      // first so nobody waits on an upload the server would reject anyway.
-      reelBtn = el('<button class="ghost small" id="pvAddReel" style="margin:12px 0 0 8px"></button>');
-      const reelIn = el('<input type="file" accept="video/mp4,video/quicktime,video/webm,video/*" class="hidden" />');
-      reelBtn.addEventListener('click', () => reelIn.click());
+      // Reels picked from the device: length and size are checked here first
+      // so nobody waits on an upload the server would reject anyway.
       reelIn.addEventListener('change', async () => {
         const picked = reelIn.files[0];
         reelIn.value = '';
@@ -4768,26 +5153,22 @@
           alert(`Reels can be up to 1 minute long. This video is ${Math.round(secs)} seconds — please trim it and try again.`);
           return;
         }
-        const fd = new FormData();
-        fd.append('reel', picked);
-        reelBtn.disabled = true;
+        const url = URL.createObjectURL(picked);
+        const details = await openPostDetails({ kind: 'reel', previewUrl: url });
+        URL.revokeObjectURL(url);
+        if (!details) return;
         try {
-          const { photo } = await uploadWithProgress('/api/profile/gallery/reel', fd, (pct) => {
-            reelBtn.textContent = `Uploading reel… ${pct}%`;
-          });
-          const hint = gal.querySelector('.hint');
-          if (hint) hint.remove();
-          gal.prepend(makeCell(photo));
-          updateCount();
-          refreshAddBtn();
-          syncGalSlideBtn();
+          addPosted(await postGalleryItem('reel', picked, details, (pct) => { status.textContent = `Uploading reel… ${pct}%`; }));
         } catch (e) { alert(e.message); }
-        refreshReelBtn();
+        status.textContent = '';
       });
+      view.appendChild(fileIn);
       view.appendChild(reelIn);
-      addBtn.after(reelBtn);
-      refreshReelBtn();
+      gal.after(bar);
     }
+
+    const camTop = view.querySelector('#pvCameraTop');
+    if (camTop) camTop.addEventListener('click', () => openCamera(addPosted));
 
     /* ----- GIF "feelings" collection ----- */
     renderGifSection(view, profile, isMe);

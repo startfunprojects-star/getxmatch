@@ -123,7 +123,10 @@ function commentsFor(subjectId, viewerId) {
 // Detail (the full comment list) is fetched lazily when a photo is opened.
 function buildGallery(userId, viewerId) {
   const photos = db
-    .prepare('SELECT id, filename, kind, duration FROM gallery_photos WHERE user_id = ? ORDER BY created_at DESC')
+    .prepare(
+      `SELECT id, filename, kind, duration, caption, location, music, music_mixed
+       FROM gallery_photos WHERE user_id = ? ORDER BY created_at DESC`
+    )
     .all(userId);
   if (!photos.length) return [];
 
@@ -165,6 +168,10 @@ function buildGallery(userId, viewerId) {
       url: `/uploads/${ph.filename}`,
       kind: ph.kind || 'photo',
       duration: ph.duration || null,
+      caption: ph.caption || '',
+      location: ph.location || '',
+      music: ph.music || null,
+      musicMixed: !!ph.music_mixed,
       reactions,
       reactionCount: reactions.reduce((sum, r) => sum + r.count, 0),
       commentCount: commentCount.get(ph.id) || 0,

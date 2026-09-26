@@ -394,6 +394,13 @@ db.exec(`
   if (!cols.includes('duration')) {
     db.exec('ALTER TABLE gallery_photos ADD COLUMN duration REAL;');
   }
+  // Details added when posting: caption (with #tags), place, background music.
+  if (!cols.includes('caption')) {
+    db.exec("ALTER TABLE gallery_photos ADD COLUMN caption TEXT NOT NULL DEFAULT '';");
+    db.exec("ALTER TABLE gallery_photos ADD COLUMN location TEXT NOT NULL DEFAULT '';");
+    db.exec('ALTER TABLE gallery_photos ADD COLUMN music TEXT;');
+    db.exec('ALTER TABLE gallery_photos ADD COLUMN music_mixed INTEGER NOT NULL DEFAULT 0;');
+  }
 })();
 
 // --- WhatsApp-style polls sent inside a chat. A poll lives as its own row and

@@ -20,13 +20,26 @@ self-host on a single VPS: no external database or storage service required.
   type the city if it isn't listed; data from `country-state-city`), an "About
   me", **up to 10 areas of interest** from ~80 grouped choices, and relationship
   status. Each profile also has a display
-  picture and a **gallery of up to 25 photos and reels**. **Reels** are short
-  videos (MP4, MOV or WEBM, **max 1 minute**, up to 50 MB, at most 5 per member):
-  they show in the gallery with a colored gradient border and a length badge,
-  and play right inside the photo viewer, where they take reactions and comments
-  like photos. Length is checked in the browser before upload and again on the
-  server from the file's own headers (no ffmpeg needed). Reels aren't shared to
-  the Highway. Profile images and reels are stored on the server.
+  picture and a **gallery of photos and reels with no limit on how many**.
+  **Reels** are short videos (MP4, MOV or WEBM, **max 1 minute**, up to 50 MB
+  each): they show in the gallery with a colored gradient border and a length
+  badge, and play right inside the photo viewer, where they take reactions and
+  comments like photos. Length is checked in the browser before upload and again
+  on the server from the file's own headers — including browser recordings,
+  which store their length differently (no ffmpeg needed). Reels aren't shared
+  to the Highway. Profile images and reels are stored on the server.
+- **In-app camera** — a **📷 Camera** button on your profile (header and
+  gallery) opens the device camera to **take a photo** or **record a reel** with
+  the **microphone on**, so members can talk while recording; recording stops
+  by itself at 1 minute, and the front/back camera can be switched. Before
+  posting (from the camera or from a picked file) members can add a **caption
+  with #tags**, a **location** (typed, or "Use my location", which turns the
+  device's position — rounded to ~1 km — into the nearest town; only the place
+  name is kept), and **background music**. The five music tracks are composed
+  live in the browser (`public/js/music.js`), so they're original and
+  royalty-free. Music picked while recording is mixed into the reel together
+  with the voice; music on a photo (or an uploaded reel) plays while it's open
+  in the viewer, with a mute button.
 - **Referrals** — every member has a fixed referral code (it can't be changed),
   shown on their own profile with a **Refer** button that shares a sign-up link
   (`/?ref=CODE`) just like the profile Share button. When someone joins with the
