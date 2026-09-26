@@ -355,7 +355,10 @@
     ],
     maxInterests: 10,
   };
-  const MAX_GALLERY = 25;
+  const MAX_GALLERY = 25; // photos + reels together
+  const MAX_REELS = 5;
+  const MAX_REEL_SECONDS = 60;
+  const MAX_REEL_MB = 50;
   const MAX_BUFFER = 10;
   const MAX_GIFS = 100;
 
@@ -3858,6 +3861,52 @@
     return g === 'Female' ? '♀' : g === 'Male' ? '♂' : '⚧';
   }
 
+  // "0:42"-style label for a reel's length.
+  function fmtReelTime(secs) {
+    const s = Math.max(0, Math.round(Number(secs) || 0));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  // Length in seconds of a picked video file, or null if the browser can't
+  // read it (the server checks again either way).
+  function readVideoDuration(file) {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(file);
+      const v = document.createElement('video');
+      let settled = false;
+      const done = (d) => {
+        if (settled) return;
+        settled = true;
+        URL.revokeObjectURL(url);
+        resolve(Number.isFinite(d) ? d : null);
+      };
+      v.preload = 'metadata';
+      v.onloadedmetadata = () => done(v.duration);
+      v.onerror = () => done(null);
+      setTimeout(() => done(null), 8000);
+      v.src = url;
+    });
+  }
+
+  // POST a FormData with upload progress (0-100) — for large files like reels,
+  // where api.postForm would give no feedback. Resolves with the JSON reply.
+  function uploadWithProgress(url, fd, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)); };
+      xhr.onload = () => {
+        let data = null;
+        try { data = JSON.parse(xhr.responseText); } catch (_e) { /* no body */ }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(new Error((data && data.error) || `Upload failed (${xhr.status})`));
+      };
+      xhr.onerror = () => reject(new Error('Upload failed — check your connection.'));
+      xhr.send(fd);
+    });
+  }
+
   // Full-screen image lightbox for gallery photos.
   function openLightbox(url) {
     const box = el(`<div class="lightbox"><img src="${url}" /><button class="lb-close" title="Close">✕</button></div>`);
@@ -3986,7 +4035,7 @@
         <button class="lb-close" title="Close">✕</button>
         <button class="pv-nav pv-prev" title="Previous (←)" aria-label="Previous">‹</button>
         <div class="pv-shell">
-          <div class="pv-media"><img alt="" /></div>
+          <div class="pv-media"><img alt="" /><video class="hidden" controls playsinline preload="metadata"></video></div>
           <div class="pv-panel">
             <div class="pv-count hint"></div>
             <div class="pv-reactions" id="pvReactions"></div>
@@ -4000,9 +4049,10 @@
       </div>
     `);
     const mediaImg = box.querySelector('.pv-media img');
+    const mediaVid = box.querySelector('.pv-media video');
     const countEl = box.querySelector('.pv-count');
 
-    const close = () => { box.remove(); document.removeEventListener('keydown', onKey); };
+    const close = () => { mediaVid.pause(); box.remove(); document.removeEventListener('keydown', onKey); };
     function onKey(e) {
       if (e.key === 'Escape') close();
       else if (multi && e.key === 'ArrowRight') go(1);
@@ -4203,7 +4253,19 @@
     // Paint the currently-selected photo, then load its authoritative detail
     // (comments + reaction counts) from the server.
     function loadPhoto() {
-      mediaImg.src = photo.url;
+      const isReel = photo.kind === 'reel';
+      mediaImg.classList.toggle('hidden', isReel);
+      mediaVid.classList.toggle('hidden', !isReel);
+      if (isReel) {
+        mediaImg.removeAttribute('src');
+        mediaVid.src = photo.url;
+        mediaVid.play().catch(() => {}); // autoplay with sound may be blocked; controls stay available
+      } else {
+        mediaVid.pause();
+        mediaVid.removeAttribute('src');
+        mediaVid.load();
+        mediaImg.src = photo.url;
+      }
       countEl.textContent = multi ? `${idx + 1} / ${items.length}` : '';
       countEl.style.display = multi ? '' : 'none';
       counts = {};
@@ -4585,7 +4647,10 @@
     const makeCell = (ph) => {
       ph.reactionCount = ph.reactionCount || 0;
       ph.commentCount = ph.commentCount || 0;
-      const cell = el(`<div class="cell"><img src="${ph.url}" loading="lazy" /><span class="cell-zoom">⤢</span><span class="cell-meta"></span></div>`);
+      const isReel = ph.kind === 'reel';
+      const cell = isReel
+        ? el(`<div class="cell reel-cell"><video src="${ph.url}#t=0.1" muted playsinline preload="metadata"></video><span class="reel-badge">▶ ${fmtReelTime(ph.duration)}</span><span class="cell-zoom">⤢</span><span class="cell-meta"></span></div>`)
+        : el(`<div class="cell"><img src="${ph.url}" loading="lazy" /><span class="cell-zoom">⤢</span><span class="cell-meta"></span></div>`);
       cell._photo = ph;
       const meta = cell.querySelector('.cell-meta');
       const paintMeta = () => {
@@ -4611,21 +4676,22 @@
           if (fn) fn(s);
         },
       });
-      cell.querySelector('img').addEventListener('click', open);
+      cell.querySelector(isReel ? 'video' : 'img').addEventListener('click', open);
       cell.querySelector('.cell-zoom').addEventListener('click', open);
+      if (isReel) cell.querySelector('.reel-badge').addEventListener('click', open);
       if (isMe) {
-        const del = el('<button class="del" title="Delete photo">✕</button>');
+        const del = el(`<button class="del" title="Delete ${isReel ? 'reel' : 'photo'}">✕</button>`);
         del.addEventListener('click', async (ev) => {
           ev.stopPropagation();
-          if (!confirm('Delete this photo?')) return;
-          try { await api.del('/api/profile/gallery/' + ph.id); metaUpdaters.delete(ph.id); cell.remove(); updateCount(); refreshAddBtn(); syncGalSlideBtn(); }
+          if (!confirm(isReel ? 'Delete this reel?' : 'Delete this photo?')) return;
+          try { await api.del('/api/profile/gallery/' + ph.id); metaUpdaters.delete(ph.id); cell.remove(); updateCount(); refreshAddBtn(); refreshReelBtn(); syncGalSlideBtn(); }
           catch (e) { alert(e.message); }
         });
         cell.appendChild(del);
       }
       return cell;
     };
-    if (!profile.gallery.length) gal.appendChild(el('<div class="hint">No photos yet.</div>'));
+    if (!profile.gallery.length) gal.appendChild(el('<div class="hint">No photos or reels yet.</div>'));
     else profile.gallery.forEach((ph) => gal.appendChild(makeCell(ph)));
     updateCount();
 
@@ -4634,7 +4700,7 @@
     const galItems = () =>
       Array.from(gal.querySelectorAll('.cell img')).map((im) => ({ url: im.src }));
     const syncGalSlideBtn = () => {
-      if (galSlideBtn) galSlideBtn.style.display = gal.querySelector('.cell') ? '' : 'none';
+      if (galSlideBtn) galSlideBtn.style.display = gal.querySelector('.cell img') ? '' : 'none';
     };
     if (galSlideBtn) {
       galSlideBtn.addEventListener('click', () => openSlideshow(galItems(), 0, { autoplay: true }));
@@ -4647,6 +4713,14 @@
       const full = gal.querySelectorAll('.cell').length >= MAX_GALLERY;
       addBtn.disabled = full;
       addBtn.textContent = full ? 'Gallery full (25)' : '＋ Add photo';
+    }
+    let reelBtn = null;
+    function refreshReelBtn() {
+      if (!reelBtn) return;
+      const full = gal.querySelectorAll('.cell').length >= MAX_GALLERY;
+      const reels = gal.querySelectorAll('.reel-cell').length;
+      reelBtn.disabled = full || reels >= MAX_REELS;
+      reelBtn.textContent = full ? 'Gallery full (25)' : reels >= MAX_REELS ? `Reels full (${MAX_REELS})` : `＋ Add reel (${reels}/${MAX_REELS})`;
     }
     if (isMe) {
       addBtn = el('<button class="ghost small" id="pvAdd" style="margin-top:12px">＋ Add photo</button>');
@@ -4667,6 +4741,7 @@
           gal.prepend(makeCell(photo));
           updateCount();
           refreshAddBtn();
+          refreshReelBtn();
           syncGalSlideBtn();
         } catch (e) { alert(e.message); }
         fileIn.value = '';
@@ -4674,6 +4749,44 @@
       view.appendChild(fileIn);
       gal.after(addBtn);
       refreshAddBtn();
+
+      // Reels: a short video (max 1 minute). Length and size are checked here
+      // first so nobody waits on an upload the server would reject anyway.
+      reelBtn = el('<button class="ghost small" id="pvAddReel" style="margin:12px 0 0 8px"></button>');
+      const reelIn = el('<input type="file" accept="video/mp4,video/quicktime,video/webm,video/*" class="hidden" />');
+      reelBtn.addEventListener('click', () => reelIn.click());
+      reelIn.addEventListener('change', async () => {
+        const picked = reelIn.files[0];
+        reelIn.value = '';
+        if (!picked) return;
+        if (picked.size > MAX_REEL_MB * 1024 * 1024) {
+          alert(`Reels can be up to ${MAX_REEL_MB} MB. This video is ${Math.round(picked.size / 1048576)} MB.`);
+          return;
+        }
+        const secs = await readVideoDuration(picked);
+        if (secs != null && secs > MAX_REEL_SECONDS + 0.5) {
+          alert(`Reels can be up to 1 minute long. This video is ${Math.round(secs)} seconds — please trim it and try again.`);
+          return;
+        }
+        const fd = new FormData();
+        fd.append('reel', picked);
+        reelBtn.disabled = true;
+        try {
+          const { photo } = await uploadWithProgress('/api/profile/gallery/reel', fd, (pct) => {
+            reelBtn.textContent = `Uploading reel… ${pct}%`;
+          });
+          const hint = gal.querySelector('.hint');
+          if (hint) hint.remove();
+          gal.prepend(makeCell(photo));
+          updateCount();
+          refreshAddBtn();
+          syncGalSlideBtn();
+        } catch (e) { alert(e.message); }
+        refreshReelBtn();
+      });
+      view.appendChild(reelIn);
+      addBtn.after(reelBtn);
+      refreshReelBtn();
     }
 
     /* ----- GIF "feelings" collection ----- */

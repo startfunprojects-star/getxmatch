@@ -7,7 +7,8 @@ const express = require('express');
 const db = require('../db');
 const config = require('../config');
 const { requireAuth } = require('../auth');
-const { imageUpload } = require('../upload');
+const { imageUpload, videoUpload } = require('../upload');
+const { videoDuration } = require('../videoDuration');
 const { buildProfile } = require('../profileData');
 const { saveProfile } = require('../profileWrite');
 const F = require('../profileFields');
@@ -77,7 +78,52 @@ router.post('/gallery', requireAuth, imageUpload.single('photo'), (req, res) => 
   });
 });
 
-// DELETE /api/profile/gallery/:id — remove a gallery photo
+// POST /api/profile/gallery/reel — add a reel (a video of at most 1 minute) to
+// the gallery. Reels count toward the 25-item gallery total, with at most
+// MAX_REELS of them. They aren't shared to the Highway (that's for pictures).
+router.post('/gallery/reel', requireAuth, (req, res, next) => {
+  videoUpload.single('reel')(req, res, (err) => {
+    if (err && err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: `Reels can be up to ${Math.round(config.maxReelBytes / 1048576)} MB.` });
+    }
+    next(err);
+  });
+}, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No video uploaded.' });
+  const reject = (status, error) => {
+    removeUpload(req.file.filename);
+    res.status(status).json({ error });
+  };
+
+  const hasProfile = db.prepare('SELECT user_id FROM profiles WHERE user_id = ?').get(req.user.id);
+  if (!hasProfile) return reject(400, 'Create your profile before adding reels.');
+
+  const { n, reels } = db
+    .prepare("SELECT COUNT(*) AS n, COALESCE(SUM(kind = 'reel'), 0) AS reels FROM gallery_photos WHERE user_id = ?")
+    .get(req.user.id);
+  if (n >= F.MAX_GALLERY_PHOTOS) return reject(400, `Your gallery is full (max ${F.MAX_GALLERY_PHOTOS} items).`);
+  if (reels >= F.MAX_REELS) return reject(400, `You can have up to ${F.MAX_REELS} reels.`);
+
+  const duration = videoDuration(req.file.path);
+  if (duration == null) return reject(400, 'Could not read the length of this video. Try an MP4 file.');
+  // Half a second of slack: phones often save a "1:00" clip as 60.0x seconds.
+  if (duration > F.MAX_REEL_SECONDS + 0.5) {
+    return reject(400, `Reels can be up to 1 minute long. This video is ${Math.round(duration)} seconds.`);
+  }
+
+  const secs = Math.round(duration * 10) / 10;
+  const info = db
+    .prepare("INSERT INTO gallery_photos (user_id, filename, created_at, kind, duration) VALUES (?, ?, ?, 'reel', ?)")
+    .run(req.user.id, req.file.filename, Date.now(), secs);
+
+  res.status(201).json({
+    photo: { id: info.lastInsertRowid, url: `/uploads/${req.file.filename}`, kind: 'reel', duration: secs },
+    count: n + 1,
+    max: F.MAX_GALLERY_PHOTOS,
+  });
+});
+
+// DELETE /api/profile/gallery/:id — remove a gallery photo or reel
 router.delete('/gallery/:id', requireAuth, (req, res) => {
   const photo = db
     .prepare('SELECT id, filename FROM gallery_photos WHERE id = ? AND user_id = ?')

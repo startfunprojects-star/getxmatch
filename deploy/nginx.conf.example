@@ -6,8 +6,8 @@ server {
     listen 80;
     server_name example.com;
 
-    # Allow chat file relays / gallery uploads up to a sensible cap.
-    client_max_body_size 25m;
+    # Allow chat file relays, gallery uploads and reels (up to MAX_REEL_MB=50).
+    client_max_body_size 55m;
 
     location / {
         proxy_pass http://127.0.0.1:3000;

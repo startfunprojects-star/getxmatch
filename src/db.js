@@ -384,6 +384,18 @@ db.exec(`
   db.exec('CREATE INDEX IF NOT EXISTS idx_gallery_comments_parent ON gallery_comments (parent_id, created_at);');
 })();
 
+// Gallery reels: a gallery item is either a photo or a short video ("reel").
+// Reels share the photo table so reactions and comments work the same way.
+(function migrateGalleryReels() {
+  const cols = db.prepare('PRAGMA table_info(gallery_photos)').all().map((c) => c.name);
+  if (!cols.includes('kind')) {
+    db.exec("ALTER TABLE gallery_photos ADD COLUMN kind TEXT NOT NULL DEFAULT 'photo';");
+  }
+  if (!cols.includes('duration')) {
+    db.exec('ALTER TABLE gallery_photos ADD COLUMN duration REAL;');
+  }
+})();
+
 // --- WhatsApp-style polls sent inside a chat. A poll lives as its own row and
 // is referenced by a chat message (kind='poll', whose body is JSON {pollId}).
 // It belongs to a 1:1 conversation (scope='dm', dm_a < dm_b) or a group

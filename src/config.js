@@ -15,6 +15,7 @@ const config = {
   cookieName: 'gxm_token',
   tokenTtl: '7d',
   maxUploadBytes: (parseInt(process.env.MAX_UPLOAD_MB, 10) || 5) * 1024 * 1024,
+  maxReelBytes: (parseInt(process.env.MAX_REEL_MB, 10) || 50) * 1024 * 1024,
   maxChatFileBytes: (parseInt(process.env.MAX_CHAT_FILE_MB, 10) || 15) * 1024 * 1024,
   dataDir: path.join(ROOT, 'data'),
   uploadsDir: path.join(ROOT, 'uploads'),

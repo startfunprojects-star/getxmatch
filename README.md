@@ -20,8 +20,13 @@ self-host on a single VPS: no external database or storage service required.
   type the city if it isn't listed; data from `country-state-city`), an "About
   me", **up to 10 areas of interest** from ~80 grouped choices, and relationship
   status. Each profile also has a display
-  picture and a **photo gallery of up to 25 images**. Profile images are stored
-  on the server.
+  picture and a **gallery of up to 25 photos and reels**. **Reels** are short
+  videos (MP4, MOV or WEBM, **max 1 minute**, up to 50 MB, at most 5 per member):
+  they show in the gallery with a colored gradient border and a length badge,
+  and play right inside the photo viewer, where they take reactions and comments
+  like photos. Length is checked in the browser before upload and again on the
+  server from the file's own headers (no ffmpeg needed). Reels aren't shared to
+  the Highway. Profile images and reels are stored on the server.
 - **Referrals** — every member has a fixed referral code (it can't be changed),
   shown on their own profile with a **Refer** button that shares a sign-up link
   (`/?ref=CODE`) just like the profile Share button. When someone joins with the
@@ -229,6 +234,7 @@ sudo systemctl restart getxmatch
 | `JWT_SECRET`      | Secret for signing auth cookies — **required** in prod |
 | `NODE_ENV`        | `production` enables secure cookies                 |
 | `MAX_UPLOAD_MB`   | Max profile/gallery image size (default 5)          |
+| `MAX_REEL_MB`     | Max gallery reel (video) size in MB (default 50)    |
 | `MAX_CHAT_FILE_MB`| Max live chat file size (default 15)                |
 | `PUBLIC_URL`      | Public base URL, used for links inside emails (e.g. `https://getxmatch.com`) |
 | `ADMIN_EMAIL`     | Where the admin set/reset link is sent (default `gauravsharma.ps@gmail.com`) |

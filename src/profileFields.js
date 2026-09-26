@@ -38,7 +38,9 @@ const INTEREST_GROUPS = [
 const INTERESTS = INTEREST_GROUPS.flatMap((g) => g.items);
 const MAX_INTERESTS = 10;
 
-const MAX_GALLERY_PHOTOS = 25;
+const MAX_GALLERY_PHOTOS = 25; // photos + reels together
+const MAX_REELS = 5;
+const MAX_REEL_SECONDS = 60;
 const MAX_BUFFER_PHOTOS = 10;
 const MAX_GIFS = 100;
 const MIN_AGE = 18;
@@ -74,6 +76,8 @@ module.exports = {
   INTERESTS,
   MAX_INTERESTS,
   MAX_GALLERY_PHOTOS,
+  MAX_REELS,
+  MAX_REEL_SECONDS,
   MAX_BUFFER_PHOTOS,
   MAX_GIFS,
   MIN_AGE,

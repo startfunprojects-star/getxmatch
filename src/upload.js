@@ -34,4 +34,25 @@ const imageUpload = multer({
   limits: { fileSize: config.maxUploadBytes },
 });
 
-module.exports = { imageUpload };
+// Gallery reels: short videos (max 1 minute — checked after upload by the
+// route, from the file's own headers).
+const VIDEO_ALLOWED = {
+  'video/mp4': '.mp4',
+  'video/quicktime': '.mov',
+  'video/webm': '.webm',
+  'video/x-m4v': '.m4v',
+};
+
+const videoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, config.uploadsDir),
+    filename: (req, file, cb) => cb(null, crypto.randomBytes(16).toString('hex') + VIDEO_ALLOWED[file.mimetype]),
+  }),
+  fileFilter: (req, file, cb) => {
+    if (VIDEO_ALLOWED[file.mimetype]) return cb(null, true);
+    cb(new Error('Only MP4, MOV or WEBM videos are allowed'));
+  },
+  limits: { fileSize: config.maxReelBytes },
+});
+
+module.exports = { imageUpload, videoUpload };
