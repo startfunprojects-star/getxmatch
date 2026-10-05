@@ -9,6 +9,7 @@ const { getGift } = require('./gifts');
 const polls = require('./polls');
 const chatQuiz = require('./chatQuiz');
 const { isCompatibility } = require('./quizTypes');
+const { isValidActivity } = require('./activities');
 
 // Emoji reactions a user may place on a message/gift. Server-side allow-list so
 // clients can't store arbitrary strings.
@@ -629,10 +630,10 @@ function initSocket(io) {
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
         if (areBlocked(me.id, to)) return ack && ack({ error: 'You cannot set an activity with this member.' });
 
-        // Accept either a predefined verb or a user's own custom activity.
-        // Free text is trimmed, whitespace-collapsed and length-capped; the
-        // feed renders it as plain text (textContent), so no markup can leak.
-        const raw = String((payload && payload.activity) || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+        // Only the predefined verbs (src/activities.js) are accepted — no free
+        // text, since the activity is shown on the public feed.
+        const raw = String((payload && payload.activity) || '').trim();
+        if (raw && !isValidActivity(raw)) return ack && ack({ error: 'Pick an activity from the list.' });
         const now = Date.now();
         if (!raw) {
           db.prepare('DELETE FROM chat_activities WHERE user_id = ? AND peer_id = ?').run(me.id, to);

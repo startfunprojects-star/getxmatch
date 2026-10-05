@@ -5,7 +5,6 @@
 
 const ACTIVITIES = [
   'chatting with',
-  'flirting with',
   'video calling',
   'getting to know',
   'vibing with',

@@ -50,7 +50,6 @@ function userMini(id, viewerId) {
 function activityIcon(activity) {
   const a = String(activity).toLowerCase();
   if (/(chat|messag|talk)/.test(a)) return '💬';
-  if (/(flirt|crush|love|kiss)/.test(a)) return '😍';
   if (/(match|paired|connect)/.test(a)) return '💘';
   if (/(rat|star|review)/.test(a)) return '⭐';
   if (/(gift|sent)/.test(a)) return '🎁';
@@ -193,7 +192,7 @@ function buildFeed(viewerId, opts) {
     });
   });
 
-  // 3b) User-declared chat activity ("A flirting with B") — real users.
+  // 3b) User-declared chat activity ("A chatting with B") — real users.
   db.prepare(
     'SELECT user_id, peer_id, activity, updated_at FROM chat_activities ORDER BY updated_at DESC LIMIT ?'
   ).all(PER_SOURCE).forEach((row) => {

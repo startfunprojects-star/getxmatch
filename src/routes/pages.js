@@ -644,7 +644,7 @@ router.get('/blog', (req, res) => {
   const seoDescriptor = resolveSeo({}, {
     canonicalPath: '/blog',
     title: 'Blog',
-    description: 'Stories, dating tips and news from the getxmatch team.',
+    description: 'Stories, tips and news from the getxmatch team.',
   });
   const jsonLd = [
     breadcrumbLd([{ name: 'Home', path: '/' }, { name: 'Blog', path: '/blog' }]),
@@ -657,7 +657,7 @@ router.get('/blog', (req, res) => {
   const bodyHtml = `
 ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Blog', path: '/blog' }])}
 <h1>Blog</h1>
-<p class="lede">Stories, dating tips and news from the getxmatch team.</p>
+<p class="lede">Stories, tips and news from the getxmatch team.</p>
 ${cards}`;
   sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
@@ -785,7 +785,7 @@ router.get('/qr/u/:file', (req, res, next) => {
 // Public profile link (/u/<username>) — what the share button and the profile
 // QR code point to. A logged-in member is taken to the profile inside the app;
 // anyone else sees a read-only profile and must join to message, follow, rate
-// or connect. Intimate fields, photos, GIFs and comments stay members-only.
+// or connect. Photos, GIFs and comments stay members-only.
 router.get('/u/:username', optionalAuth, (req, res) => {
   const row = db
     .prepare(

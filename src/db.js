@@ -714,7 +714,7 @@ db.exec(`
   if (!cols.includes('pin_rank')) db.exec('ALTER TABLE highway_posts ADD COLUMN pin_rank INTEGER');
 }
 
-// Relationship kind on a friendship request (friend / girlfriend / crush / …).
+// Relationship kind on a friendship request (always 'friend' now).
 // Added idempotently for databases created before the relationship-request feature.
 {
   const cols = db.prepare('PRAGMA table_info(friendships)').all().map((c) => c.name);
@@ -918,6 +918,16 @@ db.exec(`
   db.prepare(`DELETE FROM gallery_comment_reactions WHERE emoji IN (${marks})`).run(...removed);
   db.exec('DROP TABLE IF EXISTS chat_settings; DROP TABLE IF EXISTS chat_close_state;');
   db.exec('UPDATE messages SET expires_at = NULL WHERE expires_at IS NOT NULL;');
+})();
+
+// --- Migration: chat activities are limited to the predefined verbs ("flirting
+// with" and free-text statuses were removed), and every connection is a plain
+// friendship (older girlfriend / crush / … kinds become 'friend').
+(function migrateSafeActivities() {
+  const { listActivities } = require('./activities');
+  const allowed = listActivities();
+  db.prepare(`DELETE FROM chat_activities WHERE activity NOT IN (${allowed.map(() => '?').join(',')})`).run(...allowed);
+  db.exec("UPDATE friendships SET rel_type = 'friend' WHERE rel_type IS NOT NULL AND rel_type <> 'friend';");
 })();
 
 module.exports = db;

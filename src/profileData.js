@@ -331,7 +331,7 @@ function buildProfile(userId, viewerId) {
   const friendList = friendsOf(row.id);
   const blocked = blockState(row.id, viewerId);
 
-  // The relationship kind (friend / crush / girlfriend / …) between the owner
+  // The relationship kind (always 'friend') between the owner
   // and the viewer, if any request exists in either direction.
   let relType = null;
   if (viewerId && viewerId !== row.id) {

@@ -1545,38 +1545,24 @@
       : '<span class="hint">Set what you’re doing — it shows on Recent Activity.</span>';
   }
 
-  const CUSTOM_ACT = '__custom__'; // sentinel option value: "write your own"
-
-  // Reflect the user's own current activity into the picker: a predefined verb
-  // selects its option; anything else is shown in the custom text box. Reads the
-  // live DOM so it works from both the picker and the cross-tab sync handler.
+  // Reflect the user's own current activity into the picker. Reads the live DOM
+  // so it works from both the picker and the cross-tab sync handler.
   function reflectMineActivity(activity) {
     const select = document.getElementById('activitySelect');
-    const custom = document.getElementById('activityCustom');
-    if (!select || !custom) return;
+    if (!select) return;
     const list = state.activities || [];
-    if (activity && !list.includes(activity)) {
-      select.value = CUSTOM_ACT;
-      custom.value = activity;
-      custom.classList.remove('hidden');
-    } else {
-      select.value = activity || '';
-      custom.value = '';
-      custom.classList.add('hidden');
-    }
+    select.value = activity && list.includes(activity) ? activity : '';
   }
 
   async function setupActivityBar(view, peer) {
     const bar = view.querySelector('#activityBar');
     const select = view.querySelector('#activitySelect');
-    const custom = view.querySelector('#activityCustom');
     const activities = await loadActivities();
     if (!state.peer || state.peer.id !== peer.id || !document.body.contains(select)) return;
 
-    // Predefined verbs (if any) plus an always-available "write your own" entry.
+    // Predefined verbs only (no free text — it shows on the public feed).
     select.innerHTML = '<option value="">— nothing —</option>' +
-      activities.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join('') +
-      `<option value="${CUSTOM_ACT}">✍️ Custom…</option>`;
+      activities.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
     bar.classList.remove('hidden');
 
     // Share an image / GIF (to Recent Activity) straight from the chat status bar.
@@ -1618,31 +1604,7 @@
     reflectMineActivity(state.chatActivity.mine || '');
     renderActivityStatus(peerName);
 
-    select.addEventListener('change', () => {
-      if (select.value === CUSTOM_ACT) {
-        custom.classList.remove('hidden');
-        custom.focus();
-        return; // wait for the user to type + commit
-      }
-      custom.classList.add('hidden');
-      custom.value = '';
-      send(select.value); // a predefined verb, or "" to clear
-    });
-
-    // Commit on Enter or blur. An abandoned (empty) box restores the current
-    // state rather than clearing — use "— nothing —" to clear on purpose.
-    let suppressBlur = false;
-    const commitCustom = () => {
-      if (suppressBlur) { suppressBlur = false; return; }
-      const v = custom.value.trim();
-      if (!v) return reflectMineActivity(state.chatActivity.mine || '');
-      send(v);
-    };
-    custom.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); custom.blur(); } // blur commits
-      else if (e.key === 'Escape') { suppressBlur = true; reflectMineActivity(state.chatActivity.mine || ''); custom.blur(); }
-    });
-    custom.addEventListener('blur', commitCustom);
+    select.addEventListener('change', () => send(select.value)); // a verb, or "" to clear
   }
 
   async function openChat(peer) {
@@ -1682,7 +1644,6 @@
           <label class="activity-pick">
             <span>You're…</span>
             <select id="activitySelect"><option value="">— nothing —</option></select>
-            <input id="activityCustom" class="hidden" type="text" maxlength="40" placeholder="type your own…" />
           </label>
         </div>
         <div class="chat-stage">
@@ -5921,7 +5882,6 @@
   function activityIcon(activity) {
     const a = String(activity).toLowerCase();
     if (/(chat|messag|talk)/.test(a)) return '💬';
-    if (/(flirt|crush|love|kiss)/.test(a)) return '😍';
     if (/(match|paired|connect)/.test(a)) return '💘';
     if (/(rat|star|review)/.test(a)) return '⭐';
     if (/(gift|sent)/.test(a)) return '🎁';

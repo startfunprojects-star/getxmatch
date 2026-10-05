@@ -145,7 +145,7 @@
         </div>
 
         <label>Meta keywords (comma-separated)</label>
-        <input id="${seoId('metaKeywords')}" value="${v('metaKeywords')}" placeholder="dating, compatibility, quiz" />
+        <input id="${seoId('metaKeywords')}" value="${v('metaKeywords')}" placeholder="compatibility, quiz, community" />
 
         <label>Canonical URL</label>
         <input id="${seoId('canonicalUrl')}" value="${v('canonicalUrl')}" placeholder="https://getxmatch.com/…" />
@@ -1149,7 +1149,7 @@
             <label>Meta description <span class="seo-count" data-for="ss_metaDescription"></span></label>
             <textarea id="ss_metaDescription" maxlength="320" placeholder="${esc(defaults.metaDescription || '')}">${v('metaDescription')}</textarea>
             <label>Meta keywords (comma-separated)</label>
-            <input id="ss_metaKeywords" maxlength="300" value="${v('metaKeywords')}" placeholder="dating, compatibility quiz, social chat" />
+            <input id="ss_metaKeywords" maxlength="300" value="${v('metaKeywords')}" placeholder="compatibility quiz, social chat" />
 
             <h4 class="seo-h">Social card — Facebook · Instagram · Reddit · WhatsApp · LinkedIn</h4>
             <p class="hint" style="margin-top:0">These Open Graph tags drive the rich preview on every one of these platforms.</p>

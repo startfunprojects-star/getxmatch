@@ -1,9 +1,7 @@
 'use strict';
 
-// Connection requests are plain friend requests. The friendship row still has
-// a `rel_type` column: older rows may hold kinds that used to exist
-// (girlfriend, crush, colleague, …); they're kept in the database but shown as
-// friends everywhere, and new requests are always 'friend'.
+// Connection requests are plain friend requests. Every friendship row's
+// `rel_type` is 'friend' (older kinds are converted at startup in src/db.js).
 const REL_TYPES = {
   friend: { label: 'Friends', emoji: '🤝', requestLabel: 'Send Friend Request' },
 };
