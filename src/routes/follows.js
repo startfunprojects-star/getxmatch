@@ -49,7 +49,7 @@ router.post('/:username', requireAuth, (req, res) => {
   if (!target) return;
   if (target.id === req.user.id) return res.status(400).json({ error: 'You cannot follow yourself.' });
   if (areBlocked(req.user.id, target.id)) {
-    return res.status(403).json({ error: 'You cannot follow someone while a block is in place.' });
+    return res.status(403).json({ error: 'You cannot follow this member.' });
   }
   const fee = followFeeOf(target.id);
   const info = db

@@ -140,7 +140,7 @@ function sessionPayload(chatQuizId, viewerId) {
   return payload;
 }
 
-// Short label for a quiz session (reply previews, broadcast mirror).
+// Short label for a quiz session (reply previews).
 function quizLabel(chatQuizId) {
   const s = getSession(chatQuizId);
   const meta = s && quizMeta(s.quiz_id);

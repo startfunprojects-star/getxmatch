@@ -11,12 +11,14 @@ const db = require('../db');
 const { requireAuth } = require('../auth');
 const { notifyGroup } = require('../socket');
 const polls = require('../polls');
+const { areBlocked } = require('../relations');
 
 const router = express.Router();
 
 const MAX_MEMBERS = 4;
 
 function areConnected(a, b) {
+  if (areBlocked(a, b)) return false;
   return !!db
     .prepare(
       `SELECT 1 FROM friendships
@@ -202,6 +204,10 @@ router.post('/:id/accept', requireAuth, (req, res) => {
   const gid = parseInt(req.params.id, 10);
   if (myStatus(gid, me) !== 'invited') return res.status(404).json({ error: 'No pending invite for this group.' });
   if (occupancy(gid) > MAX_MEMBERS) return res.status(400).json({ error: 'This group is full.' });
+  const joined = db.prepare("SELECT user_id FROM chat_group_members WHERE group_id = ? AND status = 'joined'").all(gid);
+  if (joined.some((m) => areBlocked(me, m.user_id))) {
+    return res.status(403).json({ error: 'You cannot join this group.' });
+  }
   db.prepare("UPDATE chat_group_members SET status = 'joined' WHERE group_id = ? AND user_id = ?").run(gid, me);
   notifyGroup(memberIds(gid), gid);
   res.json({ group: serializeGroup(gid, me) });

@@ -145,7 +145,7 @@ function pollPayload(pollId, viewerId) {
   };
 }
 
-// Short label for a poll (broadcast mirror, reply previews).
+// Short label for a poll (reply previews).
 function pollLabel(pollId) {
   const poll = getPoll(pollId);
   return poll ? `📊 ${poll.question}` : '📊 Poll';

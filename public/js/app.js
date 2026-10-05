@@ -18,9 +18,6 @@
     typingTimer: null,
     gifts: null,         // gift catalog, loaded lazily
     giftsById: {},       // id -> gift for rendering
-    liveByPeer: {},      // otherUserId -> broadcast view when a chat of mine is live
-    watching: null,      // token of a broadcast being watched inline, or null
-    disappearing: 0,     // disappearing-messages TTL (seconds) for the open chat; 0 = off
     online: {},          // userId -> true when a friend/relation is currently online
     ignored: {},         // userId -> true for people I've ignored (hide their Highway posts)
   };
@@ -372,11 +369,10 @@
   // allow-list in src/galleryReactions.js — keep the two in sync.
   const GALLERY_REACTIONS = [
     { emoji: '❤️', label: 'Love' },
-    { emoji: '🤤', label: 'Lust' },
     { emoji: '😄', label: 'Smile' },
-    { emoji: '🍆', label: 'Erection' },
-    { emoji: '💦', label: 'Wet' },
-    { emoji: '🔥', label: 'Hot' },
+    { emoji: '😮', label: 'Wow' },
+    { emoji: '👏', label: 'Applause' },
+    { emoji: '🔥', label: 'Awesome' },
   ];
 
   // Connection requests are friend requests only (mirror src/relationships.js).
@@ -584,7 +580,7 @@
         </aside>
         <div class="auth-wrap"><div class="auth-card">
         <h1 class="brand">get<span class="x">x</span>match</h1>
-        <p class="auth-sub">${mode === 'login' ? 'Welcome back.' : 'Create your account. 18+ only.'}</p>
+        <p class="auth-sub">${mode === 'login' ? 'Welcome back.' : 'Create your account.'}</p>
         <form id="authForm">
           ${mode === 'signup' ? `
             <label>Username</label>
@@ -596,8 +592,8 @@
             ${referralsOn ? `<label>Referral code <span class="hint">(optional)</span></label>
             <input name="referralCode" maxlength="16" autocomplete="off" placeholder="If someone referred you" value="${esc(pendingReferral)}" style="text-transform:uppercase" />` : ''}
             <div class="checkbox-row">
-              <input type="checkbox" name="ageConfirmed" id="age" />
-              <label for="age" style="margin:0">I confirm I am 18 years of age or older and agree to the terms.</label>
+              <input type="checkbox" name="termsAccepted" id="terms" />
+              <label for="terms" style="margin:0">I agree to the <a href="/terms" target="_blank" rel="noopener">terms</a>.</label>
             </div>
           ` : `
             <label>Username or Email</label>
@@ -639,7 +635,7 @@
             username: fd.get('username'),
             email: fd.get('email'),
             password: fd.get('password'),
-            ageConfirmed: fd.get('ageConfirmed') === 'on',
+            termsAccepted: fd.get('termsAccepted') === 'on',
             referralCode: String(fd.get('referralCode') || '').trim(),
           });
           return renderOtp(String(fd.get('email')).toLowerCase());
@@ -974,7 +970,6 @@
             <button data-view="polls">📊 Polls</button>
             <button data-view="blogs">📝 Blogs</button>
             <button data-view="leaderboard">🏆 Leaderboard<span class="ndot"></span></button>
-            <button data-view="live">🔴 Live<span class="ndot"></span></button>
             <button data-view="events">✨ Recent Activity</button>
           </div>
           <div class="search"><input id="searchInput" placeholder="Search people…" /></div>
@@ -1029,7 +1024,6 @@
     });
 
     connectSocket();
-    syncMyBroadcasts(); // restore live banner for any broadcast I'm already in
     renderList();
     renderMainHome(); // chat box shows the recent-activity feed by default
     refreshRequestBadge();
@@ -1346,7 +1340,6 @@
     catch (e) { return notify(e.message); }
     try { const r = await api.get('/api/groups/' + gid + '/messages'); messages = r.messages || []; } catch (_e) {}
 
-    stopWatching(); // leaving any inline broadcast we were watching
     state.peer = null;
     state.group = { gid, name: group.name, members: group.members, max: group.max };
     closeReactionPalette();
@@ -1451,9 +1444,6 @@
     const wasActive = tabIsActive(state.openChats[idx]);
     state.openChats.splice(idx, 1);
     delete state.unread[id];
-    // Closing a 1-on-1 chat tab: tell the server. Once both sides close it, the
-    // conversation is deleted after 12h (Highway shares are kept).
-    if (typeof id === 'number' && state.socket) state.socket.emit('chat:close', { to: id });
     if (!wasActive) { renderChatTabs(); return; }
     const next = state.openChats[idx] || state.openChats[idx - 1];
     if (next) return openTab(next);
@@ -1467,7 +1457,6 @@
   function renderMainHome(focusMain) {
     const main = document.getElementById('main');
     if (!main) return;
-    stopWatching(); // leaving any inline broadcast we were watching
     state.peer = null;
     closeReactionPalette();
     resetAvatars(); // stop the in-chat picture rotation
@@ -1657,7 +1646,6 @@
   }
 
   async function openChat(peer) {
-    stopWatching(); // leaving any inline broadcast we were watching
     state.peer = peer;
     state.group = null; // leaving any group view
     state.replyTo = null; // clear any half-composed reply from a previous chat
@@ -1668,8 +1656,6 @@
     const existing = state.openChats.findIndex((p) => p.id === peer.id);
     if (existing === -1) state.openChats.push(peer);
     else state.openChats[existing] = peer;
-    // Mark the chat open so the "both closed → delete in 12h" timer is cleared.
-    if (state.socket) state.socket.emit('chat:open', { to: peer.id });
     document.querySelectorAll('.list-item').forEach((r) =>
       r.classList.toggle('active', Number(r.dataset.id) === peer.id));
     document.getElementById('shell').classList.add('viewing-main');
@@ -1686,13 +1672,9 @@
             <div class="name" id="peerName" style="cursor:pointer">${esc(peer.displayName || peer.username)}</div>
             <div class="status">@${esc(peer.username)}</div>
           </div>
-          <button class="ghost small" id="disappearBtn" title="Disappearing messages">⏳ Vanish</button>
           <button class="ghost small" id="screenShareBtn" title="Share a browser tab with this person">🖥️ Share screen</button>
-          <button class="ghost small" id="broadcastBtn" title="Broadcast this chat live — anyone can watch and comment">🔴 Broadcast</button>
           <button class="ghost small" id="makeGroupBtn" title="Start a group chat with this person and others">👥 Group</button>
         </div>
-        <div class="disappear-banner hidden" id="disappearBanner"></div>
-        <div class="live-banner hidden" id="liveBanner"></div>
         <div class="chat-activity-bar hidden" id="activityBar">
           <div class="activity-status" id="activityStatus"></div>
           <button class="icon-btn small" id="activityImgBtn" type="button" title="Share an image / GIF to Recent Activity (max 5 MB)">🖼️</button>
@@ -1705,7 +1687,6 @@
         </div>
         <div class="chat-stage">
           <div class="chat-body" id="chatBody"></div>
-          <div class="fly-layer" id="chatFlyLayer"></div>
         </div>
         <div class="typing hidden" id="typing">typing…</div>
         <div class="gift-picker hidden" id="giftPicker"></div>
@@ -1740,17 +1721,12 @@
     view.querySelector('#peerAvatar').addEventListener('click', openPeerProfile);
     view.querySelector('#peerName').addEventListener('click', openPeerProfile);
     view.querySelector('#makeGroupBtn').addEventListener('click', () => openGroupCreator(peer));
-    view.querySelector('#broadcastBtn').addEventListener('click', () => toggleBroadcast(peer));
-    view.querySelector('#disappearBtn').addEventListener('click', () => promptDisappearing(peer));
     view.querySelector('#screenShareBtn').addEventListener('click', () => toggleScreenShare(peer));
     reflectScreenShare(peer.id);
 
     // Best-effort protection: block copy / context-menu / drag inside the chat
     // so messages, images and files can't be trivially saved.
     hardenChat(view.querySelector('.chat-wrap') || view);
-
-    // If this conversation is already being broadcast, show its live banner.
-    reflectBroadcast(peer.id);
 
     setupActivityBar(view, peer);
 
@@ -1803,10 +1779,8 @@
 
     // Load persisted history (text + gifts).
     adState.counters.chat = 0; // restart the every-20-messages ad cadence per chat
-    state.disappearing = 0;
     try {
-      const { messages, disappearing } = await api.get(`/api/users/${peer.id}/messages`);
-      state.disappearing = disappearing || 0;
+      const { messages } = await api.get(`/api/users/${peer.id}/messages`);
 
       // Shared files aren't stored on the server; they're kept in THIS browser's
       // IndexedDB so they survive a refresh (per user/device). Fall back to the
@@ -1829,7 +1803,6 @@
         timeline.forEach((it) => it.render());
       }
     } catch (_e) {}
-    updateDisappearBanner();
     scrollBody();
   }
 
@@ -2126,7 +2099,7 @@
 
   // A narration/action line ("/…"): a standalone box centered in the chat,
   // not a side-attached speech bubble. `author` (optional) labels who narrated
-  // in group chats. Honours the disappearing-message TTL like any other message.
+  // in group chats.
   function appendNarrationLine(text, at, opts) {
     const b = chatBody();
     if (!b) return null;
@@ -2137,7 +2110,6 @@
     line.appendChild(el('<span class="nl-text"></span>')).textContent = text;
     line.appendChild(el(`<span class="nl-time">${fmtTime(at)}</span>`));
     b.appendChild(line);
-    if (opts.expiresAt) scheduleExpiry(line, opts.expiresAt);
     scrollBody();
     return line;
   }
@@ -2148,7 +2120,7 @@
     if (!b) return;
     const narration = narrationText(m.body);
     if (narration != null) {
-      return appendNarrationLine(narration, m.at, { id: m.id, expiresAt: m.expiresAt });
+      return appendNarrationLine(narration, m.at, { id: m.id });
     }
     const side = m.mine ? 'me' : 'them';
     const bubble = el(`<div class="bubble ${side}"></div>`);
@@ -2158,7 +2130,6 @@
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
     attachBubbleActions(bubble, m);
     const row = mountBubble(bubble, m);
-    if (m.expiresAt) scheduleExpiry(bubble, m.expiresAt);
     scrollBody();
     return row;
   }
@@ -2194,9 +2165,6 @@
     bubble.appendChild(el(`<span class="time">${fmtTime(meta.at || Date.now())}</span>`));
     attachFileActions(bubble, meta, mine);
     mountBubble(bubble, { mine: mine, from: meta.from });
-    // Files aren't persisted, so honour disappearing purely on the client: drop
-    // the bubble after the conversation's TTL (both sides run the same timer).
-    if (state.disappearing > 0) scheduleExpiry(bubble, Date.now() + state.disappearing * 1000);
     scrollBody();
   }
 
@@ -2283,7 +2251,6 @@
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
     attachBubbleActions(bubble, m);
     mountBubble(bubble, m);
-    if (m.expiresAt) scheduleExpiry(bubble, m.expiresAt);
     scrollBody();
   }
 
@@ -2761,7 +2728,7 @@
     state.socket.emit('chat:gift', { to: state.peer.id, gift: giftId }, (res) => {
       if (res && res.error) return notify(res.error);
       const m = (res && res.message) || {};
-      appendGiftBubble({ body: giftId, mine: true, at: m.at || Date.now(), id: m.id, expiresAt: m.expiresAt });
+      appendGiftBubble({ body: giftId, mine: true, at: m.at || Date.now(), id: m.id });
     });
   }
 
@@ -2785,7 +2752,7 @@
       if (res && res.error) return notify(res.error);
       // Echo is handled here for the sending tab. Use the server's returned body.
       const m = (res && res.message) || {};
-      appendTextBubble({ body: m.body != null ? m.body : body, mine: true, at: m.at || Date.now(), id: m.id, reply: m.reply || replySnapshot, expiresAt: m.expiresAt });
+      appendTextBubble({ body: m.body != null ? m.body : body, mine: true, at: m.at || Date.now(), id: m.id, reply: m.reply || replySnapshot });
     });
   }
 
@@ -2934,190 +2901,6 @@
     scrollBody();
   }
 
-  /* ---------- disappearing messages ---------- */
-
-  // Human-friendly rendering of a seconds TTL (e.g. 90 -> "1m 30s").
-  function fmtDuration(sec) {
-    sec = Math.max(0, Math.round(sec));
-    if (sec < 60) return sec + 's';
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
-    if (m < 60) return s ? `${m}m ${s}s` : `${m}m`;
-    const h = Math.floor(m / 60);
-    const mm = m % 60;
-    return mm ? `${h}h ${mm}m` : `${h}h`;
-  }
-
-  // Presets offered in the disappearing-messages dialog (label + seconds).
-  var DISAPPEAR_PRESETS = [
-    { label: 'Off', seconds: 0 },
-    { label: '5s', seconds: 5 },
-    { label: '10s', seconds: 10 },
-    { label: '30s', seconds: 30 },
-    { label: '1 min', seconds: 60 },
-    { label: '5 min', seconds: 300 },
-    { label: '1 hour', seconds: 3600 },
-  ];
-
-  // Commit a chosen TTL for this conversation.
-  function setDisappearing(peer, seconds) {
-    if (!state.socket || !peer) return;
-    state.socket.emit('chat:disappearing', { to: peer.id, seconds }, (res) => {
-      if (res && res.error) return notify(res.error);
-      applyDisappearing(res && typeof res.seconds === 'number' ? res.seconds : seconds);
-    });
-  }
-
-  // Open a centered modal to pick the self-destruct timer. Replaces the old
-  // browser prompt() with preset chips + a custom seconds field and a preview.
-  function promptDisappearing(peer) {
-    if (!state.socket || !peer) return;
-    closeDisappearModal();
-    const current = state.disappearing || 0;
-
-    const overlay = el('<div class="modal-overlay" id="disappearModal"></div>');
-    const card = el(`
-      <div class="modal-card disappear-modal" role="dialog" aria-modal="true" aria-label="Disappearing messages">
-        <button class="modal-x" title="Close">×</button>
-        <div class="dm-icon">⏳</div>
-        <h3 class="dm-title">Disappearing messages</h3>
-        <p class="dm-sub">New messages and shared files vanish for <strong>both of you</strong> after the time you choose.</p>
-        <div class="dm-presets"></div>
-        <div class="dm-custom">
-          <label for="dmCustom">Custom (seconds)</label>
-          <input id="dmCustom" type="number" min="0" max="86400" step="1" placeholder="e.g. 45" />
-        </div>
-        <div class="dm-preview" id="dmPreview"></div>
-        <div class="dm-actions">
-          <button class="ghost" id="dmCancel">Cancel</button>
-          <button class="primary" id="dmApply">Apply</button>
-        </div>
-      </div>
-    `);
-    overlay.appendChild(card);
-    document.body.appendChild(overlay);
-
-    // Live selection state (starts at the current value).
-    let chosen = current;
-    const presetsWrap = card.querySelector('.dm-presets');
-    const customInput = card.querySelector('#dmCustom');
-    const preview = card.querySelector('#dmPreview');
-
-    const renderPreview = () => {
-      preview.innerHTML = chosen > 0
-        ? `🔥 Messages will self-destruct <strong>${esc(fmtDuration(chosen))}</strong> after they're sent.`
-        : '♾️ Messages will stay until deleted (disappearing off).';
-      Array.from(presetsWrap.children).forEach((btn) => {
-        btn.classList.toggle('active', Number(btn.dataset.sec) === chosen);
-      });
-    };
-
-    DISAPPEAR_PRESETS.forEach((p) => {
-      const btn = el(`<button class="dm-chip" data-sec="${p.seconds}">${esc(p.label)}</button>`);
-      btn.addEventListener('click', () => { chosen = p.seconds; customInput.value = p.seconds ? String(p.seconds) : ''; renderPreview(); });
-      presetsWrap.appendChild(btn);
-    });
-    customInput.addEventListener('input', () => {
-      const v = Math.max(0, Math.min(86400, Math.floor(Number(customInput.value) || 0)));
-      chosen = v;
-      renderPreview();
-    });
-    if (current > 0) customInput.value = String(current);
-    renderPreview();
-
-    const close = () => closeDisappearModal();
-    card.querySelector('.modal-x').addEventListener('click', close);
-    card.querySelector('#dmCancel').addEventListener('click', close);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-    document.addEventListener('keydown', disappearEscHandler);
-    card.querySelector('#dmApply').addEventListener('click', () => {
-      // Enforce the server's 5s floor client-side for a clear message.
-      let s = chosen;
-      if (s > 0 && s < 5) s = 5;
-      setDisappearing(peer, s);
-      close();
-    });
-    setTimeout(() => customInput.focus(), 30);
-  }
-
-  function disappearEscHandler(e) { if (e.key === 'Escape') closeDisappearModal(); }
-
-  function closeDisappearModal() {
-    const m = document.getElementById('disappearModal');
-    if (m) m.remove();
-    document.removeEventListener('keydown', disappearEscHandler);
-  }
-
-  // Set the current TTL and refresh the banner/button (called locally and from
-  // the socket broadcast so both participants stay in sync).
-  function applyDisappearing(seconds) {
-    state.disappearing = Math.max(0, Math.floor(Number(seconds) || 0));
-    updateDisappearBanner();
-  }
-
-  function updateDisappearBanner() {
-    const banner = document.getElementById('disappearBanner');
-    const btn = document.getElementById('disappearBtn');
-    const on = (state.disappearing || 0) > 0;
-    if (btn) btn.classList.toggle('active', on);
-    if (!banner) return;
-    if (!on) { banner.classList.add('hidden'); banner.innerHTML = ''; return; }
-    banner.innerHTML =
-      `<span class="db-dot"></span><span>Disappearing messages are ON — new messages vanish after ` +
-      `<strong>${esc(fmtDuration(state.disappearing))}</strong>.</span>` +
-      `<button class="db-off" id="disappearOff">Turn off</button>`;
-    banner.classList.remove('hidden');
-    const off = banner.querySelector('#disappearOff');
-    if (off && state.peer) {
-      off.addEventListener('click', () => {
-        state.socket.emit('chat:disappearing', { to: state.peer.id, seconds: 0 }, (res) => {
-          if (res && res.error) return notify(res.error);
-          applyDisappearing(0);
-        });
-      });
-    }
-  }
-
-  // Schedule the local removal of a disappearing bubble and show a live
-  // countdown pill on it. Server-side sweeping is authoritative; this keeps the
-  // sender's/receiver's view tidy in real time.
-  function scheduleExpiry(node, expiresAt) {
-    if (!node || !expiresAt) return;
-    const pill = el('<span class="expire-pill" title="Disappearing message">⏳ <span class="ep-t"></span></span>');
-    node.appendChild(pill);
-    node.classList.add('disappearing');
-    const tEl = pill.querySelector('.ep-t');
-    const target = node.closest('.msg-row') || node;
-    const tick = () => {
-      const left = expiresAt - Date.now();
-      if (left <= 0) {
-        node.classList.add('vanish');
-        setTimeout(() => target.remove(), 420);
-        clearInterval(timer);
-        return;
-      }
-      tEl.textContent = fmtDuration(left / 1000);
-    };
-    tick();
-    const timer = setInterval(tick, 1000);
-    node._expiryTimer = timer;
-  }
-
-  // Remove a bubble (by persisted id) with the vanish animation — driven by the
-  // server's 'chat:expire' sweep.
-  function expireMessages(ids) {
-    const b = chatBody();
-    if (!b || !Array.isArray(ids)) return;
-    ids.forEach((id) => {
-      const node = b.querySelector(`.bubble[data-id="${id}"]`);
-      if (!node) return;
-      if (node._expiryTimer) clearInterval(node._expiryTimer);
-      node.classList.add('vanish');
-      const target = node.closest('.msg-row') || node;
-      setTimeout(() => target.remove(), 420);
-    });
-  }
-
   /* ---------- anti-save / anti-screenshot (best-effort) ---------- */
 
   // Block copy, drag and the right-click "Save as…" menu inside a chat. This is
@@ -3174,241 +2957,11 @@
     });
   }
 
-  /* ---------- broadcast ("live chat") ---------- */
-
-  // On (re)connect, learn about any broadcast I'm already a participant of —
-  // e.g. after a reload, or when my peer started one before this socket
-  // connected. The live event only fires at start, so we backfill here.
-  async function syncMyBroadcasts() {
-    try {
-      const { broadcasts } = await api.get('/api/broadcast');
-      (broadcasts || []).forEach((v) => {
-        if (v.ownerId === state.me.id || v.peerId === state.me.id) {
-          const otherId = v.ownerId === state.me.id ? v.peerId : v.ownerId;
-          state.liveByPeer[otherId] = v;
-        }
-      });
-      if (state.peer) reflectBroadcast(state.peer.id);
-    } catch (_e) { /* ignore */ }
-  }
-
-  // Start or stop broadcasting the open conversation with `peer`.
-  function toggleBroadcast(peer) {
-    if (!state.socket) return;
-    const existing = state.liveByPeer[peer.id];
-    if (existing) {
-      state.socket.emit('broadcast:stop', { token: existing.token }, (res) => {
-        if (res && res.error) notify(res.error);
-      });
-      return;
-    }
-    const title = prompt(
-      'Broadcast this chat live?\n\nAnyone — including logged-out visitors — will be able to WATCH this conversation from now on and post flying comments. They can never join or send private messages.\n\nGive it a title (optional):',
-      ''
-    );
-    if (title === null) return; // cancelled
-    state.socket.emit('broadcast:start', { peerId: peer.id, title: (title || '').trim() }, (res) => {
-      if (res && res.error) notify(res.error);
-      // The broadcast:live event updates the UI.
-    });
-  }
-
-  // Reflect the current broadcast state for a conversation into its chat head
-  // button and live banner.
-  function reflectBroadcast(peerId) {
-    const banner = document.getElementById('liveBanner');
-    const btn = document.getElementById('broadcastBtn');
-    if (!banner) return;
-    const b = state.liveByPeer[peerId];
-    if (!b) {
-      banner.classList.add('hidden');
-      banner.innerHTML = '';
-      if (btn) { btn.classList.remove('on'); btn.textContent = '🔴 Broadcast'; }
-      return;
-    }
-    if (btn) { btn.classList.add('on'); btn.textContent = '⏹ Stop live'; }
-    const link = location.origin + '/live/' + encodeURIComponent(b.token);
-    banner.classList.remove('hidden');
-    banner.innerHTML = '';
-    const bar = el(`
-      <div class="live-banner-inner">
-        <span class="live-dot"></span>
-        <span class="live-banner-label">LIVE</span>
-        <span class="live-banner-count" id="liveBannerCount">👁️ ${b.viewers || 0} watching</span>
-        <button class="ghost small" id="liveCopyBtn" title="Copy the public watch link">🔗 Copy link</button>
-        <button class="ghost small" id="liveStopBtn">Stop</button>
-      </div>
-    `);
-    banner.appendChild(bar);
-    bar.querySelector('#liveStopBtn').addEventListener('click', () => {
-      state.socket.emit('broadcast:stop', { token: b.token }, (res) => { if (res && res.error) notify(res.error); });
-    });
-    bar.querySelector('#liveCopyBtn').addEventListener('click', async () => {
-      const cb = bar.querySelector('#liveCopyBtn');
-      try { await navigator.clipboard.writeText(link); const t = cb.textContent; cb.textContent = 'Copied!'; setTimeout(() => { cb.textContent = t; }, 1500); }
-      catch (_e) { prompt('Copy this link to share:', link); }
-    });
-  }
-
-  // Create a short-lived flying comment inside a `.fly-layer` (id given). It
-  // drifts across and is removed within 10 seconds.
-  const _flownIds = {};
-  function flyComment(layerId, c) {
-    const layer = document.getElementById(layerId);
-    if (!layer || !c) return;
-    if (c.id) { // one comment flies once, even if delivered on two channels
-      if (_flownIds[c.id]) return;
-      _flownIds[c.id] = 1;
-      setTimeout(() => { delete _flownIds[c.id]; }, 12000);
-    }
-    const node = el('<div class="fly-comment"><b></b><span></span></div>');
-    node.querySelector('b').textContent = (c.name || 'Guest') + ': ';
-    node.querySelector('span').textContent = c.text || '';
-    node.style.top = (6 + Math.random() * 78) + '%';
-    layer.appendChild(node);
-    const kill = () => { if (node.parentNode) node.parentNode.removeChild(node); };
-    node.addEventListener('animationend', kill);
-    setTimeout(kill, 10000);
-  }
-
-  // The Live directory (registered users): every active broadcast, watchable
-  // inline.
-  async function renderLive() {
-    const main = openMainView();
-    main.appendChild(sectionShell('🔴 Live chats',
-      'Conversations being broadcast right now. Watch any of them unfold live and drop a flying comment — participants only see how many are watching, never who.'));
-    const body = main.querySelector('#sectionBody');
-    let data;
-    try { data = await api.get('/api/broadcast'); }
-    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
-    const list = data.broadcasts || [];
-    body.innerHTML = '';
-    if (!list.length) {
-      body.appendChild(el('<div class="empty-main">📭 No one is broadcasting right now. Open any chat and hit 🔴 Broadcast to go live.</div>'));
-      return;
-    }
-    const grid = el('<div class="live-grid"></div>');
-    list.forEach((b) => {
-      const card = el(`
-        <div class="live-card as-btn" tabindex="0">
-          <div class="live-card-badge">● LIVE</div>
-          <div class="live-card-title">${esc(b.title || 'A live chat')}</div>
-          <div class="live-card-people"><span>${esc(b.ownerName)}</span><span class="live-card-amp">⇄</span><span>${esc(b.peerName)}</span></div>
-          <div class="live-card-meta"><span>👁️ ${b.viewers} watching</span></div>
-        </div>
-      `);
-      card.addEventListener('click', () => renderLiveWatch(b.token));
-      card.addEventListener('keydown', (e) => { if (e.key === 'Enter') renderLiveWatch(b.token); });
-      grid.appendChild(card);
-    });
-    body.appendChild(grid);
-  }
-
-  // Watch a single broadcast inline, reusing the app's socket.
-  function renderLiveWatch(token) {
-    const main = openMainView(); // leaves any previously-watched broadcast
-    state.watching = token;
-    const view = el(`
-      <div class="watch inapp">
-        <div class="watch-head">
-          <button class="icon-btn small" id="watchBack" title="All live chats">←</button>
-          <div class="watch-id">
-            <div class="watch-title" id="watchTitle">Live chat</div>
-            <div class="watch-people" id="watchPeople"></div>
-          </div>
-          <div class="watch-live"><span class="live-dot"></span>LIVE</div>
-          <div class="watch-viewers" id="watchViewers">👁️ 0</div>
-        </div>
-        <div class="watch-stage">
-          <div class="watch-body" id="watchBody"><div class="loading">Connecting…</div></div>
-          <div class="fly-layer" id="watchFlyLayer"></div>
-        </div>
-        <div class="watch-note">👀 You're watching — you can't join the chat, but your comment flies across everyone's screen for a moment.</div>
-        <div class="watch-composer">
-          <input type="text" id="watchComment" class="watch-comment" maxlength="200" placeholder="Send a flying comment…" autocomplete="off" />
-          <button class="primary" id="watchSend">Send</button>
-          <button class="ghost" id="watchShare" title="Share this live chat">Share</button>
-        </div>
-      </div>
-    `);
-    main.appendChild(view);
-
-    view.querySelector('#watchBack').addEventListener('click', () => { stopWatching(); renderLive(); });
-    const input = view.querySelector('#watchComment');
-    const send = () => {
-      const text = (input.value || '').trim();
-      if (!text) return;
-      state.socket.emit('broadcast:comment', { token, text }, (res) => { if (res && res.error) flashWatchError(res.error); });
-      input.value = ''; input.focus();
-    };
-    view.querySelector('#watchSend').addEventListener('click', send);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
-    view.querySelector('#watchShare').addEventListener('click', () => {
-      const url = location.origin + '/live/' + encodeURIComponent(token);
-      navigator.clipboard.writeText(url).then(() => notifyToast('Link copied to share')).catch(() => prompt('Copy this link:', url));
-    });
-
-    state.socket.emit('broadcast:watch', { token }, (res) => {
-      const body = document.getElementById('watchBody');
-      if (!body || state.watching !== token) return;
-      if (!res || res.error) { body.innerHTML = `<div class="empty-main">${esc((res && res.error) || 'This broadcast has ended.')}</div>`; return; }
-      state.watchInfo = res.info;
-      document.getElementById('watchTitle').textContent = res.info.title || 'Live chat';
-      document.getElementById('watchPeople').textContent = res.info.ownerName + ' ⇄ ' + res.info.peerName;
-      document.getElementById('watchViewers').textContent = '👁️ ' + res.info.viewers;
-      body.innerHTML = '';
-      const msgs = res.messages || [];
-      if (!msgs.length) body.appendChild(el('<div class="watch-hint">Waiting for the next message…</div>'));
-      else msgs.forEach(appendWatchMessage);
-    });
-  }
-
-  function appendWatchMessage(m) {
-    const body = document.getElementById('watchBody');
-    if (!body) return;
-    const hint = body.querySelector('.watch-hint');
-    if (hint) hint.remove();
-    const side = state.watchInfo && m.from === state.watchInfo.ownerId ? 'owner' : 'peer';
-    const row = el(`
-      <div class="watch-msg ${side}">
-        <div class="watch-msg-name">${esc(m.fromName)}</div>
-        <div class="watch-bubble${m.kind && m.kind !== 'text' ? ' special' : ''}"></div>
-        <div class="watch-msg-time">${fmtTime(m.at)}</div>
-      </div>
-    `);
-    row.querySelector('.watch-bubble').textContent = m.text;
-    body.appendChild(row);
-    const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 120;
-    if (nearBottom) body.scrollTop = body.scrollHeight;
-  }
-
-  function flashWatchError(msg) {
-    const input = document.getElementById('watchComment');
-    if (!input) return;
-    const prev = input.placeholder;
-    input.placeholder = msg;
-    setTimeout(() => { if (input) input.placeholder = prev; }, 1800);
-  }
-
   // Toast-ish helper that never depends on an open chat body.
   function notifyToast(text) {
     const t = el(`<div class="toast">${esc(text)}</div>`);
     document.body.appendChild(t);
     setTimeout(() => { if (t.parentNode) t.parentNode.removeChild(t); }, 2200);
-  }
-
-  function showWatchEnded() {
-    const body = document.getElementById('watchBody');
-    if (body) body.innerHTML = '<div class="empty-main">📴 This broadcast has ended.</div>';
-  }
-
-  // Stop watching the current broadcast (if any) and tell the server.
-  function stopWatching() {
-    if (!state.watching) return;
-    const token = state.watching;
-    state.watching = null;
-    state.watchInfo = null;
-    if (state.socket) state.socket.emit('broadcast:unwatch', { token });
   }
 
   /* ---------- screen sharing (browser-tab only) ----------
@@ -3593,11 +3146,8 @@
     state.socket = s;
 
     // Learn which friends/relations are online now, and refresh on reconnect.
-    // Also re-assert which 1-on-1 chats are open so a reconnect doesn't leave the
-    // server thinking they were closed (which would start the 12h delete timer).
     s.on('connect', () => {
       seedFriendPresence();
-      state.openChats.forEach((p) => { if (typeof p.id === 'number') s.emit('chat:open', { to: p.id }); });
     });
 
     // A friend/relation came online or went offline — flip their dot live.
@@ -3756,76 +3306,8 @@
       if (e && e.messageId != null) updateReaction(e.messageId, e.userId, e.emoji);
     });
 
-    // Disappearing-messages setting changed for a conversation of mine.
-    s.on('chat:disappearing', (e) => {
-      const peerId = state.peer && state.peer.id;
-      if (!peerId || !e) return;
-      const involved = (e.from === peerId && e.to === state.me.id) || (e.from === state.me.id && e.to === peerId);
-      if (involved) applyDisappearing(e.seconds || 0);
-    });
-
-    // The server swept expired messages — drop those bubbles.
-    s.on('chat:expire', (e) => { if (e && e.ids) expireMessages(e.ids); });
-
     // My account was just suspended (e.g. mass-reported) — show the notice.
     s.on('account:suspended', (e) => { showSuspendedScreen({ suspended: true, suspendedUntil: e && e.until, error: 'Your account has been suspended.' }); });
-
-    // ----- broadcast ("live chat") events -----
-
-    // A conversation I'm part of went live (I'm owner or peer).
-    s.on('broadcast:live', (view) => {
-      if (!view) return;
-      const otherId = view.ownerId === state.me.id ? view.peerId : view.ownerId;
-      state.liveByPeer[otherId] = view;
-      if (state.peer && state.peer.id === otherId) reflectBroadcast(otherId);
-    });
-
-    // A broadcast ended (mine, or one I'm watching).
-    s.on('broadcast:ended', (e) => {
-      const token = e && e.token;
-      Object.keys(state.liveByPeer).forEach((k) => {
-        if (state.liveByPeer[k] && state.liveByPeer[k].token === token) delete state.liveByPeer[k];
-      });
-      if (state.peer) reflectBroadcast(state.peer.id);
-      if (state.watching === token) showWatchEnded();
-      if (isExploreActive('live')) renderLive();
-    });
-
-    // Live viewer count changed.
-    s.on('broadcast:viewers', (e) => {
-      if (!e) return;
-      Object.values(state.liveByPeer).forEach((v) => { if (v.token === e.token) v.viewers = e.count; });
-      const b = state.peer && state.liveByPeer[state.peer.id];
-      if (b && b.token === e.token) {
-        const c = document.getElementById('liveBannerCount');
-        if (c) c.textContent = `👁️ ${e.count} watching`;
-      }
-      if (state.watching === e.token) {
-        const wv = document.getElementById('watchViewers');
-        if (wv) wv.textContent = '👁️ ' + e.count;
-      }
-    });
-
-    // A flying comment on a broadcast — for a participant (over their chat) or
-    // for the broadcast being watched inline.
-    s.on('broadcast:comment', (c) => {
-      if (!c) return;
-      const b = state.peer && state.liveByPeer[state.peer.id];
-      if (b && c.token === b.token) flyComment('chatFlyLayer', c);
-      if (state.watching && c.token === state.watching) flyComment('watchFlyLayer', c);
-    });
-
-    // A mirrored chat message for the broadcast being watched inline.
-    s.on('broadcast:message', (m) => {
-      if (state.watching) appendWatchMessage(m);
-    });
-
-    // The set of active broadcasts changed — refresh an open Live list, else
-    // blink the nav button so people notice a new live chat.
-    s.on('broadcast:listChanged', () => {
-      if (isExploreActive('live')) renderLive();
-      else markNav('live', true);
-    });
 
     s.on('connect_error', () => { /* auth or network issue; UI still works for browsing */ });
   }
@@ -5017,7 +4499,7 @@
     renderRatingsCard(view, profile, isMe, username);
 
     /* ----- friend & block buttons ----- */
-    const anyBlock = !isMe && profile.blocked && (profile.blocked.iBlocked || profile.blocked.blockedMe);
+    const anyBlock = !isMe && profile.blocked && (profile.blocked.iBlocked || profile.blocked.blockedMe || profile.blocked.ageWall);
     const friendSlot = view.querySelector('#pvFriend');
     // No friend actions while a block is in place either way.
     if (friendSlot && !anyBlock) renderFriendButton(friendSlot, profile, () => showProfile(username));
@@ -5407,6 +4889,9 @@
     } else if (b.blockedMe) {
       // They've blocked you — no actions are possible.
       slot.appendChild(el('<span class="pill">Unavailable</span>'));
+    } else if (b.ageWall) {
+      // One of you is under 18 and the other isn't — no contact is possible.
+      slot.appendChild(el('<span class="pill" title="Members under 18 and adults cannot contact each other">Age-restricted</span>'));
     } else {
       const btn = el('<button class="ghost small">🚫 Block</button>');
       btn.addEventListener('click', () => act(
@@ -5497,7 +4982,6 @@
 
   // Prepare the main pane for a full-width section and return its element.
   function openMainView() {
-    stopWatching(); // leaving any inline broadcast we were watching
     document.getElementById('shell').classList.add('viewing-main');
     state.peer = null;
     const main = document.getElementById('main');
@@ -5544,7 +5028,6 @@
     if (view === 'polls') return renderPolls();
     if (view === 'blogs') return renderBlogs();
     if (view === 'leaderboard') return renderLeaderboard();
-    if (view === 'live') return renderLive();
     if (view === 'events') return renderMainHome(true); // activity lives in the chat box now
   }
 

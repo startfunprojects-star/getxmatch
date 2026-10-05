@@ -21,7 +21,6 @@ const leaderboardRoutes = require('./src/routes/leaderboard');
 const eventsRoutes = require('./src/routes/events');
 const groupRoutes = require('./src/routes/groups');
 const matchRoutes = require('./src/routes/match');
-const broadcastRoutes = require('./src/routes/broadcast');
 const adsRoutes = require('./src/routes/ads');
 const highwayRoutes = require('./src/routes/highway');
 const pageRoutes = require('./src/routes/pages');
@@ -72,7 +71,6 @@ app.use('/api/groups', groupRoutes);
 app.use('/api/notifications', require('./src/routes/notifications'));
 app.use('/api/follow', require('./src/routes/follows'));
 app.use('/api/match', matchRoutes); // public: shared compatibility-quiz links
-app.use('/api/broadcast', broadcastRoutes); // public: directory of live broadcasts
 app.use('/api/ads', adsRoutes); // public: serve ads + log clicks
 app.use('/api/highway', highwayRoutes); // registered users: shared post pool
 require('./src/referrals').backfill(); // every member gets a fixed referral code
@@ -93,13 +91,6 @@ app.get(/^\/admin(\/.*)?$/, (req, res) => {
 // it works for logged-out recipients without the auth-gated main SPA.
 app.get(/^\/m(\/.*)?$/, (req, res) => {
   res.sendFile(path.join(publicDir, 'match.html'));
-});
-
-// Live broadcast pages: /live (directory of active broadcasts) and
-// /live/<token> (watch a broadcast). A standalone page so logged-out visitors
-// can watch, comment and share without the auth-gated main SPA.
-app.get(/^\/live(\/.*)?$/, (req, res) => {
-  res.sendFile(path.join(publicDir, 'live.html'));
 });
 
 // Public, server-rendered, crawlable pages + sitemap.xml + robots.txt. Mounted

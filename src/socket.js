@@ -6,8 +6,6 @@ const config = require('./config');
 const { userFromToken, suspensionRemaining } = require('./auth');
 const { areBlocked } = require('./relations');
 const { getGift } = require('./gifts');
-const chatlife = require('./chatlife');
-const broadcast = require('./broadcast');
 const polls = require('./polls');
 const chatQuiz = require('./chatQuiz');
 const { isCompatibility } = require('./quizTypes');
@@ -57,31 +55,6 @@ function broadcastPresence(io, userId, isOnlineNow) {
 }
 
 /* --------------------------------------------------------------------------
-   Disappearing-messages helpers
--------------------------------------------------------------------------- */
-
-// Normalize a pair of user ids so a conversation has one canonical key
-// regardless of who is the sender.
-function pairKey(a, b) {
-  return a < b ? { lo: a, hi: b } : { lo: b, hi: a };
-}
-
-// The disappearing-messages TTL (in seconds) armed for a conversation, or 0
-// when it's off. Either participant's setting applies to the whole pair.
-function convoTtl(a, b) {
-  const { lo, hi } = pairKey(a, b);
-  const row = db.prepare('SELECT ttl_seconds FROM chat_settings WHERE user_lo = ? AND user_hi = ?').get(lo, hi);
-  return row && row.ttl_seconds > 0 ? row.ttl_seconds : 0;
-}
-
-// Given a conversation's two ids, the epoch-ms a message sent now should
-// expire at, or null when disappearing is off.
-function expiryFor(a, b) {
-  const ttl = convoTtl(a, b);
-  return ttl > 0 ? Date.now() + ttl * 1000 : null;
-}
-
-/* --------------------------------------------------------------------------
    Group-chat helpers
 -------------------------------------------------------------------------- */
 
@@ -91,6 +64,11 @@ function groupJoinedIds(groupId) {
     .prepare("SELECT user_id FROM chat_group_members WHERE group_id = ? AND status = 'joined'")
     .all(groupId)
     .map((r) => r.user_id);
+}
+
+// True if any other joined member is blocked from / age-walled from `userId`.
+function groupWalled(groupId, userId) {
+  return groupJoinedIds(groupId).some((uid) => uid !== userId && areBlocked(userId, uid));
 }
 
 // Persist a group message of any kind (text | poll) and deliver it to
@@ -221,18 +199,7 @@ function broadcastLeaderboardChange() {
   if (ioRef) ioRef.emit('leaderboard:changed', { at: Date.now() });
 }
 
-/* --------------------------------------------------------------------------
-   Broadcast ("live chat") helpers
--------------------------------------------------------------------------- */
-
-let commentSeq = 0;
-
-function broadcastRoom(token) {
-  return `bcast:${token}`;
-}
-
-// Display name (or @username) for a user id — used to label broadcast messages
-// and comments without leaking anything private.
+// Display name (or @username) for a user id.
 function nameOf(uid) {
   const r = db
     .prepare('SELECT p.display_name, u.username FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?')
@@ -240,244 +207,11 @@ function nameOf(uid) {
   return r ? (r.display_name || r.username) : 'Someone';
 }
 
-// Render a stored message row into the viewer-safe shape sent to watchers.
-function broadcastMessageView(row) {
-  const kind = row.kind || 'text';
-  let text = row.body;
-  if (kind === 'gift') {
-    const g = getGift(row.body);
-    text = g ? `${g.emoji} ${g.name}` : '🎁 a gift';
-  } else if (kind === 'poll') {
-    text = polls.pollLabel(polls.pollIdFromBody(row.body));
-  }
-  return { from: row.sender_id, fromName: nameOf(row.sender_id), kind, text, at: row.created_at };
-}
-
-// The conversation, from the broadcast's start onward (older, pre-broadcast
-// history is deliberately withheld from viewers).
-function recentBroadcastMessages(b) {
-  const rows = db
-    .prepare(
-      `SELECT id, sender_id, body, kind, created_at FROM messages
-        WHERE created_at >= ?
-          AND ((sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?))
-        ORDER BY created_at ASC LIMIT 60`
-    )
-    .all(b.startedAt, b.ownerId, b.peerId, b.peerId, b.ownerId);
-  return rows.map(broadcastMessageView);
-}
-
-// Push the current viewer count to the watch room AND to both participants
-// (who watch the count from inside their private chat).
-function emitViewerCount(io, b) {
-  const evt = { token: b.token, count: b.viewers.size };
-  io.to(broadcastRoom(b.token)).emit('broadcast:viewers', evt);
-  io.to(`user:${b.ownerId}`).emit('broadcast:viewers', evt);
-  io.to(`user:${b.peerId}`).emit('broadcast:viewers', evt);
-}
-
-// If the pair (from -> to) is being broadcast, mirror a just-sent message to
-// everyone watching. kind is 'text' | 'gift' | 'poll'; body is the raw
-// stored value (gift id / poll JSON / text).
-function mirrorLiveMessage(io, from, to, kind, body, at) {
-  const b = broadcast.forPair(from, to);
-  if (!b) return;
-  let text = body;
-  if (kind === 'gift') {
-    const g = getGift(body);
-    text = g ? `${g.emoji} ${g.name}` : '🎁 a gift';
-  } else if (kind === 'poll') {
-    text = polls.pollLabel(polls.pollIdFromBody(body));
-  }
-  io.to(broadcastRoom(b.token)).emit('broadcast:message', {
-    from, fromName: nameOf(from), kind, text, at,
-  });
-}
-
-// Tear down a broadcast and tell watchers + participants it's over.
-function endBroadcast(io, b) {
-  if (!b) return;
-  broadcast.stop(b.token);
-  const room = broadcastRoom(b.token);
-  io.to(room).emit('broadcast:ended', { token: b.token });
-  io.to(`user:${b.ownerId}`).emit('broadcast:ended', { token: b.token });
-  io.to(`user:${b.peerId}`).emit('broadcast:ended', { token: b.token });
-  io.emit('broadcast:listChanged', { at: Date.now() });
-}
-
-// Remove a watching socket from a broadcast and refresh the viewer count.
-function leaveWatch(io, socket, token) {
-  if (!token) return;
-  socket.leave(broadcastRoom(token));
-  if (socket.data) socket.data.watching = null;
-  const b = broadcast.get(token);
-  if (b) {
-    b.viewers.delete(socket.id);
-    b.lastComment.delete(socket.id);
-    emitViewerCount(io, b);
-  }
-}
-
-// Viewer-side handlers — available to EVERY socket, including anonymous
-// (logged-out) visitors watching the public /live pages.
-function registerBroadcastViewer(io, socket) {
-  const me = socket.user; // may be null (anonymous)
-  if (!socket.data) socket.data = {};
-
-  socket.on('broadcast:watch', (payload, ack) => {
-    try {
-      const token = String((payload && payload.token) || '');
-      const b = broadcast.get(token);
-      if (!b) return ack && ack({ error: 'This broadcast has ended.' });
-      // Leave any previous broadcast this socket was watching.
-      if (socket.data.watching && socket.data.watching !== token) {
-        leaveWatch(io, socket, socket.data.watching);
-      }
-      socket.join(broadcastRoom(token));
-      b.viewers.add(socket.id);
-      socket.data.watching = token;
-      emitViewerCount(io, b);
-      ack && ack({ ok: true, info: broadcast.publicView(b), messages: recentBroadcastMessages(b) });
-    } catch (_e) {
-      ack && ack({ error: 'Server error.' });
-    }
-  });
-
-  socket.on('broadcast:unwatch', (payload, ack) => {
-    const token = String((payload && payload.token) || socket.data.watching || '');
-    leaveWatch(io, socket, token);
-    ack && ack && ack({ ok: true });
-  });
-
-  // A flying comment from a watcher (or a participant). Ephemeral — never
-  // stored; relayed to the room and to both participants for 10s of on-screen
-  // life (the client removes it).
-  socket.on('broadcast:comment', (payload, ack) => {
-    try {
-      const token = String((payload && payload.token) || '');
-      const b = broadcast.get(token);
-      if (!b) return ack && ack({ error: 'This broadcast has ended.' });
-      const text = String((payload && payload.text) || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-      if (!text) return ack && ack({ error: 'Say something first.' });
-
-      // Lightweight per-socket rate limit.
-      const now = Date.now();
-      const last = b.lastComment.get(socket.id) || 0;
-      if (now - last < 700) return ack && ack({ error: 'Slow down a moment.' });
-      b.lastComment.set(socket.id, now);
-
-      let name;
-      if (me) {
-        name = nameOf(me.id);
-      } else {
-        name = String((payload && payload.guestName) || '')
-          .replace(/\s+/g, ' ').trim().slice(0, 24) || 'Guest';
-      }
-      const comment = { id: `c${++commentSeq}`, token, name, text, at: now, guest: !me };
-      io.to(broadcastRoom(token)).emit('broadcast:comment', comment);
-      // Participants aren't in the watch room; deliver to their private tabs.
-      io.to(`user:${b.ownerId}`).emit('broadcast:comment', comment);
-      io.to(`user:${b.peerId}`).emit('broadcast:comment', comment);
-      ack && ack({ ok: true });
-    } catch (_e) {
-      ack && ack({ error: 'Server error.' });
-    }
-  });
-
-  socket.on('disconnect', () => {
-    if (socket.data && socket.data.watching) leaveWatch(io, socket, socket.data.watching);
-  });
-}
-
-// Owner-side controls — only wired for authenticated sockets.
-function registerBroadcastOwner(io, socket) {
-  const me = socket.user;
-
-  socket.on('broadcast:start', (payload, ack) => {
-    try {
-      const to = parseInt(payload && payload.peerId, 10);
-      if (!to || to === me.id) return ack && ack({ error: 'Invalid chat to broadcast.' });
-      const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
-      if (!recipient) return ack && ack({ error: 'Recipient not found.' });
-      if (areBlocked(me.id, to)) return ack && ack({ error: 'You cannot broadcast this chat.' });
-
-      const title = String((payload && payload.title) || '').replace(/\s+/g, ' ').trim().slice(0, 80);
-      const b = broadcast.start({
-        ownerId: me.id, ownerName: nameOf(me.id), peerId: to, peerName: nameOf(to), title,
-      });
-      const view = broadcast.publicView(b);
-      io.to(`user:${me.id}`).emit('broadcast:live', view);
-      io.to(`user:${to}`).emit('broadcast:live', view);
-      io.emit('broadcast:listChanged', { at: Date.now() });
-      ack && ack({ ok: true, broadcast: view });
-    } catch (_e) {
-      ack && ack({ error: 'Server error.' });
-    }
-  });
-
-  socket.on('broadcast:stop', (payload, ack) => {
-    try {
-      const token = String((payload && payload.token) || '');
-      const b = broadcast.get(token);
-      if (!b) return ack && ack({ ok: true });
-      if (!broadcast.isParticipant(b, me.id)) return ack && ack({ error: 'Not your broadcast.' });
-      endBroadcast(io, b);
-      ack && ack({ ok: true });
-    } catch (_e) {
-      ack && ack({ error: 'Server error.' });
-    }
-  });
-}
-
-// Periodically delete messages whose disappearing-messages TTL has elapsed and
-// tell both participants which bubble ids vanished so their UIs can drop them.
-function startExpirySweeper(io) {
-  setInterval(() => {
-    try {
-      const now = Date.now();
-      const rows = db
-        .prepare('SELECT id, sender_id, recipient_id FROM messages WHERE expires_at IS NOT NULL AND expires_at <= ?')
-        .all(now);
-      if (!rows.length) return;
-      const ids = rows.map((r) => r.id);
-      const placeholders = ids.map(() => '?').join(',');
-      db.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(...ids);
-      // Fan the vanished ids out to each affected user (sender + recipient).
-      const byUser = new Map();
-      for (const r of rows) {
-        for (const uid of [r.sender_id, r.recipient_id]) {
-          if (!byUser.has(uid)) byUser.set(uid, []);
-          byUser.get(uid).push(r.id);
-        }
-      }
-      byUser.forEach((idList, uid) => io.to(`user:${uid}`).emit('chat:expire', { ids: idList }));
-    } catch (_e) { /* non-fatal */ }
-  }, 2000);
-}
-
-// Periodically delete conversations that both users closed at least 12h ago, and
-// tell any online participants to drop the vanished bubbles. Runs every 15 min.
-function startChatCloseSweeper(io) {
-  const run = () => {
-    try {
-      chatlife.sweep().forEach(({ lo, hi, ids }) => {
-        if (!ids.length) return;
-        io.to(`user:${lo}`).emit('chat:expire', { ids });
-        io.to(`user:${hi}`).emit('chat:expire', { ids });
-      });
-    } catch (_e) { /* non-fatal */ }
-  };
-  run(); // catch anything already past its window at startup
-  setInterval(run, 15 * 60 * 1000);
-}
-
 function initSocket(io) {
   ioRef = io;
-  startExpirySweeper(io);
-  startChatCloseSweeper(io);
   // Attach the user from the httpOnly auth cookie when present, but DO NOT
-  // reject anonymous sockets: logged-out visitors need a live socket to watch
-  // and comment on public broadcasts. socket.user is null for them, and every
+  // reject anonymous sockets: logged-out visitors get the live Recent Activity
+  // feed on the sign-in page. socket.user is null for them, and every
   // private-chat handler below is gated behind an authenticated user.
   io.use((socket, next) => {
     try {
@@ -495,10 +229,7 @@ function initSocket(io) {
   io.on('connection', (socket) => {
     const me = socket.user;
 
-    // Watching/commenting on broadcasts is open to everyone (incl. anonymous).
-    registerBroadcastViewer(io, socket);
-
-    // Anonymous sockets get nothing more than the viewer handlers above.
+    // Anonymous sockets only receive public broadcasts (activity feed).
     if (!me) return;
 
     // Detect the offline→online transition (their first live tab) so we only
@@ -508,9 +239,6 @@ function initSocket(io) {
     // Personal room makes it easy to target all of a user's sockets.
     socket.join(`user:${me.id}`);
     if (wasOffline) broadcastPresence(io, me.id, true);
-
-    // Owner controls for starting/stopping a broadcast of a private chat.
-    registerBroadcastOwner(io, socket);
 
     // Text message → persisted to history, then delivered live if online.
     socket.on('chat:message', (payload, ack) => {
@@ -523,18 +251,17 @@ function initSocket(io) {
         const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
         if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot message this user — a block is in place.' });
+          return ack && ack({ error: 'You cannot message this user.' });
         }
 
         // Optional reply: only accept an id that belongs to THIS conversation.
         const replyTo = resolveReplyTo(payload && payload.replyTo, me.id, to);
 
         const now = Date.now();
-        const expiresAt = expiryFor(me.id, to);
 
         const info = db
-          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at, expires_at) VALUES (?, ?, ?, 'text', ?, ?, ?)")
-          .run(me.id, to, body, replyTo, now, expiresAt);
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at, expires_at) VALUES (?, ?, ?, 'text', ?, ?, NULL)")
+          .run(me.id, to, body, replyTo, now);
 
         // Reply target: normally another persisted message. A reply to a shared
         // FILE (which isn't in the DB) carries a client snapshot instead — the
@@ -545,14 +272,11 @@ function initSocket(io) {
           const from = parseInt(rf.from, 10) === to ? to : me.id;
           reply = { id: rf.id.slice(0, 64), from, kind: 'file', text: String(rf.text || '📎 File').slice(0, 140) };
         }
-        const msg = { id: info.lastInsertRowid, from: me.id, to, body, kind: 'text', at: now, replyTo, reply, expiresAt };
+        const msg = { id: info.lastInsertRowid, from: me.id, to, body, kind: 'text', at: now, replyTo, reply };
 
         // Deliver to recipient's sockets and echo to sender's other tabs.
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
         socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
-
-        // If this conversation is being broadcast, mirror it to watchers.
-        mirrorLiveMessage(io, me.id, to, 'text', body, now);
 
         ack && ack({ ok: true, message: { ...msg, mine: true } });
       } catch (e) {
@@ -575,7 +299,7 @@ function initSocket(io) {
           return ack && ack({ error: 'File exceeds the size limit.' });
         }
         if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot share files with this user — a block is in place.' });
+          return ack && ack({ error: 'You cannot share files with this user.' });
         }
         if (!isOnline(to)) {
           return ack && ack({ error: 'Recipient is offline. Files are only delivered live and are never stored.' });
@@ -620,47 +344,6 @@ function initSocket(io) {
       } catch (_e) { /* best-effort */ }
     });
 
-    // Arm / disarm disappearing messages for a conversation. seconds > 0 turns
-    // it on (every subsequent message self-destructs after that many seconds);
-    // 0 turns it off. Applies to the pair — either participant can change it —
-    // and both are notified so their UI stays in sync.
-    socket.on('chat:disappearing', (payload, ack) => {
-      try {
-        const to = parseInt(payload && payload.to, 10);
-        if (!to) return ack && ack({ error: 'Invalid request.' });
-        const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
-        if (!recipient) return ack && ack({ error: 'Recipient not found.' });
-        if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot change this chat — a block is in place.' });
-        }
-
-        // Clamp to 5 seconds .. 24 hours; 0 disables.
-        let seconds = Math.floor(Number(payload && payload.seconds) || 0);
-        if (seconds < 0) seconds = 0;
-        if (seconds > 0 && seconds < 5) seconds = 5;
-        if (seconds > 86400) seconds = 86400;
-
-        const { lo, hi } = pairKey(me.id, to);
-        const now = Date.now();
-        if (seconds === 0) {
-          db.prepare('DELETE FROM chat_settings WHERE user_lo = ? AND user_hi = ?').run(lo, hi);
-        } else {
-          db.prepare(
-            `INSERT INTO chat_settings (user_lo, user_hi, ttl_seconds, set_by, updated_at)
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(user_lo, user_hi) DO UPDATE SET ttl_seconds = excluded.ttl_seconds, set_by = excluded.set_by, updated_at = excluded.updated_at`
-          ).run(lo, hi, seconds, me.id, now);
-        }
-
-        const evt = { from: me.id, to, seconds };
-        io.to(`user:${to}`).emit('chat:disappearing', evt);
-        io.to(`user:${me.id}`).emit('chat:disappearing', evt);
-        ack && ack({ ok: true, seconds });
-      } catch (e) {
-        ack && ack({ error: 'Server error.' });
-      }
-    });
-
     // Gift → persisted like a message (kind='gift', body holds the
     // gift id) so it shows in history, then delivered live if online.
     socket.on('chat:gift', (payload, ack) => {
@@ -672,22 +355,18 @@ function initSocket(io) {
         const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
         if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot send a gift to this user — a block is in place.' });
+          return ack && ack({ error: 'You cannot send a gift to this user.' });
         }
 
         const now = Date.now();
-        const expiresAt = expiryFor(me.id, to);
         const info = db
-          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'gift', ?, ?)")
-          .run(me.id, to, gift.id, now, expiresAt);
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'gift', ?, NULL)")
+          .run(me.id, to, gift.id, now);
 
-        const msg = { id: info.lastInsertRowid, from: me.id, to, body: gift.id, kind: 'gift', at: now, expiresAt };
+        const msg = { id: info.lastInsertRowid, from: me.id, to, body: gift.id, kind: 'gift', at: now };
 
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
         socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
-
-        // Mirror the gift to any watchers of this broadcast.
-        mirrorLiveMessage(io, me.id, to, 'gift', gift.id, now);
 
         ack && ack({ ok: true, message: { ...msg, mine: true } });
       } catch (e) {
@@ -711,6 +390,7 @@ function initSocket(io) {
             .prepare("SELECT 1 FROM chat_group_members WHERE group_id = ? AND user_id = ? AND status = 'joined'")
             .get(groupId, me.id);
           if (!member) return ack && ack({ error: 'You are not a member of this group.' });
+          if (groupWalled(groupId, me.id)) return ack && ack({ error: 'You cannot post in this group.' });
 
           const pollId = polls.createPoll({ creatorId: me.id, ...clean, groupId });
           const now = Date.now();
@@ -739,7 +419,7 @@ function initSocket(io) {
         const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
         if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot send a poll to this user — a block is in place.' });
+          return ack && ack({ error: 'You cannot send a poll to this user.' });
         }
 
         const pollId = polls.createPoll({ creatorId: me.id, ...clean, dmA: me.id, dmB: to });
@@ -752,8 +432,6 @@ function initSocket(io) {
         const base = { id: info.lastInsertRowid, from: me.id, to, kind: 'poll', at: now };
         io.to(`user:${to}`).emit('chat:message', { ...base, mine: false, poll: polls.pollPayload(pollId, to) });
         io.to(`user:${me.id}`).emit('chat:message', { ...base, mine: true, poll: polls.pollPayload(pollId, me.id) });
-
-        mirrorLiveMessage(io, me.id, to, 'poll', JSON.stringify({ pollId }), now);
 
         ack && ack({ ok: true });
       } catch (e) {
@@ -800,7 +478,7 @@ function initSocket(io) {
         const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
         if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot start a quiz with this user — a block is in place.' });
+          return ack && ack({ error: 'You cannot start a quiz with this user.' });
         }
         const quiz = db.prepare('SELECT id, questions, type FROM quizzes WHERE id = ?').get(quizId);
         if (!quiz) return ack && ack({ error: 'Quiz not found.' });
@@ -820,7 +498,6 @@ function initSocket(io) {
         io.to(`user:${to}`).emit('chat:message', { ...base, mine: false, quiz: chatQuiz.sessionPayload(chatQuizId, to) });
         io.to(`user:${me.id}`).emit('chat:message', { ...base, mine: true, quiz: chatQuiz.sessionPayload(chatQuizId, me.id) });
 
-        mirrorLiveMessage(io, me.id, to, 'quiz', JSON.stringify({ chatQuizId }), now);
         ack && ack({ ok: true });
       } catch (e) {
         ack && ack({ error: 'Server error.' });
@@ -891,19 +568,7 @@ function initSocket(io) {
     // Typing indicator (transient).
     socket.on('chat:typing', (payload) => {
       const to = parseInt(payload && payload.to, 10);
-      if (to) io.to(`user:${to}`).emit('chat:typing', { from: me.id });
-    });
-
-    // Chat lifecycle: a user opened a 1-on-1 chat (tab open / re-synced on
-    // reconnect) or closed it. When both sides are closed a 12h deletion timer
-    // starts; reopening cancels it.
-    socket.on('chat:open', (payload) => {
-      const to = parseInt(payload && payload.to, 10);
-      if (to) { try { chatlife.markOpen(me.id, to); } catch (_e) { /* non-fatal */ } }
-    });
-    socket.on('chat:close', (payload) => {
-      const to = parseInt(payload && payload.to, 10);
-      if (to) { try { chatlife.markClosed(me.id, to); } catch (_e) { /* non-fatal */ } }
+      if (to && !areBlocked(me.id, to)) io.to(`user:${to}`).emit('chat:typing', { from: me.id });
     });
 
     /* ----------------------------------------------------------------
@@ -943,6 +608,7 @@ function initSocket(io) {
           .prepare("SELECT 1 FROM chat_group_members WHERE group_id = ? AND user_id = ? AND status = 'joined'")
           .get(groupId, me.id);
         if (!mine) return ack && ack({ error: 'You are not a member of this group.' });
+        if (groupWalled(groupId, me.id)) return ack && ack({ error: 'You cannot post in this group.' });
 
         deliverGroupMessage(io, groupId, me.id, 'text', body);
 
@@ -961,6 +627,7 @@ function initSocket(io) {
         if (!to) return ack && ack({ error: 'Invalid request.' });
         const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
+        if (areBlocked(me.id, to)) return ack && ack({ error: 'You cannot set an activity with this member.' });
 
         // Accept either a predefined verb or a user's own custom activity.
         // Free text is trimmed, whitespace-collapsed and length-capped; the
@@ -1006,25 +673,12 @@ function initSocket(io) {
     socket.on('disconnect', () => {
       removeSocket(me.id, socket.id);
       // When the user's last tab disconnects they're fully offline: stamp the
-      // time so the daily digest knows which later messages went unseen, and
-      // end any broadcast they were a participant of (no ghost live chats).
+      // time so the daily digest knows which later messages went unseen.
       if (!isOnline(me.id)) {
         try {
           db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), me.id);
         } catch (_e) { /* non-fatal */ }
-        // Going fully offline counts as closing every chat they still had open,
-        // starting the 12h both-closed countdown where applicable.
-        try { chatlife.closeAllFor(me.id); } catch (_e) { /* non-fatal */ }
         broadcastPresence(io, me.id, false); // tell friends they went offline
-        try {
-          broadcast.stopForUser(me.id).forEach((b) => {
-            const room = broadcastRoom(b.token);
-            io.to(room).emit('broadcast:ended', { token: b.token });
-            io.to(`user:${b.ownerId}`).emit('broadcast:ended', { token: b.token });
-            io.to(`user:${b.peerId}`).emit('broadcast:ended', { token: b.token });
-          });
-          io.emit('broadcast:listChanged', { at: Date.now() });
-        } catch (_e) { /* non-fatal */ }
       }
     });
   });

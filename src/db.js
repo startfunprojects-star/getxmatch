@@ -151,20 +151,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_reports_reported ON reports (reported_id);
   CREATE INDEX IF NOT EXISTS idx_reports_reporter ON reports (reporter_id, created_at);
 
-  -- Chat lifecycle: whether each side of a 1-on-1 conversation currently has the
-  -- chat open. Once BOTH have closed it, both_closed_since is stamped; a sweep
-  -- deletes all messages between the pair 12h later (see src/chatlife.js). Images
-  -- already shared to the Highway live elsewhere and are never touched.
-  CREATE TABLE IF NOT EXISTS chat_close_state (
-    user_lo           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    user_hi           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    open_lo           INTEGER NOT NULL DEFAULT 0,
-    open_hi           INTEGER NOT NULL DEFAULT 0,
-    both_closed_since INTEGER,
-    PRIMARY KEY (user_lo, user_hi)
-  );
-  CREATE INDEX IF NOT EXISTS idx_chat_close_sweep ON chat_close_state (both_closed_since);
-
   -- Single admin account (id is always 1). password_hash is null until the
   -- admin sets it via an emailed link.
   CREATE TABLE IF NOT EXISTS admin_account (
@@ -229,18 +215,9 @@ db.exec(`
     ['country', 'TEXT'],
     ['state', 'TEXT'], // optional, picked after the country
     ['city', 'TEXT'], // optional: a listed city or one the member typed
-    ['weight', 'REAL'], // body weight in kg
-
-    ['smokes', 'TEXT'],
-    ['drinks', 'TEXT'],
     ['diet', 'TEXT'],
-    ['sexuality', 'TEXT'],
     ['interests', "TEXT NOT NULL DEFAULT '[]'"],
-    ['persona', "TEXT NOT NULL DEFAULT ''"],
-    ['likes_in_bed', "TEXT NOT NULL DEFAULT ''"],
-    ['bed_role', 'TEXT'],
     ['relationship_status', 'TEXT'],
-    ['partner_user_id', 'INTEGER'],
     ['friends_visibility', "TEXT NOT NULL DEFAULT 'public'"],
     // Who may see the user's GIF "feelings" collection: public | friends | private.
     ['gif_visibility', "TEXT NOT NULL DEFAULT 'public'"],
@@ -272,10 +249,8 @@ db.exec(`
   }
 })();
 
-// --- Migration: disappearing messages. When a conversation has disappearing
-// mode on, each new message is stamped with expires_at (epoch ms). A background
-// sweeper in src/socket.js deletes expired rows and tells both clients to drop
-// the bubbles. NULL means the message never auto-expires.
+// --- Migration: messages.expires_at, left over from the removed
+// disappearing-messages feature. Always NULL now (see migrateRemoveAdultFeatures).
 (function migrateMessageExpiresAt() {
   const cols = db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
   if (!cols.includes('expires_at')) {
@@ -297,21 +272,6 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages (expires_at
   }
 })();
 
-// --- Per-conversation "disappearing messages" setting. One row per user pair
-// (stored normalized as user_lo < user_hi). ttl_seconds is how long a message
-// lives before it self-destructs; 0 / no row means disappearing is off. Either
-// participant can turn it on or off for the pair. set_by records who last
-// changed it so the other side can be told who armed/disarmed it.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS chat_settings (
-    user_lo     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    user_hi     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    ttl_seconds INTEGER NOT NULL DEFAULT 0,
-    set_by      INTEGER,
-    updated_at  INTEGER NOT NULL,
-    PRIMARY KEY (user_lo, user_hi)
-  );
-`);
 
 // --- Emoji reactions on chat messages (text / gift / voice note). One row per
 // (message, user): a user has at most one reaction per message; picking a new
@@ -938,6 +898,26 @@ db.exec(`
   db.exec('CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users (referred_by);');
   const ocols = db.prepare('PRAGMA table_info(email_otps)').all().map((c) => c.name);
   if (!ocols.includes('referral_code')) db.exec('ALTER TABLE email_otps ADD COLUMN referral_code TEXT;');
+})();
+
+// --- Migration: remove the adults-only features and their data, now that the
+// site is open to all ages.
+//   - the old intimate profile fields (weight, smoking, drinking, sexuality,
+//     persona, "likes in bed", bed role, partner link) are dropped outright;
+//   - the sexual gallery reactions are deleted;
+//   - disappearing messages and the 12-hour chat auto-delete are gone, so their
+//     tables are dropped and no message carries an expiry any more.
+(function migrateRemoveAdultFeatures() {
+  const cols = db.prepare('PRAGMA table_info(profiles)').all().map((c) => c.name);
+  for (const col of ['weight', 'smokes', 'drinks', 'sexuality', 'persona', 'likes_in_bed', 'bed_role', 'partner_user_id']) {
+    if (cols.includes(col)) db.exec(`ALTER TABLE profiles DROP COLUMN ${col};`);
+  }
+  const removed = ['🤤', '🍆', '💦'];
+  const marks = removed.map(() => '?').join(',');
+  db.prepare(`DELETE FROM gallery_reactions WHERE emoji IN (${marks})`).run(...removed);
+  db.prepare(`DELETE FROM gallery_comment_reactions WHERE emoji IN (${marks})`).run(...removed);
+  db.exec('DROP TABLE IF EXISTS chat_settings; DROP TABLE IF EXISTS chat_close_state;');
+  db.exec('UPDATE messages SET expires_at = NULL WHERE expires_at IS NOT NULL;');
 })();
 
 module.exports = db;

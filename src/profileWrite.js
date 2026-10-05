@@ -53,7 +53,6 @@ function saveProfile(userId, body, file) {
   const dob = (b.dateOfBirth || '').trim();
   const age = F.ageFromDob(dob);
   if (age == null) return fail('Please enter a valid date of birth.');
-  if (age < F.MIN_AGE) return fail(`User must be at least ${F.MIN_AGE} years old.`);
   if (age > 120) return fail('Please enter a valid date of birth.');
 
   const country = (b.country || '').trim();
@@ -76,10 +75,9 @@ function saveProfile(userId, body, file) {
     if (city && city.length > 80) return fail('City name must be 80 characters or fewer.');
   }
 
-  // Weight, smoking, alcohol, diet, sexuality, "what kind of person", the
-  // intimacy fields and the partner link are no longer part of the profile:
-  // they aren't collected, shown or returned by the API. Values saved before
-  // are left untouched in the database.
+  // Weight, smoking, alcohol, sexuality, "what kind of person", the intimacy
+  // fields and the partner link are no longer part of the profile; their
+  // columns are dropped at startup (migrateRemoveAdultFeatures in src/db.js).
 
   // --- Optional enum fields.
   const relStatus = optionalEnum(b.relationshipStatus, F.RELATIONSHIP_STATUS, 'relationship status');

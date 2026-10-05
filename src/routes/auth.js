@@ -35,12 +35,14 @@ function sha256(s) {
 // POST /api/auth/signup/start — validate details, email a 6-digit OTP, and
 // stash the pending signup. No user row is created until the code is verified.
 router.post('/signup/start', authLimiter, async (req, res) => {
-  const { username, email, password, ageConfirmed } = req.body || {};
+  const { username, email, password } = req.body || {};
+  // Older clients still send the terms box as `ageConfirmed`.
+  const termsAccepted = !!(req.body && (req.body.termsAccepted || req.body.ageConfirmed));
   // Referral codes are ignored while the admin has referrals switched off.
   const referralCode = referrals.enabled() ? referrals.normalize(req.body && req.body.referralCode) : '';
 
-  if (!ageConfirmed) {
-    return res.status(400).json({ error: 'You must confirm you are 18 or older.' });
+  if (!termsAccepted) {
+    return res.status(400).json({ error: 'You must agree to the terms.' });
   }
   if (!username || !USERNAME_RE.test(username)) {
     return res.status(400).json({ error: 'Username must be 3-20 letters, numbers, or underscores.' });

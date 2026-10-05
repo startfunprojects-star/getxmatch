@@ -76,28 +76,18 @@ router.get('/:id/messages', requireAuth, (req, res) => {
   const otherId = parseInt(req.params.id, 10);
   if (!otherId) return res.status(400).json({ error: 'Invalid user id.' });
 
-  const now = Date.now();
   const rows = db
     .prepare(
-      `SELECT m.id, m.sender_id, m.recipient_id, m.body, m.kind, m.created_at, m.reply_to, m.expires_at,
+      `SELECT m.id, m.sender_id, m.recipient_id, m.body, m.kind, m.created_at, m.reply_to,
               r.id AS reply_id, r.sender_id AS reply_sender, r.body AS reply_body, r.kind AS reply_kind
        FROM messages m
        LEFT JOIN messages r ON r.id = m.reply_to
        WHERE ((m.sender_id = ? AND m.recipient_id = ?)
           OR (m.sender_id = ? AND m.recipient_id = ?))
-          AND (m.expires_at IS NULL OR m.expires_at > ?)
        ORDER BY m.created_at ASC
        LIMIT 500`
     )
-    .all(req.user.id, otherId, otherId, req.user.id, now);
-
-  // Current disappearing-messages setting for this pair (0 = off).
-  const lo = Math.min(req.user.id, otherId);
-  const hi = Math.max(req.user.id, otherId);
-  const setting = db
-    .prepare('SELECT ttl_seconds FROM chat_settings WHERE user_lo = ? AND user_hi = ?')
-    .get(lo, hi);
-  const disappearing = setting && setting.ttl_seconds > 0 ? setting.ttl_seconds : 0;
+    .all(req.user.id, otherId, otherId, req.user.id);
 
   // Reactions across this whole conversation, grouped by message.
   const reactionRows = db
@@ -116,7 +106,6 @@ router.get('/:id/messages', requireAuth, (req, res) => {
   }
 
   res.json({
-    disappearing,
     messages: rows.map((m) => ({
       id: m.id,
       from: m.sender_id,
@@ -128,7 +117,6 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       replyTo: m.reply_to || null,
       reply: buildReplyPreview(m),
       reactions: reactionsByMsg.get(m.id) || [],
-      expiresAt: m.expires_at || null,
       poll: m.kind === 'poll' ? polls.pollPayload(polls.pollIdFromBody(m.body), req.user.id) : undefined,
       quiz: m.kind === 'quiz' ? chatQuiz.sessionPayload(chatQuiz.chatQuizIdFromBody(m.body), req.user.id) : undefined,
     })),

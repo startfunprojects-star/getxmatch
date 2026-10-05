@@ -1,10 +1,27 @@
 'use strict';
 
 const db = require('./db');
+const { ageFromDob, ADULT_AGE } = require('./profileFields');
 
-// True if either user has blocked the other. Communication (requests, chat,
-// files, gifts) is cut both ways once a block exists in either direction.
+// True if the member's date of birth puts them under ADULT_AGE. A member with
+// no profile / date of birth yet counts as an adult.
+function isMinor(userId) {
+  const row = db.prepare('SELECT date_of_birth FROM profiles WHERE user_id = ?').get(userId);
+  const age = row ? ageFromDob(row.date_of_birth) : null;
+  return age != null && age < ADULT_AGE;
+}
+
+// Age wall: members under 18 and adults can't contact each other at all (no
+// requests, chat, follows, ratings, comments, reactions or gifts).
+function ageSeparated(a, b) {
+  if (!a || !b || a === b) return false;
+  return isMinor(a) !== isMinor(b);
+}
+
+// True if either user has blocked the other, or the age wall separates them.
+// Communication (requests, chat, files, gifts) is cut both ways either way.
 function areBlocked(a, b) {
+  if (ageSeparated(a, b)) return true;
   const row = db
     .prepare(
       `SELECT 1 FROM blocks
@@ -19,15 +36,16 @@ function areBlocked(a, b) {
 // Block state between a profile owner and a viewer.
 //   iBlocked  = the viewer has blocked the owner
 //   blockedMe = the owner has blocked the viewer
+//   ageWall   = one of them is under 18 and the other isn't
 function blockState(ownerId, viewerId) {
-  if (!viewerId || viewerId === ownerId) return { iBlocked: false, blockedMe: false };
+  if (!viewerId || viewerId === ownerId) return { iBlocked: false, blockedMe: false, ageWall: false };
   const iBlocked = !!db
     .prepare('SELECT 1 FROM blocks WHERE blocker_id = ? AND blocked_id = ?')
     .get(viewerId, ownerId);
   const blockedMe = !!db
     .prepare('SELECT 1 FROM blocks WHERE blocker_id = ? AND blocked_id = ?')
     .get(ownerId, viewerId);
-  return { iBlocked, blockedMe };
+  return { iBlocked, blockedMe, ageWall: ageSeparated(ownerId, viewerId) };
 }
 
 // True if `viewerId` is ignoring `otherId` (one-way mute).
@@ -48,4 +66,4 @@ function ignoreState(ownerId, viewerId) {
   return { iIgnore: isIgnoring(viewerId, ownerId) };
 }
 
-module.exports = { areBlocked, blockState, isIgnoring, ignoredIds, ignoreState };
+module.exports = { isMinor, ageSeparated, areBlocked, blockState, isIgnoring, ignoredIds, ignoreState };

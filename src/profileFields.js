@@ -5,10 +5,7 @@
 // frontend mirrors these lists when building its dropdowns.
 
 const GENDER = ['Male', 'Female', 'Non-binary', 'Other', 'Prefer not to say'];
-const SEXUALITY = ['Straight', 'Gay', 'Lesbian', 'Bisexual'];
-const YES_NO = ['Yes', 'No', 'Occasionally', 'Prefer not to say'];
 const DIET = ['Vegetarian', 'Non-vegetarian', 'Vegan', 'Eggetarian'];
-const BED_ROLE = ['Dominating', 'Submissive', 'Mix', 'Go with the flow'];
 const RELATIONSHIP_STATUS = [
   'Single',
   'In a relationship',
@@ -47,11 +44,8 @@ const MAX_LOCATION = 120;  // place name
 const MUSIC_TRACKS = ['chill', 'upbeat', 'lofi', 'romantic', 'dreamy'];
 const MAX_BUFFER_PHOTOS = 10;
 const MAX_GIFS = 100;
-const MIN_AGE = 18;
-
-// Body weight (kg) bounds. Mandatory on the profile.
-const MIN_WEIGHT = 30;
-const MAX_WEIGHT = 400;
+// Members under this age are walled off from adults (see src/relations.js).
+const ADULT_AGE = 18;
 
 // Compute an integer age (in whole years) from an ISO 'YYYY-MM-DD' date.
 // Returns null if the string is not a valid past date.
@@ -69,10 +63,7 @@ function ageFromDob(dob) {
 
 module.exports = {
   GENDER,
-  SEXUALITY,
-  YES_NO,
   DIET,
-  BED_ROLE,
   RELATIONSHIP_STATUS,
   FRIENDS_VISIBILITY,
   GIF_VISIBILITY,
@@ -85,8 +76,6 @@ module.exports = {
   MUSIC_TRACKS,
   MAX_BUFFER_PHOTOS,
   MAX_GIFS,
-  MIN_AGE,
-  MIN_WEIGHT,
-  MAX_WEIGHT,
+  ADULT_AGE,
   ageFromDob,
 };

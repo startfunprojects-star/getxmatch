@@ -191,7 +191,7 @@ router.post('/:id/like', requireAuth, (req, res) => {
   const post = resolvePost(req, res);
   if (!post) return;
   if (areBlocked(req.user.id, post.user_id)) {
-    return res.status(403).json({ error: 'You cannot like this while a block is in place.' });
+    return res.status(403).json({ error: 'You cannot like this post.' });
   }
   const existing = db.prepare('SELECT id FROM highway_likes WHERE post_id = ? AND user_id = ?').get(post.id, req.user.id);
   const liking = !existing;
@@ -220,7 +220,7 @@ router.post('/:id/comment', requireAuth, (req, res) => {
   const post = resolvePost(req, res);
   if (!post) return;
   if (areBlocked(req.user.id, post.user_id)) {
-    return res.status(403).json({ error: 'You cannot comment while a block is in place.' });
+    return res.status(403).json({ error: 'You cannot comment on this post.' });
   }
   const body = String((req.body && req.body.body) || '').trim();
   if (!body) return res.status(400).json({ error: 'Comment cannot be empty.' });

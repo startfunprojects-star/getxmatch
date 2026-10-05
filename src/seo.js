@@ -10,7 +10,7 @@ const config = require('./config');
 const settings = require('./settings');
 
 const SITE_NAME = 'getxmatch';
-const SITE_TAGLINE = 'A lightweight social space for adults — profiles, galleries, quizzes, polls and real-time chat.';
+const SITE_TAGLINE = 'A lightweight social space — profiles, galleries, quizzes, polls and real-time chat.';
 const DEFAULT_OG_TYPE = 'website';
 
 // The home page's default <title>, used when the admin hasn't set a site-wide

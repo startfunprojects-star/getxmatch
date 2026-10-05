@@ -64,6 +64,9 @@ router.post('/rate/:username', requireAuth, (req, res) => {
   if (target.id === req.user.id) {
     return res.status(400).json({ error: 'You cannot rate yourself.' });
   }
+  if (areBlocked(req.user.id, target.id)) {
+    return res.status(403).json({ error: 'You cannot rate this member.' });
+  }
   const dimension = req.body && req.body.dimension;
   if (!RATING_DIMS.includes(dimension)) {
     return res.status(400).json({ error: 'Invalid rating category.' });
@@ -113,6 +116,9 @@ router.delete('/rate/:username', requireAuth, (req, res) => {
 router.post('/comment/:username', requireAuth, (req, res) => {
   const target = resolveTarget(req, res);
   if (!target) return;
+  if (target.id !== req.user.id && areBlocked(req.user.id, target.id)) {
+    return res.status(403).json({ error: 'You cannot comment on this profile.' });
+  }
   const body = ((req.body && req.body.body) || '').trim();
   if (!body) return res.status(400).json({ error: 'Comment cannot be empty.' });
   if (body.length > 500) return res.status(400).json({ error: 'Comment must be 500 characters or fewer.' });
@@ -194,7 +200,7 @@ router.post('/photo/:photoId/react', requireAuth, (req, res) => {
   const photo = resolvePhoto(req, res);
   if (!photo) return;
   if (areBlocked(req.user.id, photo.user_id)) {
-    return res.status(403).json({ error: 'You cannot react while a block is in place.' });
+    return res.status(403).json({ error: 'You cannot react to this.' });
   }
   const emoji = ((req.body && req.body.emoji) || '').trim();
   if (!GALLERY_REACTION_SET.has(emoji)) {
@@ -223,7 +229,7 @@ router.post('/photo/:photoId/comment', requireAuth, (req, res) => {
   const photo = resolvePhoto(req, res);
   if (!photo) return;
   if (areBlocked(req.user.id, photo.user_id)) {
-    return res.status(403).json({ error: 'You cannot comment while a block is in place.' });
+    return res.status(403).json({ error: 'You cannot comment on this.' });
   }
   const body = ((req.body && req.body.body) || '').trim();
   if (!body) return res.status(400).json({ error: 'Comment cannot be empty.' });
@@ -284,7 +290,7 @@ router.post('/photo-comment/:id/react', requireAuth, (req, res) => {
     .get(id);
   if (!row) return res.status(404).json({ error: 'Comment not found.' });
   if (areBlocked(req.user.id, row.owner_id)) {
-    return res.status(403).json({ error: 'You cannot react while a block is in place.' });
+    return res.status(403).json({ error: 'You cannot react to this.' });
   }
   const emoji = ((req.body && req.body.emoji) || '').trim();
   if (!GALLERY_REACTION_SET.has(emoji)) {
@@ -351,7 +357,7 @@ router.post('/friend/:username', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'You cannot send a request to yourself.' });
   }
   if (areBlocked(req.user.id, target.id)) {
-    return res.status(403).json({ error: 'You cannot send a request while a block is in place.' });
+    return res.status(403).json({ error: 'You cannot send a request to this member.' });
   }
 
   const type = 'friend';
@@ -391,6 +397,9 @@ router.post('/friend/:username/accept', requireAuth, (req, res) => {
     )
     .get(target.id, req.user.id);
   if (!row) return res.status(404).json({ error: 'No pending request from this user.' });
+  if (areBlocked(req.user.id, target.id)) {
+    return res.status(403).json({ error: 'You cannot accept a request from this member.' });
+  }
 
   db.prepare('UPDATE friendships SET status = ? WHERE id = ?').run('accepted', row.id);
   announceRelation('accepted', row.rel_type || 'friend', req.user.id, req.user.username, target.id, target.username);

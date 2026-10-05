@@ -1,11 +1,11 @@
 # getxmatch
 
-A lightweight social networking web app for adults (18+). Built to be simple to
+A lightweight social networking web app, open to all ages. Built to be simple to
 self-host on a single VPS: no external database or storage service required.
 
 ## Features
 
-- **Sign up / log in** with an 18+ age confirmation and **email OTP
+- **Sign up / log in** with a terms checkbox and **email OTP
   verification** — a 6-digit code is emailed on signup and the account is only
   created once the code is entered. Passwords are hashed (bcrypt); sessions use
   a signed httpOnly JWT cookie.
@@ -14,8 +14,8 @@ self-host on a single VPS: no external database or storage service required.
   address (username + password), and delete users. The admin password is set
   and reset only via a **single-use link emailed to `ADMIN_EMAIL`**; each new
   request invalidates the previous link.
-- **Rich profiles** — created *after* signup. **Gender, date of birth (18+
-  enforced), and country are required**; everything else is optional: state
+- **Rich profiles** — created *after* signup. **Gender, date of birth (no
+  minimum age), and country are required**; everything else is optional: state
   and city (cascading pickers — after the country pick a state, then a city, or
   type the city if it isn't listed; data from `country-state-city`), an "About
   me", **up to 10 areas of interest** from ~80 grouped choices, and relationship
@@ -52,6 +52,13 @@ self-host on a single VPS: no external database or storage service required.
 - **Everything on a profile is publicly visible except the email address**,
   which is never returned by the profile or browse APIs — it's only visible to
   the account owner and the admin dashboard.
+- **Age wall** — members under 18 (by date of birth) and adults can't contact
+  each other: no friend or group requests, chat, gifts, follows, ratings,
+  comments or reactions between them, and their profiles show
+  "Age-restricted" instead of the friend button (`src/relations.js`). Adult-only
+  features were removed: sexual photo reactions, disappearing messages, the
+  12-hour chat auto-delete, live chat broadcasts, and the old intimate profile
+  fields (dropped from the database at startup).
 - **Real-time 1:1 chat** over WebSockets (Socket.IO). Text history is saved so
   conversations persist across sessions.
 - **File sharing in chat** — files are **relayed live and never stored** on the

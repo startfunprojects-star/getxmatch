@@ -960,14 +960,14 @@ router.get('/about', (req, res) => {
   renderInfo(res, {
     pathname: '/about',
     title: `About ${SITE_NAME}`,
-    description: `${SITE_NAME} is a lightweight social space for adults (18+) — real profiles, compatibility quizzes, community polls and real-time chat, built to be private and self-hosted.`,
-    lede: `${SITE_NAME} is a lightweight social space for adults (18+) — a friendly place to build a profile, discover people, play compatibility quizzes and chat in real time.`,
+    description: `${SITE_NAME} is a lightweight social space for everyone — real profiles, compatibility quizzes, community polls and real-time chat, built to be private and self-hosted.`,
+    lede: `${SITE_NAME} is a lightweight social space for everyone — a friendly place to build a profile, discover people, play compatibility quizzes and chat in real time.`,
     bodyHtml: `
 <h2>What ${SITE_NAME} is</h2>
 <p>${SITE_NAME} brings together the parts of an online community that actually help people connect: a rich personal profile with a photo gallery, playful compatibility quizzes you can share, community polls, a blog, and fast one-to-one and group chat. It's designed to be simple, private and calm — no endless feeds, no ads chasing you around the web.</p>
 <h2>What makes it different</h2>
 <ul>
-  <li><strong>Built for adults, honestly.</strong> Every account confirms it is 18+ and verifies an email before it's created.</li>
+  <li><strong>Verified accounts.</strong> Every account verifies an email before it's created.</li>
   <li><strong>Real conversations.</strong> Chat is instant over WebSockets, and files you share are relayed live and never stored on our servers.</li>
   <li><strong>Play, don't just scroll.</strong> Compatibility quizzes, community polls and shareable match links make meeting people fun.</li>
   <li><strong>Privacy by design.</strong> Your email address is never shown to other members, and the app is lightweight enough to self-host on a single server.</li>
@@ -1018,7 +1018,8 @@ router.get('/how-it-works', (req, res) => {
 <h2>Privacy and safety</h2>
 <ul>
   <li>Your email address is never shown to other members.</li>
-  <li>Chat files are relayed live and never stored. When both people close a chat and neither reopens it within 12 hours, the conversation is deleted.</li>
+  <li>Chat files are relayed live and never stored. Chat messages stay until you delete them.</li>
+  <li>Members under 18 and adults can't contact each other: no requests, chat, follows, ratings, comments or gifts between them.</li>
   <li>You can ignore or report any member. Profiles that collect many reports are suspended for 7 days. Read our <a href="/safety">Safety guidelines</a> for more.</li>
 </ul>
 
@@ -1038,11 +1039,11 @@ router.get('/safety', (req, res) => {
     pathname: '/safety',
     title: 'Safety & Community Guidelines',
     description: `Stay safe on ${SITE_NAME}. Our community guidelines, safety tips for meeting people online, and how to block or report someone.`,
-    lede: `${SITE_NAME} is for adults 18 and over. These guidelines keep the community respectful and safe.`,
+    lede: `These guidelines keep the ${SITE_NAME} community respectful and safe.`,
     bodyHtml: `
 <h2>The essentials</h2>
 <ul>
-  <li><strong>18+ only.</strong> You must be at least 18 to create an account. Accounts found to belong to minors are removed.</li>
+  <li><strong>All ages, kept apart.</strong> Anyone can join. Members under 18 and adults can't contact each other, and members under 18 should use ${SITE_NAME} with a parent or guardian's permission.</li>
   <li><strong>Be respectful.</strong> No harassment, hate speech, threats or unsolicited explicit content.</li>
   <li><strong>Be real.</strong> Impersonation, spam, scams and solicitation are not allowed.</li>
   <li><strong>Consent matters.</strong> Only share images you have the right to share, and never share someone else's private information.</li>
@@ -1064,7 +1065,7 @@ router.get('/safety', (req, res) => {
 // ---- FAQ (with FAQPage rich-result structured data) ------------------------
 const FAQS = [
   ['Is getxmatch free?', 'Yes. Creating a profile, browsing people, taking quizzes, voting in polls and chatting are all free.'],
-  ['Do I need to be 18?', 'Yes. getxmatch is strictly for adults aged 18 and over, and every account confirms this at sign-up.'],
+  ['Is there a minimum age?', 'No. getxmatch is open to everyone. Members under 18 and adults cannot contact each other, and members under 18 should use it with the permission of a parent or guardian.'],
   ['Is my email address visible to other people?', 'No. Your email is used only to verify your account and for notifications. It is never shown to other members and is never returned by our public APIs.'],
   ['What happens to files I share in chat?', 'Files shared in chat are relayed live between you and the recipient and are never stored on our servers — not on disk and not in the database. Only text messages are kept as history.'],
   ['How do compatibility quizzes work?', 'You answer a short set of questions, then share a private link. When the other person answers, you both see how many answers you picked in common and a compatibility score.'],
@@ -1126,12 +1127,12 @@ router.get('/terms', (req, res) => {
   renderInfo(res, {
     pathname: '/terms',
     title: 'Terms of Service',
-    description: `The terms that govern your use of ${SITE_NAME}. You must be 18+ to use the service.`,
+    description: `The terms that govern your use of ${SITE_NAME}.`,
     lede: `Last reviewed: ${LAST_REVIEWED}. By using ${SITE_NAME} you agree to these terms.`,
     bodyHtml: `
 <p class="updated">This is reasonable boilerplate intended as a starting point. Review it with a legal professional before relying on it.</p>
 <h2>1. Eligibility</h2>
-<p>You must be at least 18 years old to create an account or use ${SITE_NAME}. By using the service you confirm that you meet this requirement.</p>
+<p>${SITE_NAME} has no minimum age. If you are under 18 (or under the age of majority where you live), you may use the service only with the permission of a parent or guardian. Members under 18 and adults cannot contact each other on ${SITE_NAME}.</p>
 <h2>2. Your account</h2>
 <p>You are responsible for keeping your credentials secure and for activity under your account. Provide accurate information and do not impersonate others.</p>
 <h2>3. Acceptable use</h2>
@@ -1206,7 +1207,6 @@ Disallow: /api/
 Disallow: /admin
 Disallow: /m/
 Disallow: /search
-Disallow: /live/
 Disallow: /u/
 Disallow: /qr/
 

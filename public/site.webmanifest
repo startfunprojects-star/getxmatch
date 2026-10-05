@@ -1,7 +1,7 @@
 {
   "name": "getxmatch",
   "short_name": "getxmatch",
-  "description": "A lightweight social space for adults — profiles, galleries, compatibility quizzes, community polls and real-time chat.",
+  "description": "A lightweight social space — profiles, galleries, compatibility quizzes, community polls and real-time chat.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
