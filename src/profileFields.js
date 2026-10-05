@@ -6,11 +6,15 @@
 
 const GENDER = ['Male', 'Female', 'Non-binary', 'Other', 'Prefer not to say'];
 const DIET = ['Vegetarian', 'Non-vegetarian', 'Vegan', 'Eggetarian'];
-const RELATIONSHIP_STATUS = [
-  'Single',
-  'In a relationship',
-  'Married',
-  "It's complicated",
+// Where a member is in their education (optional, shown on the profile).
+const EDUCATION = [
+  'School student',
+  'College / university student',
+  'Graduate',
+  'Postgraduate',
+  'Researcher / PhD',
+  'Teacher / educator',
+  'Lifelong learner',
   'Prefer not to say',
 ];
 const FRIENDS_VISIBILITY = ['public', 'friends', 'hidden'];
@@ -64,7 +68,7 @@ function ageFromDob(dob) {
 module.exports = {
   GENDER,
   DIET,
-  RELATIONSHIP_STATUS,
+  EDUCATION,
   FRIENDS_VISIBILITY,
   GIF_VISIBILITY,
   INTEREST_GROUPS,

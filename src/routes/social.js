@@ -55,7 +55,7 @@ function resolveTarget(req, res) {
 --------------------------------------------------------------------------- */
 
 // POST /api/social/rate/:username  { dimension, stars: 1-5 }  — rate another
-// user on ONE dimension (slow / fast / creative / thoughtful). The row's other
+// user on ONE dimension (knowledgeable / helpful / creative / thoughtful). The row's other
 // dimensions are preserved; the legacy `stars` column is recomputed as the
 // rounded mean of the given dimensions (the overall score the leaderboard uses).
 router.post('/rate/:username', requireAuth, (req, res) => {
@@ -78,7 +78,7 @@ router.post('/rate/:username', requireAuth, (req, res) => {
 
   // Merge the new value into any existing row, then recompute the overall.
   const existing = db
-    .prepare('SELECT slow, fast, creative, thoughtful FROM ratings WHERE rater_id = ? AND ratee_id = ?')
+    .prepare('SELECT knowledgeable, helpful, creative, thoughtful FROM ratings WHERE rater_id = ? AND ratee_id = ?')
     .get(req.user.id, target.id) || {};
   const vals = {};
   for (const d of RATING_DIMS) vals[d] = existing[d] != null ? existing[d] : null;
@@ -88,13 +88,13 @@ router.post('/rate/:username', requireAuth, (req, res) => {
   const overall = Math.round(given.reduce((s, x) => s + x, 0) / given.length); // 1-5 int
 
   db.prepare(
-    `INSERT INTO ratings (rater_id, ratee_id, slow, fast, creative, thoughtful, stars, created_at)
+    `INSERT INTO ratings (rater_id, ratee_id, knowledgeable, helpful, creative, thoughtful, stars, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(rater_id, ratee_id) DO UPDATE SET
-       slow = excluded.slow, fast = excluded.fast,
+       knowledgeable = excluded.knowledgeable, helpful = excluded.helpful,
        creative = excluded.creative, thoughtful = excluded.thoughtful,
        stars = excluded.stars, created_at = excluded.created_at`
-  ).run(req.user.id, target.id, vals.slow, vals.fast, vals.creative, vals.thoughtful, overall, Date.now());
+  ).run(req.user.id, target.id, vals.knowledgeable, vals.helpful, vals.creative, vals.thoughtful, overall, Date.now());
 
   broadcastLeaderboardChange(); // a new/changed rating can reshuffle ranks
   res.json({ rating: ratingSummary(target.id, req.user.id) });

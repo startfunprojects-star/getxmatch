@@ -50,7 +50,7 @@ function userMini(id, viewerId) {
 function activityIcon(activity) {
   const a = String(activity).toLowerCase();
   if (/(chat|messag|talk)/.test(a)) return '💬';
-  if (/(match|paired|connect)/.test(a)) return '💘';
+  if (/(match|paired|connect)/.test(a)) return '🧩';
   if (/(rat|star|review)/.test(a)) return '⭐';
   if (/(gift|sent)/.test(a)) return '🎁';
   if (/(view|check|look|profile)/.test(a)) return '👀';

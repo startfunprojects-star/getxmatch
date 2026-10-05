@@ -18,8 +18,8 @@ self-host on a single VPS: no external database or storage service required.
   minimum age), and country are required**; everything else is optional: state
   and city (cascading pickers — after the country pick a state, then a city, or
   type the city if it isn't listed; data from `country-state-city`), an "About
-  me", **up to 10 areas of interest** from ~80 grouped choices, and relationship
-  status. Each profile also has a display
+  me", **up to 10 areas of interest** from ~80 grouped choices, and education
+  (school student, graduate, researcher, …). Each profile also has a display
   picture and a **gallery of photos and reels with no limit on how many**.
   **Reels** are short videos (MP4, MOV or WEBM, **max 1 minute**, up to 50 MB
   each): they show in the gallery with a colored gradient border and a length

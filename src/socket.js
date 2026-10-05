@@ -13,7 +13,7 @@ const { isValidActivity } = require('./activities');
 
 // Emoji reactions a user may place on a message/gift. Server-side allow-list so
 // clients can't store arbitrary strings.
-const REACTION_EMOJIS = new Set(['❤️', '😂', '😮', '😢', '🔥', '👍', '😍', '🙏']);
+const REACTION_EMOJIS = new Set(['❤️', '😂', '😮', '😢', '🔥', '👍', '💡', '🙏']);
 
 // Map of userId -> Set of socket ids (a user may have multiple tabs open).
 const online = new Map();

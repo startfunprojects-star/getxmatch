@@ -49,14 +49,14 @@ function friendsOf(userId) {
 
 // The four independent rating dimensions, each scored 1-5 stars. Mirrored on
 // the client (RATING_DIMS in public/js/app.js).
-const RATING_DIMS = ['slow', 'fast', 'creative', 'thoughtful'];
+const RATING_DIMS = ['knowledgeable', 'helpful', 'creative', 'thoughtful'];
 
 function ratingSummary(rateeId, viewerId) {
   const agg = db
     .prepare(
       `SELECT COUNT(*) AS count,
-              AVG(slow) AS slow,             COUNT(slow) AS slow_n,
-              AVG(fast) AS fast,             COUNT(fast) AS fast_n,
+              AVG(knowledgeable) AS knowledgeable, COUNT(knowledgeable) AS knowledgeable_n,
+              AVG(helpful) AS helpful,       COUNT(helpful) AS helpful_n,
               AVG(creative) AS creative,     COUNT(creative) AS creative_n,
               AVG(thoughtful) AS thoughtful, COUNT(thoughtful) AS thoughtful_n
        FROM ratings WHERE ratee_id = ?`
@@ -78,15 +78,15 @@ function ratingSummary(rateeId, viewerId) {
   let mine = null;
   if (viewerId && viewerId !== rateeId) {
     const r = db
-      .prepare('SELECT slow, fast, creative, thoughtful FROM ratings WHERE rater_id = ? AND ratee_id = ?')
+      .prepare('SELECT knowledgeable, helpful, creative, thoughtful FROM ratings WHERE rater_id = ? AND ratee_id = ?')
       .get(viewerId, rateeId);
-    if (r) mine = { slow: r.slow || null, fast: r.fast || null, creative: r.creative || null, thoughtful: r.thoughtful || null };
+    if (r) mine = { knowledgeable: r.knowledgeable || null, helpful: r.helpful || null, creative: r.creative || null, thoughtful: r.thoughtful || null };
   }
 
   return {
     count: agg.count,     // number of people who rated (any dimension)
     average: overall,     // overall = mean of the dimension averages (hero score)
-    dimensions,           // { slow: {average,count}, fast: {...}, ... }
+    dimensions,           // { knowledgeable: {average,count}, helpful: {...}, ... }
     mine,                 // the viewer's own per-dimension scores, or null
   };
 }
@@ -294,7 +294,7 @@ function buildProfile(userId, viewerId) {
       `SELECT u.id, u.username,
               p.display_name, p.bio, p.avatar, p.updated_at,
               p.gender, p.date_of_birth, p.country, p.state, p.city, p.interests,
-              p.relationship_status, p.friends_visibility,
+              p.education, p.friends_visibility,
               p.gif_visibility, p.hidden
        FROM users u JOIN profiles p ON p.user_id = u.id
        WHERE u.id = ?`
@@ -358,7 +358,7 @@ function buildProfile(userId, viewerId) {
     state: row.state || null,
     city: row.city || null,
     interests: parseInterests(row.interests),
-    relationshipStatus: row.relationship_status || null,
+    education: row.education || null,
     gallery,
     gifs,
     // The chosen audience level for the GIF collection. `gifsLocked` tells a

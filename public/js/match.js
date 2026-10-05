@@ -156,7 +156,7 @@
     root.innerHTML = '';
     root.appendChild(el(`
       <div class="match-intro">
-        <div class="match-emoji">💘</div>
+        <div class="match-emoji">🧩</div>
         <h2>${esc(data.aName)} invited you</h2>
         <p class="match-sub">${data.open
           ? `Answer “${esc(data.quizTitle)}” to see how compatible you are with ${esc(data.aName)}. This is an open quiz — other members may answer too, but you’ll only see your own result.`
@@ -236,14 +236,14 @@
     root.innerHTML = '';
     const pct = r.percent;
     const verdict =
-      pct >= 80 ? 'You two are a serious match! 🔥' :
-      pct >= 50 ? 'Solid compatibility — plenty in common. 😊' :
-      pct >= 25 ? 'A few sparks. Opposites can attract! ✨' :
-      'Very different tastes — but that keeps it interesting! 🙃';
+      pct >= 80 ? 'Great minds think alike! 🎓' :
+      pct >= 50 ? 'Strong common ground — plenty to discuss. 📚' :
+      pct >= 25 ? 'Some shared ideas, and lots to learn from each other. 💡' :
+      'Different perspectives — perfect for a good debate! 🧠';
 
     root.appendChild(el(`
       <div class="match-result">
-        <div class="match-emoji">💘</div>
+        <div class="match-emoji">🧩</div>
         <div class="score-ring" style="--pct:${pct}">
           <div class="score-num">${pct}<span>%</span></div>
         </div>

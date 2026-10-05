@@ -80,8 +80,8 @@ function saveProfile(userId, body, file) {
   // columns are dropped at startup (migrateRemoveAdultFeatures in src/db.js).
 
   // --- Optional enum fields.
-  const relStatus = optionalEnum(b.relationshipStatus, F.RELATIONSHIP_STATUS, 'relationship status');
-  if (relStatus.error) return fail(relStatus.error);
+  const education = optionalEnum(b.education, F.EDUCATION, 'education');
+  if (education.error) return fail(education.error);
 
   let friendsVisibility = (b.friendsVisibility || 'public').trim();
   if (!F.FRIENDS_VISIBILITY.includes(friendsVisibility)) friendsVisibility = 'public';
@@ -135,22 +135,22 @@ function saveProfile(userId, body, file) {
       `UPDATE profiles SET
          display_name = ?, bio = ?, avatar = ?,
          gender = ?, date_of_birth = ?, country = ?, state = ?, city = ?, interests = ?,
-         relationship_status = ?, friends_visibility = ?, hidden = ?, updated_at = ?
+         education = ?, friends_visibility = ?, hidden = ?, updated_at = ?
        WHERE user_id = ?`
     ).run(
       displayName, about, avatar,
       gender, dob, country, state, city, interestsJson,
-      relStatus.value, friendsVisibility, hidden, now, userId
+      education.value, friendsVisibility, hidden, now, userId
     );
   } else {
     db.prepare(
       `INSERT INTO profiles
          (user_id, display_name, bio, avatar, gender, date_of_birth, country, state, city, interests,
-          relationship_status, friends_visibility, hidden, updated_at)
+          education, friends_visibility, hidden, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       userId, displayName, about, avatar, gender, dob, country, state, city, interestsJson,
-      relStatus.value, friendsVisibility, hidden, now
+      education.value, friendsVisibility, hidden, now
     );
   }
 

@@ -339,7 +339,7 @@
   const OPT = {
     gender: ['Male', 'Female', 'Non-binary', 'Other', 'Prefer not to say'],
     yesNo: ['Yes', 'No', 'Occasionally', 'Prefer not to say'],
-    relationshipStatus: ['Single', 'In a relationship', 'Married', "It's complicated", 'Prefer not to say'],
+    education: ['School student', 'College / university student', 'Graduate', 'Postgraduate', 'Researcher / PhD', 'Teacher / educator', 'Lifelong learner', 'Prefer not to say'],
     // Mirrors INTEREST_GROUPS / MAX_INTERESTS in src/profileFields.js.
     interestGroups: [
       { group: "Arts & culture", items: ['Art', 'Music', 'Movies', 'Photography', 'Dancing', 'Theatre', 'Poetry', 'Painting', 'Design', 'Architecture', 'Museums', 'Classical music'] },
@@ -386,8 +386,8 @@
   // The four rating dimensions (each 1-5 stars). Mirrors RATING_DIMS in
   // src/profileData.js.
   const RATING_DIMS = [
-    { key: 'slow', label: 'Slow', emoji: '🐢' },
-    { key: 'fast', label: 'Fast', emoji: '⚡' },
+    { key: 'knowledgeable', label: 'Knowledgeable', emoji: '📚' },
+    { key: 'helpful', label: 'Helpful', emoji: '🤝' },
     { key: 'creative', label: 'Creative', emoji: '🎨' },
     { key: 'thoughtful', label: 'Thoughtful', emoji: '💭' },
   ];
@@ -773,8 +773,8 @@
             ${selectHtml('country', COUNTRIES, e.country, 'Select country')}
           </div>
           <div>
-            <label>Relationship status</label>
-            ${selectHtml('relationshipStatus', OPT.relationshipStatus, e.relationshipStatus, 'Select…')}
+            <label>Education</label>
+            ${selectHtml('education', OPT.education, e.education, 'Select…')}
           </div>
           <div>
             <label>State</label>
@@ -924,7 +924,7 @@
       fd.append('country', val('country'));
       fd.append('state', stateSel.value);
       fd.append('city', citySel.value === CITY_OTHER ? cityCustom.value.trim() : citySel.value);
-      fd.append('relationshipStatus', val('relationshipStatus'));
+      fd.append('education', val('education'));
       fd.append('about', val('about'));
       fd.append('interests', JSON.stringify(interests));
       fd.append('hidden', wrap.querySelector('#hidden').checked ? '1' : '0');
@@ -1685,9 +1685,6 @@
     view.querySelector('#screenShareBtn').addEventListener('click', () => toggleScreenShare(peer));
     reflectScreenShare(peer.id);
 
-    // Best-effort protection: block copy / context-menu / drag inside the chat
-    // so messages, images and files can't be trivially saved.
-    hardenChat(view.querySelector('.chat-wrap') || view);
 
     setupActivityBar(view, peer);
 
@@ -2562,7 +2559,7 @@
 
   /* ---------- emoji reactions ---------- */
 
-  var REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '🔥', '👍', '😍', '🙏'];
+  var REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '🔥', '👍', '💡', '🙏'];
 
   function sendReaction(messageId, emoji) {
     if (!state.peer || !state.socket || !messageId) return;
@@ -2862,62 +2859,6 @@
     scrollBody();
   }
 
-  /* ---------- anti-save / anti-screenshot (best-effort) ---------- */
-
-  // Block copy, drag and the right-click "Save as…" menu inside a chat. This is
-  // a deterrent only — it cannot stop a determined user or the OS, but it stops
-  // casual saving of messages, images and files.
-  function hardenChat(root) {
-    if (!root || root._hardened) return;
-    root._hardened = true;
-    root.classList.add('no-save');
-    root.addEventListener('contextmenu', (e) => { e.preventDefault(); }, false);
-    root.addEventListener('dragstart', (e) => { e.preventDefault(); }, false);
-    root.addEventListener('copy', (e) => { e.preventDefault(); }, false);
-  }
-
-  // Global, best-effort screenshot deterrents. There is NO web API that can
-  // actually block an OS screenshot, so this only: (1) blurs chat content when
-  // the tab is hidden or the window loses focus (foils many capture tools and
-  // screen-share previews), and (2) flashes a warning + clears the clipboard on
-  // PrintScreen. Set up once.
-  var screenshotGuardReady = false;
-  function setupScreenshotGuard() {
-    if (screenshotGuardReady) return;
-    screenshotGuardReady = true;
-
-    const shield = () => document.body.classList.add('privacy-shield');
-    const unshield = () => document.body.classList.remove('privacy-shield');
-
-    document.addEventListener('visibilitychange', () => { if (document.hidden) shield(); else unshield(); });
-    window.addEventListener('blur', shield);
-    window.addEventListener('focus', unshield);
-
-    const warn = () => {
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          const p = navigator.clipboard.writeText('');
-          if (p && p.catch) p.catch(() => {});
-        }
-      } catch (_e) {}
-      let t = document.getElementById('ssToast');
-      if (!t) {
-        t = el('<div id="ssToast" class="ss-toast">🔒 Screenshots are discouraged in private chats.</div>');
-        document.body.appendChild(t);
-      }
-      t.classList.add('show');
-      clearTimeout(t._h);
-      t._h = setTimeout(() => t.classList.remove('show'), 2200);
-    };
-    window.addEventListener('keyup', (e) => { if (e.key === 'PrintScreen') warn(); });
-    window.addEventListener('keydown', (e) => {
-      // Best-effort: some capture shortcuts still reach the page (macOS
-      // Cmd+Shift+3/4/5). Windows' Win+Shift+S is captured by the OS first, so
-      // it usually never fires here — hence "deterrent, not a guarantee".
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && ['3', '4', '5'].includes(e.key)) warn();
-    });
-  }
-
   // Toast-ish helper that never depends on an open chat body.
   function notifyToast(text) {
     const t = el(`<div class="toast">${esc(text)}</div>`);
@@ -3102,7 +3043,6 @@
   /* ---------- socket ---------- */
   function connectSocket() {
     if (state.socket) state.socket.disconnect();
-    setupScreenshotGuard();
     const s = io({ withCredentials: true });
     state.socket = s;
 
@@ -3216,7 +3156,7 @@
       if (!d || !d.token) return;
       const pts = d.points ? ` · +${d.points} points` : '';
       const t = el(`<a class="toast toast-link" href="/m/${encodeURIComponent(d.token)}" target="_blank" rel="noopener"></a>`);
-      t.textContent = `💘 ${d.bName} answered “${d.quizTitle}” — ${d.percent}% match${pts}. See results ↗`;
+      t.textContent = `🧩 ${d.bName} answered “${d.quizTitle}” — ${d.percent}% match${pts}. See results ↗`;
       document.body.appendChild(t);
       setTimeout(() => { if (t.parentNode) t.parentNode.removeChild(t); }, 10000);
     });
@@ -4346,7 +4286,7 @@
       profile.country,
     ].filter(Boolean).join(' · ');
 
-    const relLine = profile.relationshipStatus ? esc(profile.relationshipStatus) : '';
+    const relLine = profile.education ? esc(profile.education) : '';
 
     const badges = [];
     if (profile.age != null) badges.push(`🎂 ${profile.age}`);
@@ -4375,7 +4315,7 @@
               <div class="handle">@${esc(profile.username)}</div>
               <div class="follow-counts" id="pvFollowCounts"></div>
               ${badgesHtml ? `<div class="pro-badges">${badgesHtml}</div>` : ''}
-              ${relLine ? `<div class="rel-line">💞 ${relLine}</div>` : ''}
+              ${relLine ? `<div class="rel-line">🎓 ${relLine}</div>` : ''}
             </div>
             <div class="pro-rating" title="Overall — the mean of the four rating dimensions">
               <div class="pro-score">${score}</div>
@@ -5317,11 +5257,11 @@
     let icon = '🔔';
     let html = '';
     if (it.kind === 'match_shared') {
-      icon = '💘';
+      icon = '🧩';
       html = `<strong>${esc(it.otherName)}</strong> attempted the quiz you shared, <em>“${esc(it.quizTitle)}”</em>. ` +
         `You’re <strong>${it.percent}% compatible</strong> (${it.score} of ${it.total} answers in common).`;
     } else if (it.kind === 'match_answered') {
-      icon = '💘';
+      icon = '🧩';
       html = `You attempted <strong>${esc(it.otherName)}</strong>’s shared quiz <em>“${esc(it.quizTitle)}”</em>. ` +
         `You’re <strong>${it.percent}% compatible</strong> (${it.score} of ${it.total} answers in common).`;
     } else if (it.kind === 'follow') {
@@ -5882,7 +5822,7 @@
   function activityIcon(activity) {
     const a = String(activity).toLowerCase();
     if (/(chat|messag|talk)/.test(a)) return '💬';
-    if (/(match|paired|connect)/.test(a)) return '💘';
+    if (/(match|paired|connect)/.test(a)) return '🧩';
     if (/(rat|star|review)/.test(a)) return '⭐';
     if (/(gift|sent)/.test(a)) return '🎁';
     if (/(view|check|look|profile)/.test(a)) return '👀';

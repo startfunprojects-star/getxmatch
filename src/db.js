@@ -217,7 +217,7 @@ db.exec(`
     ['city', 'TEXT'], // optional: a listed city or one the member typed
     ['diet', 'TEXT'],
     ['interests', "TEXT NOT NULL DEFAULT '[]'"],
-    ['relationship_status', 'TEXT'],
+    ['education', 'TEXT'], // optional: School student, Graduate, …
     ['friends_visibility', "TEXT NOT NULL DEFAULT 'public'"],
     // Who may see the user's GIF "feelings" collection: public | friends | private.
     ['gif_visibility', "TEXT NOT NULL DEFAULT 'public'"],
@@ -260,14 +260,14 @@ db.exec(`
 db.exec('CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages (expires_at);');
 
 // --- Migration: multi-dimension ratings. A rating of another user now carries
-// four independent 1-5 star scores (Slow / Fast / Creative / Thoughtful), stored
+// four independent 1-5 star scores (Knowledgeable / Helpful / Creative / Thoughtful), stored
 // as nullable columns on the existing ratings row. The legacy `stars` column is
 // kept as the OVERALL score (the rounded mean of the given dimensions) so the
 // leaderboard and admin queries keep working unchanged. Values are validated at
 // write time (see src/routes/social.js).
 (function migrateRatingDimensions() {
   const cols = db.prepare('PRAGMA table_info(ratings)').all().map((c) => c.name);
-  for (const dim of ['slow', 'fast', 'creative', 'thoughtful']) {
+  for (const dim of ['knowledgeable', 'helpful', 'creative', 'thoughtful']) {
     if (!cols.includes(dim)) db.exec(`ALTER TABLE ratings ADD COLUMN ${dim} INTEGER;`);
   }
 })();
@@ -928,6 +928,37 @@ db.exec(`
   const allowed = listActivities();
   db.prepare(`DELETE FROM chat_activities WHERE activity NOT IN (${allowed.map(() => '?').join(',')})`).run(...allowed);
   db.exec("UPDATE friendships SET rel_type = 'friend' WHERE rel_type IS NOT NULL AND rel_type <> 'friend';");
+})();
+
+// --- Migration: academic profile + ratings.
+//   - relationship status is replaced by education, so its column is dropped;
+//   - the Slow / Fast rating categories are replaced by Knowledgeable / Helpful:
+//     their scores are dropped, each rating's overall `stars` is recomputed from
+//     what's left, and ratings with no score left are removed;
+//   - the 😍 chat reaction is replaced by 💡, so stored 😍 reactions are deleted.
+(function migrateAcademic() {
+  const pcols = db.prepare('PRAGMA table_info(profiles)').all().map((c) => c.name);
+  if (pcols.includes('relationship_status')) db.exec('ALTER TABLE profiles DROP COLUMN relationship_status;');
+
+  const rcols = db.prepare('PRAGMA table_info(ratings)').all().map((c) => c.name);
+  if (rcols.includes('slow') && rcols.includes('fast')) {
+    // Only rows that carried a Slow / Fast score change; older star-only
+    // ratings are left as they are.
+    db.exec(`
+      DELETE FROM ratings
+       WHERE (slow IS NOT NULL OR fast IS NOT NULL)
+         AND knowledgeable IS NULL AND helpful IS NULL AND creative IS NULL AND thoughtful IS NULL;
+      UPDATE ratings SET stars = CAST(ROUND(
+        (COALESCE(knowledgeable, 0) + COALESCE(helpful, 0) + COALESCE(creative, 0) + COALESCE(thoughtful, 0)) * 1.0 /
+        ((knowledgeable IS NOT NULL) + (helpful IS NOT NULL) + (creative IS NOT NULL) + (thoughtful IS NOT NULL))
+      ) AS INTEGER)
+       WHERE (slow IS NOT NULL OR fast IS NOT NULL);
+      ALTER TABLE ratings DROP COLUMN slow;
+      ALTER TABLE ratings DROP COLUMN fast;
+    `);
+  }
+
+  db.prepare('DELETE FROM message_reactions WHERE emoji = ?').run('😍');
 })();
 
 module.exports = db;
