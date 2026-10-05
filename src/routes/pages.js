@@ -1118,7 +1118,7 @@ router.get('/privacy', (req, res) => {
 <h2>Your choices</h2>
 <p>You can edit or remove your profile content at any time and request account deletion. Passwords are stored only as salted hashes and are never readable by us.</p>
 <h2>Contact</h2>
-<p>Questions about your privacy? Contact us at <a href="mailto:privacy@getxmatch.com">privacy@getxmatch.com</a>.</p>`,
+<p>Questions about your privacy? Contact us at <a href="mailto:contact@getxmatch.com">contact@getxmatch.com</a>.</p>`,
   });
 });
 
@@ -1146,7 +1146,7 @@ router.get('/terms', (req, res) => {
 <h2>7. Changes</h2>
 <p>We may update these terms; material changes will be reflected by the "last reviewed" date above.</p>
 <h2>Contact</h2>
-<p><a href="mailto:hello@getxmatch.com">hello@getxmatch.com</a></p>`,
+<p><a href="mailto:contact@getxmatch.com">contact@getxmatch.com</a></p>`,
   });
 });
 

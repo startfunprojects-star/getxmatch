@@ -257,7 +257,7 @@ sudo systemctl restart getxmatch
 | `MAX_REEL_MB`     | Max gallery reel (video) size in MB (default 50)    |
 | `MAX_CHAT_FILE_MB`| Max live chat file size (default 15)                |
 | `PUBLIC_URL`      | Public base URL, used for links inside emails (e.g. `https://getxmatch.com`) |
-| `ADMIN_EMAIL`     | Where the admin set/reset link is sent (default `gauravsharma.ps@gmail.com`) |
+| `ADMIN_EMAIL`     | Where the admin set/reset link is sent (default `contact@getxmatch.com`) |
 | `OTP_TTL_MIN`     | Signup OTP lifetime in minutes (default 10)         |
 | `OTP_MAX_ATTEMPTS`| Wrong-code attempts before the OTP is discarded (default 5) |
 | `ADMIN_RESET_TTL_MIN` | Admin reset-link lifetime in minutes (default 60) |
@@ -266,7 +266,7 @@ sudo systemctl restart getxmatch
 | `SMTP_SECURE`     | `true` for port 465, `false` for 587 (default true) |
 | `SMTP_USER`       | SMTP mailbox login. **If blank, OTPs/links are printed to the server log instead of emailed.** |
 | `SMTP_PASS`       | SMTP mailbox password                               |
-| `MAIL_FROM`       | `From:` header, e.g. `getxmatch <no-reply@getxmatch.com>` |
+| `MAIL_FROM`       | `From:` header, e.g. `getxmatch <contact@getxmatch.com>` |
 
 ### Email & the admin account
 

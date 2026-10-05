@@ -586,7 +586,7 @@
             <label>Username</label>
             <input name="username" autocomplete="username" placeholder="3-20 letters, numbers, _" required />
             <label>Email</label>
-            <input name="email" type="email" autocomplete="email" placeholder="you@example.com" required />
+            <input name="email" type="email" autocomplete="email" placeholder="Your email address" required />
             <label>Password</label>
             <input name="password" type="password" autocomplete="new-password" placeholder="At least 8 characters" required />
             ${referralsOn ? `<label>Referral code <span class="hint">(optional)</span></label>

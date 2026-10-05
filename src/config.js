@@ -25,7 +25,7 @@ const config = {
   publicUrl: (process.env.PUBLIC_URL || 'http://localhost:3000').replace(/\/+$/, ''),
 
   // Where the admin password set/reset link is sent.
-  adminEmail: process.env.ADMIN_EMAIL || 'gauravsharma.ps@gmail.com',
+  adminEmail: process.env.ADMIN_EMAIL || 'contact@getxmatch.com',
 
   // Signup email OTP.
   otpTtlMs: (parseInt(process.env.OTP_TTL_MIN, 10) || 10) * 60 * 1000,
@@ -48,7 +48,7 @@ const config = {
     secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : true,
     user: process.env.SMTP_USER || '',
     pass: process.env.SMTP_PASS || '',
-    from: process.env.MAIL_FROM || process.env.SMTP_USER || 'getxmatch <no-reply@localhost>',
+    from: process.env.MAIL_FROM || process.env.SMTP_USER || 'getxmatch <contact@getxmatch.com>',
   },
 };
 
