@@ -12,7 +12,7 @@ const db = require('../db');
 const config = require('../config');
 const { sendAdminResetLink, smtpReady } = require('../mail');
 const { isOnline, broadcastNotify } = require('../socket');
-const { rankedUsers } = require('../points');
+const { leaderboards } = require('../points');
 const { QUIZ_TYPES } = require('../quizTypes');
 const { isValidCategory } = require('../quizCategories');
 const { imageUpload } = require('../upload');
@@ -600,9 +600,11 @@ router.delete('/events/:id', requireAdmin, (req, res) => {
 
 /* ---------------- Leaderboard (read-only view for admins) ---------------- */
 
-// GET /api/admin/leaderboard — same ranking users see, for oversight.
+// GET /api/admin/leaderboard — the same boards members see, for oversight.
+// `leaderboard` is the overall (Kings & Queens) board.
 router.get('/leaderboard', requireAdmin, (req, res) => {
-  res.json({ leaderboard: rankedUsers() });
+  const boards = leaderboards();
+  res.json({ boards, leaderboard: boards[0].rows });
 });
 
 /* ===========================================================================

@@ -1538,7 +1538,6 @@
   /* ==================================================================
      Leaderboard tab (read-only oversight)
   ================================================================== */
-  let leaderboardCache = [];
   async function renderReferralsTab() {
     const host = tabHost();
     host.innerHTML = '<div class="admin-card"><h2>Referrals</h2><p class="count">Loading…</p></div>';
@@ -1567,38 +1566,80 @@
     paint(data);
   }
 
+  let leaderboardBoards = [];
+  let leaderboardBoardId = 'kings_queens';
+
   async function renderLeaderboardTab() {
     const host = tabHost();
-    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Ranked by points (highest first; equal points share a rank). Points come from ratings, Highway likes, friends, quiz points, polls (5 per poll voted in), completed compatibility links (10 to the sharer, 5 to the responder), referrals (4 to the referrer, 2 to the new member) and followers (double each follower’s fee; following costs the followee’s fee), minus deductions for stopped quizzes and quiz reattempts (10 each). Points can go below zero. This is the overall Kings &amp; Queens board; members also see one board per quiz category.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Likes</th><th>Polls</th><th>Points</th></tr></thead><tbody id="lbRows"><tr><td colspan="8" class="count">Loading…</td></tr></tbody></table></div><div id="lbPager"></div></div>';
-    const rowsEl = host.querySelector('#lbRows');
-    try { leaderboardCache = (await api.get('/api/admin/leaderboard')).leaderboard; }
-    catch (e) { if (e.status === 401) return renderLogin(true); rowsEl.innerHTML = `<tr><td colspan="8" class="count">${esc(e.message)}</td></tr>`; return; }
+    host.innerHTML = `
+      <div class="admin-card">
+        <h2>Leaderboards</h2>
+        <p class="count"><strong>Kings &amp; Queens</strong> ranks members by overall points (highest first; equal points share a rank). Points come from ratings, Highway likes, friends, quiz points, polls (5 per poll voted in), completed compatibility links (10 to the sharer, 5 to the responder), referrals (4 to the referrer, 2 to the new member) and followers (double each follower’s fee; following costs the followee’s fee), minus deductions for stopped quizzes and quiz reattempts (10 each). Points can go below zero.</p>
+        <p class="count">Each quiz category board ranks members by the best attempt at each of that category’s quizzes, minus the penalties taken on them. “Others” quizzes count toward Kings &amp; Queens only.</p>
+        <div class="lb-tabs" id="lbTabs"></div>
+      </div>
+      <div class="admin-card" id="lbBoard"><div class="count">Loading…</div></div>`;
+    try { leaderboardBoards = (await api.get('/api/admin/leaderboard')).boards; }
+    catch (e) {
+      if (e.status === 401) return renderLogin(true);
+      host.querySelector('#lbBoard').innerHTML = `<div class="count">${esc(e.message)}</div>`;
+      return;
+    }
+    if (!leaderboardBoards.some((b) => b.id === leaderboardBoardId)) leaderboardBoardId = leaderboardBoards[0].id;
+    const tabs = host.querySelector('#lbTabs');
+    leaderboardBoards.forEach((b) => {
+      const t = el(`<button type="button" class="lb-tab${b.id === 'kings_queens' ? ' lb-tab-kq' : ''}" data-board="${esc(b.id)}">${b.emoji} ${esc(b.label)} <span class="count">(${b.rows.length})</span></button>`);
+      t.addEventListener('click', () => { leaderboardBoardId = b.id; paintLeaderboard(); });
+      tabs.appendChild(t);
+    });
     paintLeaderboard();
   }
 
   function paintLeaderboard() {
-    const rowsEl = document.getElementById('lbRows');
-    if (!rowsEl) return;
-    const rows = leaderboardCache;
-    if (!rows.length) { rowsEl.innerHTML = '<tr><td colspan="8" class="count">No ranked users yet.</td></tr>'; return; }
-    const { slice, pager } = pageFor('leaderboard', rows, paintLeaderboard);
-    rowsEl.innerHTML = '';
+    const box = document.getElementById('lbBoard');
+    if (!box) return;
+    const board = leaderboardBoards.find((b) => b.id === leaderboardBoardId);
+    if (!board) return;
+    const kq = board.id === 'kings_queens';
+    document.querySelectorAll('#lbTabs .lb-tab').forEach((t) => t.classList.toggle('on', t.dataset.board === board.id));
+    box.className = 'admin-card' + (kq ? ' lb-board lb-kq' : '');
+    const head = kq
+      ? '<th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Likes</th><th>Polls</th><th>Points</th>'
+      : `<th>Rank</th><th>User</th><th>${esc(board.label)} points</th><th>Overall points</th>`;
+    const cols = kq ? 8 : 4;
+    box.innerHTML = `
+      <h3 style="margin:0 0 4px">${board.emoji} ${esc(board.label)}</h3>
+      <p class="count">${esc(board.description || '')}</p>
+      <div class="table-scroll"><table class="users"><thead><tr>${head}</tr></thead><tbody id="lbRows"></tbody></table></div>
+      <div id="lbPager"></div>`;
+    const rowsEl = box.querySelector('#lbRows');
+    if (!board.rows.length) {
+      rowsEl.innerHTML = `<tr><td colspan="${cols}" class="count">${kq ? 'No ranked users yet.' : 'No one has points in this category yet.'}</td></tr>`;
+      return;
+    }
+    const { slice, pager } = pageFor('leaderboard:' + board.id, board.rows, paintLeaderboard);
+    const pts = (n) => `<strong${n < 0 ? ' style="color:var(--danger)"' : ''}>${n}</strong>`;
     slice.forEach((r) => {
-      rowsEl.appendChild(el(`
+      const user = `<td><strong>${esc(r.displayName)}</strong><div class="pill">@${esc(r.username)}</div></td>`;
+      rowsEl.appendChild(el(kq ? `
         <tr>
-          <td><strong>#${r.rank}</strong></td>
-          <td><strong>${esc(r.displayName)}</strong><div class="pill">@${esc(r.username)}</div></td>
+          <td><strong>${r.rank === 1 ? '👑 ' : ''}#${r.rank}</strong></td>
+          ${user}
           <td>${r.ratingAvg || '—'} (${r.ratingCount})</td>
           <td>${r.friends}</td>
           <td>${r.quizzes}</td>
           <td>${r.likes}</td>
           <td>${r.polls}</td>
-          <td><strong>${r.points}</strong>${r.penalty ? `<div class="pill" title="Deducted for stopped quizzes and reattempts">−${r.penalty}</div>` : ''}</td>
-        </tr>
-      `));
+          <td>${pts(r.points)}${r.penalty ? `<div class="pill" title="Deducted for stopped quizzes and reattempts">−${r.penalty}</div>` : ''}</td>
+        </tr>` : `
+        <tr>
+          <td><strong>#${r.rank}</strong></td>
+          ${user}
+          <td>${pts(r.points)}</td>
+          <td>${pts(r.totalPoints)}</td>
+        </tr>`));
     });
-    const pagerHost = document.getElementById('lbPager');
-    if (pagerHost) { pagerHost.innerHTML = ''; if (pager) pagerHost.appendChild(pager); }
+    if (pager) box.querySelector('#lbPager').appendChild(pager);
   }
 
   boot();

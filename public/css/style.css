@@ -1101,6 +1101,7 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
 }
 .lb-tab:hover { color: var(--text); border-color: var(--border-strong); }
 .lb-tab.on { background: var(--grad); color: var(--on-accent); border-color: transparent; }
+.lb-tab .count { font-size: 12px; } .lb-tab.on .count { color: inherit; opacity: .8; }
 .lb-tab-kq { color: var(--text); border-color: color-mix(in srgb, var(--gold) 60%, transparent); background: color-mix(in srgb, var(--gold) 12%, var(--bg-2)); }
 .lb-tab-kq.on { background: linear-gradient(135deg, color-mix(in srgb, var(--gold) 85%, #fff), var(--gold)); color: #2a1f05; box-shadow: 0 4px 14px color-mix(in srgb, var(--gold) 35%, transparent); }
 .lb-board-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px 4px; }
