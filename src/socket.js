@@ -693,4 +693,10 @@ function initSocket(io) {
   });
 }
 
-module.exports = { initSocket, isOnline, broadcastActivity, broadcastHighway, notifyHighwayEvent, notifyGroup, notifyUser, broadcastLeaderboardChange, broadcastNotify };
+// Close every live socket of a user (e.g. just suspended). Their tabs
+// reconnect as anonymous sockets, without the private-chat handlers.
+function disconnectUser(userId) {
+  if (ioRef) ioRef.in(`user:${userId}`).disconnectSockets(true);
+}
+
+module.exports = { initSocket, isOnline, disconnectUser, broadcastActivity, broadcastHighway, notifyHighwayEvent, notifyGroup, notifyUser, broadcastLeaderboardChange, broadcastNotify };

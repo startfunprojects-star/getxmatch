@@ -112,7 +112,13 @@ self-host on a single VPS: no external database or storage service required.
   anyone directly from a leaderboard.
 - **Recent Events** — a unified activity feed aggregating new friendships,
   recent chats and quiz attempts, plus **admin-curated announcements**. Friend
-  requests can be sent inline from the feed.
+  requests can be sent inline from the feed. The admin dashboard's
+  **Activity** tab lists the whole feed: the admin can **delete** any item (a
+  shared image or announcement is deleted for good; other items are hidden from
+  the feed while the underlying friendship, chat or quiz attempt is kept) and
+  **block** any member involved for a chosen number of hours or days (up to
+  365), with a reason shown to them. A blocked member is signed out of open
+  tabs immediately; blocks can be lifted early from the same tab.
 - **Friend requests inbox** — a **Requests** view shows how many friend
   requests you've received and from whom, lets you open each requester's
   profile, and accept or decline. A live badge in the sidebar shows the count.

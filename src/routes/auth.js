@@ -196,7 +196,7 @@ router.post('/login', authLimiter, (req, res) => {
   if (user.suspended_until && user.suspended_until > Date.now()) {
     const until = new Date(user.suspended_until).toLocaleString();
     return res.status(403).json({
-      error: `Your account is suspended until ${until}.`,
+      error: `Your account is suspended until ${until}.${user.suspended_reason ? ` Reason: ${user.suspended_reason}` : ''}`,
       suspended: true,
       suspendedUntil: user.suspended_until,
     });

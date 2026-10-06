@@ -548,6 +548,7 @@
           <div style="font-size:40px">⛔</div>
           <h2>Account suspended</h2>
           <p class="auth-sub">${esc((data && data.error) || 'Your account is temporarily suspended.')}</p>
+          ${data && data.reason ? `<p class="hint">Reason: ${esc(data.reason)}</p>` : ''}
           ${until ? `<p class="hint">Access returns on <b>${esc(until)}</b>.</p>` : ''}
           <button class="ghost" id="suspLogout" style="margin-top:14px">Log out</button>
         </div>
@@ -3236,7 +3237,7 @@
     });
 
     // My account was just suspended (e.g. mass-reported) — show the notice.
-    s.on('account:suspended', (e) => { showSuspendedScreen({ suspended: true, suspendedUntil: e && e.until, error: 'Your account has been suspended.' }); });
+    s.on('account:suspended', (e) => { showSuspendedScreen({ suspended: true, suspendedUntil: e && e.until, error: 'Your account has been suspended.', reason: e && e.reason }); });
 
     s.on('connect_error', () => { /* auth or network issue; UI still works for browsing */ });
   }

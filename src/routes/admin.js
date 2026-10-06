@@ -11,7 +11,8 @@ const rateLimit = require('express-rate-limit');
 const db = require('../db');
 const config = require('../config');
 const { sendAdminResetLink, smtpReady } = require('../mail');
-const { isOnline, broadcastNotify } = require('../socket');
+const { isOnline, broadcastNotify, disconnectUser, notifyUser } = require('../socket');
+const { buildFeed } = require('./events');
 const { leaderboards } = require('../points');
 const { QUIZ_TYPES } = require('../quizTypes');
 const { isValidCategory } = require('../quizCategories');
@@ -233,6 +234,93 @@ router.put('/users/:id/profile', requireAdmin, imageUpload.single('avatar'), (re
   const out = saveProfile(id, req.body, req.file);
   if (out.error) return res.status(400).json({ error: out.error });
   res.json({ profile: out.profile });
+});
+
+/* ---------------- Recent Activity moderation ---------------- */
+
+// Suspension state for a feed participant (null for announcements).
+function withBlockState(u) {
+  if (!u) return null;
+  const row = db.prepare('SELECT suspended_until, suspended_reason FROM users WHERE id = ?').get(u.id);
+  const until = row && row.suspended_until > Date.now() ? row.suspended_until : null;
+  return { id: u.id, username: u.username, displayName: u.displayName, avatar: u.avatar,
+    blockedUntil: until, blockedReason: until ? row.suspended_reason || null : null };
+}
+
+// GET /api/admin/activity — the Recent Activity feed as members see it, plus
+// everyone currently blocked.
+router.get('/activity', requireAdmin, (req, res) => {
+  const events = buildFeed(null).map((ev) => ({
+    id: ev.id, type: ev.type, at: ev.at, icon: ev.icon, title: ev.title || null,
+    text: ev.text, image: ev.image || null,
+    actor: withBlockState(ev.actor), target: withBlockState(ev.target),
+  }));
+  const blocked = db.prepare(
+    `SELECT u.id, u.username, COALESCE(NULLIF(p.display_name, ''), u.username) AS display_name,
+            u.suspended_until, u.suspended_reason
+       FROM users u LEFT JOIN profiles p ON p.user_id = u.id
+      WHERE u.suspended_until > ? ORDER BY u.suspended_until`
+  ).all(Date.now()).map((r) => ({
+    id: r.id, username: r.username, displayName: r.display_name,
+    blockedUntil: r.suspended_until, blockedReason: r.suspended_reason || null,
+  }));
+  res.json({ events, blocked });
+});
+
+// DELETE /api/admin/activity/:id — remove one item from Recent Activity.
+// A shared image (and its file) or an announcement is deleted outright; any
+// other item is built from live data (a friendship, a chat, a quiz attempt…),
+// which stays — the item is just hidden from the feed (see hidden_activities).
+router.delete('/activity/:id', requireAdmin, (req, res) => {
+  const id = String(req.params.id);
+  const ev = buildFeed(null).find((e) => e.id === id);
+  if (!ev) return res.status(404).json({ error: 'That activity is no longer in the feed.' });
+  const m = /^(post|admin)-(\d+)$/.exec(id);
+  if (m && m[1] === 'post') {
+    const row = db.prepare('SELECT image FROM activity_posts WHERE id = ?').get(m[2]);
+    db.prepare('DELETE FROM activity_posts WHERE id = ?').run(m[2]);
+    if (row) removeUpload(row.image);
+  } else if (m && m[1] === 'admin') {
+    db.prepare('DELETE FROM admin_events WHERE id = ?').run(m[2]);
+  } else {
+    db.prepare(
+      `INSERT INTO hidden_activities (event_id, hidden_up_to, created_at) VALUES (?, ?, ?)
+       ON CONFLICT(event_id) DO UPDATE SET hidden_up_to = excluded.hidden_up_to`
+    ).run(id, ev.at, Date.now());
+  }
+  res.json({ ok: true });
+});
+
+const MAX_BLOCK_HOURS = 365 * 24;
+
+// POST /api/admin/users/:id/block  { amount, unit: 'hours' | 'days', reason }
+// Suspends the member for that long (replacing any current suspension): they
+// can't use the app, and their open sessions are cut off right away.
+router.post('/users/:id/block', requireAdmin, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  const b = req.body || {};
+  const amount = Number(b.amount);
+  const hours = b.unit === 'days' ? amount * 24 : b.unit === 'hours' ? amount : NaN;
+  if (!Number.isInteger(amount) || amount < 1 || !(hours <= MAX_BLOCK_HOURS)) {
+    return res.status(400).json({ error: 'Block for a whole number of hours or days, up to 365 days.' });
+  }
+  const reason = String(b.reason || '').trim().slice(0, 200) || 'Blocked by admin';
+  const until = Date.now() + hours * 3600 * 1000;
+  db.prepare('UPDATE users SET suspended_until = ?, suspended_reason = ? WHERE id = ?').run(until, reason, id);
+  // Show the "Account suspended" notice in their open tabs, then cut them off.
+  notifyUser(id, 'account:suspended', { until, reason });
+  setTimeout(() => disconnectUser(id), 1000).unref();
+  res.json({ ok: true, blockedUntil: until });
+});
+
+// DELETE /api/admin/users/:id/block — lift a block / suspension early.
+router.delete('/users/:id/block', requireAdmin, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const info = db.prepare('UPDATE users SET suspended_until = NULL, suspended_reason = NULL WHERE id = ?').run(id);
+  if (!info.changes) return res.status(404).json({ error: 'User not found.' });
+  res.json({ ok: true });
 });
 
 // DELETE /api/admin/users/:id — remove a user (cascades to their data).

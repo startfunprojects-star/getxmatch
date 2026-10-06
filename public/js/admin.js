@@ -357,6 +357,7 @@
     ['polls', 'Polls'],
     ['blogs', 'Blogs'],
     ['events', 'Recent Events'],
+    ['activity', 'Activity'],
     ['ads', 'Ads'],
     ['highway', 'Highway'],
     ['seo', 'Site SEO'],
@@ -406,6 +407,7 @@
     if (tab === 'polls') return renderPollsTab();
     if (tab === 'blogs') return renderBlogsTab();
     if (tab === 'events') return renderEventsTab();
+    if (tab === 'activity') return renderActivityTab();
     if (tab === 'ads') return renderAdsTab();
     if (tab === 'highway') return renderHighwayTab();
     if (tab === 'seo') return renderSeoTab();
@@ -1464,6 +1466,127 @@
   /* ==================================================================
      Recent Events tab (admin-curated announcements)
   ================================================================== */
+  /* ---------- Activity: moderate the Recent Activity feed ---------- */
+  let activityData = { events: [], blocked: [] };
+
+  async function renderActivityTab() {
+    const host = tabHost();
+    host.innerHTML = `
+      <div class="admin-card" id="blockedCard"></div>
+      <div class="admin-card">
+        <h2>Recent Activity</h2>
+        <p class="count">Everything members see on the Recent Activity feed. <strong>Delete</strong> removes an item: a shared image or announcement is deleted for good; other items (friendships, chats, quiz attempts…) are only taken off the feed — the underlying friendship, chat or attempt is kept, and a chat or status shows up again if it continues. <strong>Block</strong> suspends a member for the hours or days you choose: they're signed out of the app straight away and can't use it until the block ends.</p>
+        <div id="activityList" class="count">Loading…</div>
+        <div id="activityPager"></div>
+      </div>`;
+    await loadActivity();
+  }
+
+  async function loadActivity() {
+    try { activityData = await api.get('/api/admin/activity'); }
+    catch (e) {
+      if (e.status === 401) return renderLogin(true);
+      const box = document.getElementById('activityList');
+      if (box) box.textContent = e.message;
+      return;
+    }
+    paintBlocked();
+    paintActivity();
+  }
+
+  function paintBlocked() {
+    const box = document.getElementById('blockedCard');
+    if (!box) return;
+    const rows = activityData.blocked || [];
+    box.innerHTML = `<h2>Blocked members</h2>${rows.length ? '' : '<p class="count">No one is blocked right now.</p>'}`;
+    rows.forEach((u) => {
+      const item = el(`
+        <div class="admin-item act-blocked">
+          <div><strong>${esc(u.displayName)}</strong> <span class="pill">@${esc(u.username)}</span>
+            <div class="count">Blocked until ${esc(fmtDate(u.blockedUntil))}${u.blockedReason ? ` · ${esc(u.blockedReason)}` : ''}</div></div>
+          <button class="ghost small">Unblock</button>
+        </div>`);
+      item.querySelector('button').addEventListener('click', async () => {
+        if (!confirm(`Unblock @${u.username} now?`)) return;
+        try { await api.del('/api/admin/users/' + u.id + '/block'); loadActivity(); } catch (e) { alert(e.message); }
+      });
+      box.appendChild(item);
+    });
+  }
+
+  // "@user" chip with a Block / Unblock control and an inline duration form.
+  function participantEl(u) {
+    const blocked = !!u.blockedUntil;
+    const wrap = el(`
+      <div class="act-user">
+        <span class="pill">@${esc(u.username)}</span>
+        ${blocked ? `<span class="act-badge" title="${esc(u.blockedReason || '')}">⛔ blocked until ${esc(fmtDate(u.blockedUntil))}</span>` : ''}
+        <button class="${blocked ? 'ghost' : 'danger'} small" data-toggle>${blocked ? 'Unblock' : 'Block'}</button>
+      </div>`);
+    wrap.querySelector('[data-toggle]').addEventListener('click', async () => {
+      if (blocked) {
+        if (!confirm(`Unblock @${u.username} now?`)) return;
+        try { await api.del('/api/admin/users/' + u.id + '/block'); loadActivity(); } catch (e) { alert(e.message); }
+        return;
+      }
+      if (wrap.querySelector('.act-block-form')) return;
+      const form = el(`
+        <div class="act-block-form">
+          <span>Block @${esc(u.username)} for</span>
+          <input type="number" min="1" step="1" value="1" data-amount />
+          <select data-unit><option value="hours">hours</option><option value="days" selected>days</option></select>
+          <input type="text" maxlength="200" placeholder="Reason (shown to them)" data-reason />
+          <button class="danger small" data-go>Block</button>
+          <button class="ghost small" data-cancel>Cancel</button>
+        </div>`);
+      form.querySelector('[data-cancel]').addEventListener('click', () => form.remove());
+      form.querySelector('[data-go]').addEventListener('click', async () => {
+        const amount = Number(form.querySelector('[data-amount]').value);
+        const unit = form.querySelector('[data-unit]').value;
+        const reason = form.querySelector('[data-reason]').value.trim();
+        try { await api.post('/api/admin/users/' + u.id + '/block', { amount, unit, reason }); loadActivity(); }
+        catch (e) { alert(e.message); }
+      });
+      wrap.appendChild(form);
+      form.querySelector('[data-amount]').focus();
+    });
+    return wrap;
+  }
+
+  function paintActivity() {
+    const box = document.getElementById('activityList');
+    if (!box) return;
+    const events = activityData.events || [];
+    if (!events.length) { box.innerHTML = 'No activity yet.'; return; }
+    const { slice, pager } = pageFor('activity', events, paintActivity);
+    box.innerHTML = '';
+    slice.forEach((ev) => {
+      const item = el(`
+        <div class="admin-item act-item">
+          <div class="act-icon">${ev.icon || '•'}</div>
+          <div class="act-main">
+            ${ev.title ? `<strong>${esc(ev.title)}</strong>` : ''}
+            <div>${esc(ev.text)}</div>
+            ${ev.image ? `<a href="${esc(ev.image)}" target="_blank" rel="noopener"><img class="act-thumb" src="${esc(ev.image)}" alt="shared image" loading="lazy" /></a>` : ''}
+            <div class="count">${esc(fmtDate(ev.at))}</div>
+            <div class="act-users"></div>
+          </div>
+          <button class="danger small" data-del>Delete</button>
+        </div>`);
+      const users = item.querySelector('.act-users');
+      [ev.actor, ev.target].filter(Boolean).forEach((u) => users.appendChild(participantEl(u)));
+      item.querySelector('[data-del]').addEventListener('click', async () => {
+        const hard = /^(post|admin)-/.test(ev.id);
+        if (!confirm(hard ? 'Delete this item permanently?' : 'Remove this item from Recent Activity? (The underlying friendship, chat or quiz attempt is kept.)')) return;
+        try { await api.del('/api/admin/activity/' + encodeURIComponent(ev.id)); loadActivity(); }
+        catch (e) { alert(e.message); }
+      });
+      box.appendChild(item);
+    });
+    const ph = document.getElementById('activityPager');
+    if (ph) { ph.innerHTML = ''; if (pager) ph.appendChild(pager); }
+  }
+
   async function renderEventsTab() {
     const host = tabHost();
     host.innerHTML = '<div class="admin-card" id="eventEditor"></div><div class="admin-card"><h2>Curated events</h2><p class="count">These appear on the Recent Events feed alongside automatic activity (friendships, chats, discussions, quiz attempts).</p><div id="eventList" class="count">Loading…</div></div>';

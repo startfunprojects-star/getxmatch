@@ -248,8 +248,13 @@ function buildFeed(viewerId, opts) {
       });
     });
 
-  events.sort((a, b) => b.at - a.at);
-  return events.slice(0, 100);
+  // Drop what the admin removed from the feed.
+  const hidden = new Map(db.prepare('SELECT event_id, hidden_up_to FROM hidden_activities').all()
+    .map((h) => [h.event_id, h.hidden_up_to]));
+  const visible = events.filter((ev) => !(hidden.has(ev.id) && ev.at <= hidden.get(ev.id)));
+
+  visible.sort((a, b) => b.at - a.at);
+  return visible.slice(0, 100);
 }
 
 // GET /api/events — merged recent activity for the signed-in user.
@@ -258,3 +263,4 @@ router.get('/', requireAuth, (req, res) => {
 });
 
 module.exports = router;
+module.exports.buildFeed = buildFeed;

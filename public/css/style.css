@@ -1681,3 +1681,17 @@ button.primary, .chat-cta { letter-spacing: .01em; }
   .cam-modal { padding: 0; }
   .cam-shell { height: 100dvh; border-radius: 0; }
 }
+
+/* ---------- Admin: Activity moderation ---------- */
+.act-item { display: flex; align-items: flex-start; gap: 12px; }
+.act-icon { font-size: 20px; width: 32px; text-align: center; flex: none; }
+.act-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.act-thumb { max-width: 160px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border); margin-top: 4px; }
+.act-users { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.act-user { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.act-badge { font-size: 12px; font-weight: 600; color: var(--danger); }
+.act-block-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border-radius: 10px; background: var(--bg-3); border: 1px solid var(--border); }
+.act-block-form input[type=number] { width: 80px; }
+.act-block-form input[type=text] { flex: 1; min-width: 180px; width: auto; }
+.act-block-form select { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.act-blocked { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

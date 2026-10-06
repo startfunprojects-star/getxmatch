@@ -968,6 +968,18 @@ db.exec(`
   if (!cols.includes('category')) db.exec('ALTER TABLE quizzes ADD COLUMN category TEXT;');
 })();
 
+// --- Recent Activity items the admin removed. The feed is built from live
+// data (friendships, chats, quiz attempts, …), so most items are hidden rather
+// than deleted: an item is hidden while its timestamp is <= hidden_up_to, so a
+// conversation or status that continues later shows up again.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS hidden_activities (
+    event_id     TEXT PRIMARY KEY,
+    hidden_up_to INTEGER NOT NULL,
+    created_at   INTEGER NOT NULL
+  );
+`);
+
 // --- Migration: academic background moves to signup. users carries the
 // minimum education, stream and working status (required for new signups);
 // email_otps holds them until the code is verified. The old optional
