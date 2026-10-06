@@ -15,6 +15,7 @@ const db = require('../db');
 const config = require('../config');
 const { requireAuth } = require('../auth');
 const { imageUpload } = require('../upload');
+const { nsfwGuard } = require('../nsfw');
 const { friendState } = require('../profileData');
 const { areBlocked, ignoredIds } = require('../relations');
 const { broadcastHighway, notifyHighwayEvent, broadcastLeaderboardChange } = require('../socket');
@@ -123,7 +124,7 @@ router.get('/', requireAuth, (req, res) => {
 // POST /api/highway — create a post (text and/or image), then prune to 100. An
 // optional `originPeer` links a picture shared straight from a chat back to that
 // conversation, so later likes/comments surface there.
-router.post('/', requireAuth, postLimiter, imageUpload.single('image'), (req, res) => {
+router.post('/', requireAuth, postLimiter, imageUpload.single('image'), nsfwGuard, (req, res) => {
   const body = String((req.body && req.body.body) || '').trim().slice(0, BODY_MAX);
   const image = req.file ? req.file.filename : null;
   if (!body && !image) {

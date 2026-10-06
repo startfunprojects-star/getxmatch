@@ -10,6 +10,7 @@ const { Server } = require('socket.io');
 const config = require('./src/config');
 const { initSocket } = require('./src/socket');
 const { startDigestScheduler } = require('./src/digest');
+const nsfw = require('./src/nsfw');
 
 const authRoutes = require('./src/routes/auth');
 const profileRoutes = require('./src/routes/profile');
@@ -120,6 +121,7 @@ const io = new Server(server, {
   maxHttpBufferSize: config.maxChatFileBytes + 1024 * 1024, // room for file relay + metadata
 });
 initSocket(io);
+nsfw.start(); // load the NSFW image classifier in its worker thread
 startDigestScheduler(); // daily offline-activity email digest
 
 server.listen(config.port, () => {

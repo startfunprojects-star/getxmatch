@@ -8,6 +8,7 @@ const db = require('../db');
 const config = require('../config');
 const { requireAuth } = require('../auth');
 const { imageUpload, videoUpload } = require('../upload');
+const { nsfwGuard } = require('../nsfw');
 const { videoDuration } = require('../videoDuration');
 const { buildProfile } = require('../profileData');
 const { saveProfile } = require('../profileWrite');
@@ -39,7 +40,7 @@ router.get('/:username', requireAuth, (req, res) => {
 });
 
 // PUT /api/profile — create or update the profile (+ optional avatar)
-router.put('/', requireAuth, imageUpload.single('avatar'), (req, res) => {
+router.put('/', requireAuth, imageUpload.single('avatar'), nsfwGuard, (req, res) => {
   const out = saveProfile(req.user.id, req.body, req.file);
   if (out.error) return res.status(400).json({ error: out.error });
   if (req.file) shareUploadToHighway(req.user.id, req.file.filename, 'New profile picture');
@@ -75,7 +76,7 @@ function galleryItem(row) {
 }
 
 // POST /api/profile/gallery — add a gallery photo (no limit on how many)
-router.post('/gallery', requireAuth, imageUpload.single('photo'), (req, res) => {
+router.post('/gallery', requireAuth, imageUpload.single('photo'), nsfwGuard, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded.' });
 
   const hasProfile = db.prepare('SELECT user_id FROM profiles WHERE user_id = ?').get(req.user.id);
@@ -155,7 +156,7 @@ router.delete('/gallery/:id', requireAuth, (req, res) => {
 // POST /api/profile/gifs — add a GIF (max 100 per user). GIF files only, so the
 // collection stays true to its name (and animation is preserved). An optional
 // short caption describes the feeling.
-router.post('/gifs', requireAuth, imageUpload.single('gif'), (req, res) => {
+router.post('/gifs', requireAuth, imageUpload.single('gif'), nsfwGuard, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No GIF uploaded.' });
 
   if (req.file.mimetype !== 'image/gif') {
@@ -217,7 +218,7 @@ router.put('/gifs/visibility', requireAuth, (req, res) => {
 });
 
 // POST /api/profile/buffer — add an image to the profile picture buffer (max 10)
-router.post('/buffer', requireAuth, imageUpload.single('photo'), (req, res) => {
+router.post('/buffer', requireAuth, imageUpload.single('photo'), nsfwGuard, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded.' });
 
   const hasProfile = db.prepare('SELECT user_id FROM profiles WHERE user_id = ?').get(req.user.id);

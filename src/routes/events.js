@@ -19,6 +19,7 @@ const config = require('../config');
 const { requireAuth } = require('../auth');
 const { friendState } = require('../profileData');
 const { imageUpload } = require('../upload');
+const { nsfwGuard } = require('../nsfw');
 const { broadcastActivity } = require('../socket');
 const { shareUploadToHighway } = require('../highwayShare');
 const { acceptedText, sentText, relEmoji } = require('../relationships');
@@ -67,7 +68,7 @@ router.get('/public', (req, res) => {
 
 // POST /api/events/activity-image — share an image/GIF onto the Recent Activity
 // feed. Saved to disk and shown to everyone as a thumbnail (live + on reload).
-router.post('/activity-image', requireAuth, imageUpload.single('image'), (req, res) => {
+router.post('/activity-image', requireAuth, imageUpload.single('image'), nsfwGuard, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded.' });
   // Hard 5 MB cap for activity images, regardless of the global upload limit.
   if (req.file.size > ACTIVITY_IMG_MAX_BYTES) {

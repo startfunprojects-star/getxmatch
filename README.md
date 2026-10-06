@@ -52,6 +52,13 @@ self-host on a single VPS: no external database or storage service required.
 - **Everything on a profile is publicly visible except the email address**,
   which is never returned by the profile or browse APIs — it's only visible to
   the account owner and the admin dashboard.
+- **NSFW image filter** — every image a member uploads (profile picture,
+  gallery photo, picture buffer, GIF, Recent Activity and Highway images) is
+  checked by [NSFWJS](https://github.com/infinitered/nsfwjs) running locally in
+  a worker thread (`src/nsfw.js`); images that look pornographic or sexually
+  explicit are deleted and rejected. No image is sent to an outside service.
+  Tune or disable it with `NSFW_FILTER`, `NSFW_THRESHOLD` and
+  `NSFW_SEXY_THRESHOLD`. Videos (reels) are not scanned.
 - **Age wall** — members under 18 (by date of birth) and adults can't contact
   each other: no friend or group requests, chat, gifts, follows, ratings,
   comments or reactions between them, and their profiles show
