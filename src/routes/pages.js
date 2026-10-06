@@ -21,6 +21,7 @@ const hw = require('../highway');
 const ogImage = require('../ogImage');
 const { quizStats, timeLabel, fmtDuration } = require('../quizStats');
 const { typeLabel, isShareable, isOpen } = require('../quizTypes');
+const { categoryLabel } = require('../quizCategories');
 const { ageFromDob } = require('../profileFields');
 const { buildProfile } = require('../profileData');
 const { renderProfileQr } = require('../qrCard');
@@ -175,6 +176,8 @@ function canonicalCheck(base, req, id, slugSource) {
 // inline scripts); the styles are inline (inline styles are allowed).
 const ATTEMPT_SCRIPT = '<script src="/js/attempt.js" defer></script>';
 const ATTEMPT_STYLE = `<style>
+.gx-type.gx-cat { color: #a16207; border-color: color-mix(in srgb, #a16207 45%, transparent); margin-right: 6px; }
+.gx-type { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 2px 9px; margin: 0 0 8px; }
 .gx-attempt { margin: 18px 0 8px; }
 .gx-opts { display: flex; flex-direction: column; gap: 10px; }
 .gx-opt { position: relative; overflow: hidden; display: block; width: 100%; text-align: left;
@@ -311,6 +314,7 @@ function quizStatsHtml(st) {
 }
 
 const QUIZ_CARD_STYLE = `<style>
+.gx-type.gx-cat { color: #a16207; border-color: color-mix(in srgb, #a16207 45%, transparent); margin-right: 6px; }
 .gx-type { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 2px 9px; margin: 0 0 8px; }
 .gx-stats { list-style: none; margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .gx-stats li { background: var(--bg3); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -325,16 +329,16 @@ const QUIZ_CARD_STYLE = `<style>
 </style>`;
 
 router.get('/quizzes', (req, res) => {
-  const rows = db.prepare('SELECT id, title, description, questions, negative_marks, type, seo, updated_at FROM quizzes ORDER BY created_at DESC').all();
+  const rows = db.prepare('SELECT id, title, description, questions, negative_marks, type, category, seo, updated_at FROM quizzes ORDER BY created_at DESC').all();
   const items = rows.map((r) => {
     const s = parseJson(r.seo, {});
-    return { id: r.id, title: r.title, description: r.description, type: isShareable(r.type) ? typeLabel(r.type) : '', stats: quizStats(r), path: itemPath('quizzes', r.id, s.slug || r.title) };
+    return { id: r.id, title: r.title, description: r.description, type: isShareable(r.type) ? typeLabel(r.type) : '', category: categoryLabel(r.category), stats: quizStats(r), path: itemPath('quizzes', r.id, s.slug || r.title) };
   });
 
   const cards = items.length
     ? joinWithInlineAds(items.map((it) => `
       <a class="card" href="${escAttr(it.path)}">
-        ${it.type ? `<span class="gx-type">${esc(it.type)}</span>` : ''}
+        ${it.category ? `<span class="gx-type gx-cat">${esc(it.category)}</span>` : ''}${it.type ? `<span class="gx-type">${esc(it.type)}</span>` : ''}
         <h3>${esc(it.title)}</h3>
         ${it.description ? `<p class="excerpt">${esc(summarize(it.description, 160))}</p>` : ''}
         ${quizStatsHtml(it.stats)}
@@ -364,7 +368,7 @@ ${cards}`;
 });
 
 router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
-  const row = db.prepare('SELECT id, title, description, questions, negative_marks, type, seo, created_at, updated_at FROM quizzes WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, title, description, questions, negative_marks, type, category, seo, created_at, updated_at FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return notFound(res, req.path.split('/')[1].replace(/s$/,''));
   const compat = isShareable(row.type); // compatibility or open compatibility
   const open = isOpen(row.type);
@@ -424,7 +428,7 @@ router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
         : 'Register or sign in to attempt this quiz.');
   const bodyHtml = `
 ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Quizzes', path: '/quizzes' }, { name: row.title, path: chk.canonical }])}
-${compat ? `<span class="gx-type">${esc(typeLabel(row.type))}</span>` : ''}
+${row.category ? `<span class="gx-type gx-cat">${esc(categoryLabel(row.category))}</span> ` : ''}${compat ? `<span class="gx-type">${esc(typeLabel(row.type))}</span>` : ''}
 <h1>${esc(row.title)}</h1>
 ${row.description ? `<p class="lede">${esc(row.description)}</p>` : ''}
 ${ATTEMPT_STYLE}
@@ -439,6 +443,7 @@ ${hasQuestions ? `
       <li>Pressing Esc, switching tabs or apps, minimising the window, connecting another display or using remote-control/automation tools counts as leaving the quiz.</li>
       <li>The first time, you get a warning and return to full screen.</li>
       <li><strong>The second time, the quiz stops, you can't attempt it again for 24 hours and 10 points are deducted from your score.</strong></li>
+      <li><strong>You can retake a quiz, but every reattempt costs 10 points as soon as you start it</strong> (your best attempt still counts).</li>
       ${open ? `<li>This is an open compatibility quiz: when you finish, you get a link to share that stays active for 24 hours. Any registered member can answer it — you see your compatibility with each of them, and each of them sees only their own result with you. You earn 3 points for every member who answers, and they earn 1.</li>` : ''}
       ${compat && !open ? `<li>This is a compatibility quiz: when you finish, you get a link to share that stays active for 24 hours. When a signed-in member answers it, you both see your compatibility results — you earn 10 points and they earn 5.</li>` : ''}
     </ul>

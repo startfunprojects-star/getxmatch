@@ -6,22 +6,23 @@
 
 const express = require('express');
 
-const { rankedUsers } = require('../points');
+const { leaderboards } = require('../points');
 const { requireAuth } = require('../auth');
 const { friendState } = require('../profileData');
 
 const router = express.Router();
 
-// GET /api/leaderboard — ranked users (excludes the viewer's own row from
-// friend actions but still shows them, flagged isMe).
+// GET /api/leaderboard — every board (see leaderboards() in src/points.js).
+// The viewer's own rows are flagged isMe. `leaderboard` is the overall board,
+// kept for older clients.
 router.get('/', requireAuth, (req, res) => {
   const me = req.user.id;
-  const leaderboard = rankedUsers().map((row) => ({
+  const boards = leaderboards((row) => ({
     ...row,
     isMe: row.id === me,
     friendState: friendState(row.id, me),
   }));
-  res.json({ leaderboard });
+  res.json({ boards, leaderboard: boards[0].rows });
 });
 
 module.exports = router;

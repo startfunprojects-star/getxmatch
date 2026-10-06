@@ -15,6 +15,7 @@ const router = express.Router();
 
 const { MATCH_TTL_MS, typeLabel, isShareable, isOpen } = require('../quizTypes');
 const { WEIGHTS } = require('../points'); // shared links live for 24 hours
+const { categoryLabel } = require('../quizCategories');
 
 // Best display name for a logged-in user: their profile name, else @username.
 function userDisplayName(userId) {
@@ -45,7 +46,7 @@ function parseJson(raw, fallback) {
 // GET /api/content/quizzes — list quizzes.
 router.get('/quizzes', requireAuth, (req, res) => {
   const rows = db
-    .prepare('SELECT id, title, description, questions, negative_marks, type, created_at FROM quizzes ORDER BY created_at DESC')
+    .prepare('SELECT id, title, description, questions, negative_marks, type, category, created_at FROM quizzes ORDER BY created_at DESC')
     .all();
 
   const quizzes = rows.map((r) => {
@@ -59,6 +60,8 @@ router.get('/quizzes', requireAuth, (req, res) => {
       matches,
       type: r.type,
       typeLabel: typeLabel(r.type),
+      category: r.category || null,
+      categoryLabel: categoryLabel(r.category),
       // shareable = finishing gives a link (badge shown); open = anyone
       // registered can answer that link.
       shareable: isShareable(r.type),
@@ -95,9 +98,33 @@ const PROCTOR_MAX_STRIKES = 2;
 const PROCTOR_LOCK_MS = 24 * 60 * 60 * 1000;
 const PROCTOR_PENALTY = 10;
 const PROCTOR_SESSION_MS = 2 * 60 * 60 * 1000;
+// Starting a quiz again after any earlier attempt (finished, stopped or
+// abandoned) costs this many points, straight away. Resuming an unfinished
+// session is free.
+const REATTEMPT_PENALTY = 10;
 // One user action (e.g. Alt+Tab) fires blur + visibility + fullscreen events
 // together; strikes closer than this are treated as the same incident.
 const PROCTOR_GRACE_MS = 1500;
+
+// The member's live (resumable) session for a quiz, if any.
+function activeSession(userId, quizId) {
+  return db
+    .prepare(
+      `SELECT * FROM quiz_proctor_sessions
+        WHERE user_id = ? AND quiz_id = ? AND status = 'active' AND expires_at > ?
+        ORDER BY created_at DESC LIMIT 1`
+    )
+    .get(userId, quizId, Date.now());
+}
+
+// True if the member has attempted this quiz before (so starting a new
+// session is a reattempt).
+function attemptedBefore(userId, quizId) {
+  return !!(
+    db.prepare('SELECT 1 FROM quiz_attempts WHERE user_id = ? AND quiz_id = ? LIMIT 1').get(userId, quizId) ||
+    db.prepare('SELECT 1 FROM quiz_proctor_sessions WHERE user_id = ? AND quiz_id = ? LIMIT 1').get(userId, quizId)
+  );
+}
 
 function activeLockout(userId, quizId) {
   const row = db.prepare('SELECT until FROM quiz_lockouts WHERE user_id = ? AND quiz_id = ?').get(userId, quizId);
@@ -145,6 +172,9 @@ router.get('/quizzes/:id/proctor', requireAuth, (req, res) => {
   const quizId = Number(req.params.id);
   res.json({
     lockedUntil: activeLockout(req.user.id, quizId),
+    // Starting now would cost REATTEMPT_PENALTY points.
+    reattempt: !activeSession(req.user.id, quizId) && attemptedBefore(req.user.id, quizId),
+    reattemptPenalty: REATTEMPT_PENALTY,
     maxStrikes: PROCTOR_MAX_STRIKES,
     penalty: PROCTOR_PENALTY,
     lockHours: PROCTOR_LOCK_MS / 3600000,
@@ -162,14 +192,14 @@ router.post('/quizzes/:id/proctor/start', requireAuth, (req, res) => {
   const questions = parseJson(row.questions, []);
 
   const now = Date.now();
-  let sess = db
-    .prepare(
-      `SELECT * FROM quiz_proctor_sessions
-        WHERE user_id = ? AND quiz_id = ? AND status = 'active' AND expires_at > ?
-        ORDER BY created_at DESC LIMIT 1`
-    )
-    .get(req.user.id, row.id, now);
+  let sess = activeSession(req.user.id, row.id);
+  let charged = 0;
   if (!sess) {
+    if (attemptedBefore(req.user.id, row.id)) {
+      charged = REATTEMPT_PENALTY;
+      db.prepare('INSERT INTO quiz_penalties (user_id, quiz_id, points, reason, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(req.user.id, row.id, REATTEMPT_PENALTY, 'Quiz reattempt', now);
+    }
     // The first question's clock starts now.
     sess = { token: crypto.randomBytes(18).toString('base64url'), strikes: 0, q_index: 0, q_started_at: now, points: 0 };
     db.prepare(
@@ -177,7 +207,9 @@ router.post('/quizzes/:id/proctor/start', requireAuth, (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?)`
     ).run(sess.token, row.id, req.user.id, now, now + PROCTOR_SESSION_MS, now);
   }
+  if (charged) broadcastLeaderboardChange();
   res.json({
+    reattemptCharged: charged,
     session: sess.token,
     strikes: sess.strikes,
     maxStrikes: PROCTOR_MAX_STRIKES,

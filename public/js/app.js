@@ -5477,6 +5477,7 @@
       const url = '/quizzes/' + q.id;
       const card = el(`
         <div class="tile quiz-tile-link" role="link" tabindex="0" title="Open this quiz in a new tab">
+          ${q.categoryLabel ? `<span class="quiz-type quiz-cat">${esc(q.categoryLabel)}</span>` : ''}
           ${q.shareable ? `<span class="quiz-type">${esc(q.typeLabel)}</span>` : ''}
           <h3>${esc(q.title)}</h3>
           <p class="rich">${esc(q.description || '')}</p>
@@ -5749,43 +5750,82 @@
   /* ---------- Leaderboard ---------- */
   async function renderLeaderboard() {
     const main = openMainView();
-    main.appendChild(sectionShell('Leaderboard', 'Ranked by points — the more points, the higher the rank. Earn points from ratings, Highway likes, friends, quizzes, polls (5 per poll), compatibility links (10 for sharing, 5 for answering) and followers (each follower pays your follow fee, you earn double; following someone costs their fee). Send a friend request to anyone.'));
+    main.appendChild(sectionShell('Leaderboard', 'Kings & Queens ranks everyone by overall points. The four quiz boards rank members by the points they earned in that category’s quizzes. Points can go below zero: a stopped quiz and every quiz reattempt cost 10 points. Earn points from quizzes, ratings, Highway likes, friends, polls (5 per poll), compatibility links (10 for sharing, 5 for answering) and followers.'));
     const body = main.querySelector('#sectionBody');
-    let rows;
-    try { rows = (await api.get('/api/leaderboard')).leaderboard; }
-    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
-    if (!rows.length) { body.innerHTML = '<div class="empty-main">No ranked members yet.</div>'; return; }
+    let boards;
+    try {
+      const out = await api.get('/api/leaderboard');
+      boards = out.boards || [{ id: 'kings_queens', label: 'Kings & Queens', emoji: '👑', description: '', rows: out.leaderboard || [] }];
+    } catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
     body.innerHTML = '';
-    const list = el('<div class="lb-list card"></div>');
-    rows.forEach((r) => {
-      const medal = r.rank === 1 ? '🥇' : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : `#${r.rank}`;
-      const row = el(`
-        <div class="lb-row${r.isMe ? ' me' : ''}">
-          <div class="lb-rank">${medal}</div>
-          <img class="avatar sm" src="${avatarUrl(r.avatar)}" />
-          <div class="lb-id">
-            <div class="name">${esc(r.displayName)}${r.isMe ? ' <span class="pill">you</span>' : ''}</div>
-            <div class="handle">@${esc(r.username)}${r.country ? ' · ' + esc(r.country) : ''}</div>
+
+    if (!boards.some((b) => b.id === state.lbBoard)) state.lbBoard = boards[0].id;
+    const tabs = el('<div class="lb-tabs" role="tablist"></div>');
+    const panel = el('<div></div>');
+    boards.forEach((b) => {
+      const t = el(`<button type="button" role="tab" class="lb-tab${b.id === 'kings_queens' ? ' lb-tab-kq' : ''}">${b.emoji} ${esc(b.label)}</button>`);
+      t.addEventListener('click', () => { state.lbBoard = b.id; paint(); });
+      t.dataset.board = b.id;
+      tabs.appendChild(t);
+    });
+    body.appendChild(tabs);
+    body.appendChild(panel);
+
+    function paint() {
+      const board = boards.find((b) => b.id === state.lbBoard);
+      tabs.querySelectorAll('.lb-tab').forEach((t) => {
+        const on = t.dataset.board === board.id;
+        t.classList.toggle('on', on);
+        t.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      const kq = board.id === 'kings_queens';
+      panel.innerHTML = '';
+      const card = el(`
+        <div class="lb-board card${kq ? ' lb-kq' : ''}">
+          <div class="lb-board-head">
+            <div class="lb-board-emoji">${board.emoji}</div>
+            <div><h3>${esc(board.label)}</h3><div class="hint">${esc(board.description || '')}</div></div>
           </div>
-          <div class="lb-stats">
-            <span title="Average rating">⭐ ${r.ratingAvg || '—'}</span>
-            <span title="Likes received on the Highway">❤️ ${r.likes || 0}</span>
-            <span title="Friends">👥 ${r.friends}</span>
-            <span title="Quizzes">🧠 ${r.quizzes}</span>
-            <span title="Polls voted in">📊 ${r.polls || 0}</span>
-            <span title="Followers">➕ ${r.followers || 0}</span>
-          </div>
-          <div class="lb-score" title="Points${r.penalty ? ` (${r.penalty} deducted for stopped quizzes)` : ''}">${r.points} pts</div>
-          <div class="lb-action"></div>
+          <div class="lb-list"></div>
         </div>
       `);
-      row.querySelector('.lb-id').addEventListener('click', () => showProfile(r.username));
-      row.querySelector('.avatar').addEventListener('click', () => showProfile(r.username));
-      const fb = friendButtonEl(r.username, r.friendState, renderLeaderboard);
-      if (fb) row.querySelector('.lb-action').appendChild(fb);
-      list.appendChild(row);
-    });
-    body.appendChild(list);
+      const list = card.querySelector('.lb-list');
+      if (!board.rows.length) {
+        list.appendChild(el(`<div class="empty-main">${kq ? 'No ranked members yet.' : `No one has points in ${esc(board.label)} yet — take one of its quizzes to be first!`}</div>`));
+      }
+      board.rows.forEach((r) => {
+        const medal = r.rank === 1 ? (kq ? '👑' : '🥇') : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : `#${r.rank}`;
+        const row = el(`
+          <div class="lb-row${r.isMe ? ' me' : ''}${kq && r.rank <= 3 ? ' lb-top' : ''}">
+            <div class="lb-rank">${medal}</div>
+            <img class="avatar sm" src="${avatarUrl(r.avatar)}" />
+            <div class="lb-id">
+              <div class="name">${esc(r.displayName)}${r.isMe ? ' <span class="pill">you</span>' : ''}</div>
+              <div class="handle">@${esc(r.username)}${r.country ? ' · ' + esc(r.country) : ''}</div>
+            </div>
+            <div class="lb-stats">
+              ${kq ? `
+              <span title="Average rating">⭐ ${r.ratingAvg || '—'}</span>
+              <span title="Likes received on the Highway">❤️ ${r.likes || 0}</span>
+              <span title="Friends">👥 ${r.friends}</span>
+              <span title="Quizzes">🧠 ${r.quizzes}</span>
+              <span title="Polls voted in">📊 ${r.polls || 0}</span>
+              <span title="Followers">➕ ${r.followers || 0}</span>` : `
+              <span title="Overall points (Kings &amp; Queens)">👑 ${r.totalPoints} overall</span>`}
+            </div>
+            <div class="lb-score${r.points < 0 ? ' neg' : ''}" title="${kq ? `Overall points${r.penalty ? ` (${r.penalty} deducted for stopped quizzes and reattempts)` : ''}` : `Points in ${esc(board.label)} quizzes`}">${r.points} pts</div>
+            <div class="lb-action"></div>
+          </div>
+        `);
+        row.querySelector('.lb-id').addEventListener('click', () => showProfile(r.username));
+        row.querySelector('.avatar').addEventListener('click', () => showProfile(r.username));
+        const fb = friendButtonEl(r.username, r.friendState, renderLeaderboard);
+        if (fb) row.querySelector('.lb-action').appendChild(fb);
+        list.appendChild(row);
+      });
+      panel.appendChild(card);
+    }
+    paint();
   }
 
   /* ---------- Recent Activity ---------- */

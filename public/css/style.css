@@ -950,6 +950,7 @@ table.users tbody tr:hover { background: var(--bg-3); }
 .tile-meta { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .tile .pill { background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
 .tile button { margin-top: auto; align-self: flex-start; }
+.quiz-type.quiz-cat { color: color-mix(in srgb, var(--gold) 75%, var(--text)); border-color: color-mix(in srgb, var(--gold) 55%, transparent); }
 .quiz-type { align-self: flex-start; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 2px 9px; margin-bottom: 8px; }
 a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100vw - 32px); text-align: center; }
 .quiz-stats { list-style: none; margin: 4px 0 10px; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
@@ -1089,6 +1090,30 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
 .lb-stats { display: flex; gap: 12px; align-items: center; font-size: 13px; color: var(--muted); flex-wrap: wrap; justify-content: flex-end; }
 .lb-score { flex: none; font-weight: 800; color: var(--text); background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
 .lb-action { flex: none; }
+.lb-score.neg { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+
+/* Leaderboard boards: a tab per board; Kings & Queens is picked out in gold. */
+.lb-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.lb-tab {
+  font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  padding: 7px 14px; border-radius: 999px;
+  background: var(--bg-2); color: var(--muted); border: 1px solid var(--border);
+}
+.lb-tab:hover { color: var(--text); border-color: var(--border-strong); }
+.lb-tab.on { background: var(--grad); color: var(--on-accent); border-color: transparent; }
+.lb-tab-kq { color: var(--text); border-color: color-mix(in srgb, var(--gold) 60%, transparent); background: color-mix(in srgb, var(--gold) 12%, var(--bg-2)); }
+.lb-tab-kq.on { background: linear-gradient(135deg, color-mix(in srgb, var(--gold) 85%, #fff), var(--gold)); color: #2a1f05; box-shadow: 0 4px 14px color-mix(in srgb, var(--gold) 35%, transparent); }
+.lb-board-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px 4px; }
+.lb-board-head h3 { margin: 0; font-size: 18px; }
+.lb-board-emoji { font-size: 26px; line-height: 1; }
+.lb-board.lb-kq {
+  border: 1.5px solid color-mix(in srgb, var(--gold) 70%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--gold) 12%, var(--bg-2)), var(--bg-2) 160px);
+  box-shadow: 0 8px 26px color-mix(in srgb, var(--gold) 18%, transparent);
+}
+.lb-kq .lb-board-head h3 { color: color-mix(in srgb, var(--gold) 70%, var(--text)); letter-spacing: .01em; }
+.lb-kq .lb-row.lb-top { background: color-mix(in srgb, var(--gold) 9%, transparent); }
+.lb-kq .lb-row.lb-top .lb-score { border-color: color-mix(in srgb, var(--gold) 60%, transparent); }
 
 /* ---------- Events feed ---------- */
 .feed { display: flex; flex-direction: column; }

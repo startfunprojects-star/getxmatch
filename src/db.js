@@ -960,6 +960,14 @@ db.exec(`
   db.prepare('DELETE FROM message_reactions WHERE emoji = ?').run('😍');
 })();
 
+// --- Migration: quiz categories. Each quiz belongs to one of the categories
+// in src/quizCategories.js (set by the admin); each has its own leaderboard.
+// Older quizzes stay NULL until the admin classifies them.
+(function migrateQuizCategory() {
+  const cols = db.prepare('PRAGMA table_info(quizzes)').all().map((c) => c.name);
+  if (!cols.includes('category')) db.exec('ALTER TABLE quizzes ADD COLUMN category TEXT;');
+})();
+
 // --- Migration: academic background moves to signup. users carries the
 // minimum education, stream and working status (required for new signups);
 // email_otps holds them until the code is verified. The old optional

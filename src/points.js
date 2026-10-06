@@ -2,10 +2,17 @@
 
 // Leaderboard points. Every member earns points from their engagement; the
 // leaderboard ranks strictly by points (highest first). Members with the same
-// points share a rank ("1, 2, 2, 4"). Used by both the member and the admin
-// leaderboard so the two always agree.
+// points share a rank ("1, 2, 2, 4"). Points have no floor: penalties can take
+// a member below zero. Used by both the member and the admin leaderboard so
+// the two always agree.
+//
+// Besides the overall ranking ("Kings & Queens"), each quiz category
+// (src/quizCategories.js) has its own board, ranked by the points earned in
+// that category's quizzes: the best attempt at each quiz, minus the penalties
+// (stopped quizzes, reattempts) taken on them.
 
 const db = require('./db');
+const { QUIZ_CATEGORIES } = require('./quizCategories');
 
 // Points per unit of each activity. Quizzes add the points the admin set on
 // each question the member answered in time (best attempt per quiz).
@@ -113,16 +120,71 @@ function rankedUsers() {
       referrals: r.referrals,
       penalty: r.penalty,
       points,
+      totalPoints: points, // overall points (category boards override `points`)
       score: points, // legacy name
     };
   });
 
-  // Highest points first; ties listed alphabetically but share one rank.
-  scored.sort((a, b) => b.points - a.points || a.displayName.localeCompare(b.displayName));
-  scored.forEach((row, i) => {
-    row.rank = i > 0 && row.points === scored[i - 1].points ? scored[i - 1].rank : i + 1;
-  });
-  return scored;
+  // Per-category quiz points: { userId: { categoryId: points } }.
+  const byCat = new Map();
+  const addCat = (userId, cat, pts) => {
+    if (!byCat.has(userId)) byCat.set(userId, {});
+    const m = byCat.get(userId);
+    m[cat] = (m[cat] || 0) + pts;
+  };
+  for (const r of db.prepare(
+    `SELECT b.user_id, q.category, SUM(b.best) AS pts
+       FROM (SELECT user_id, quiz_id, MAX(score) AS best FROM quiz_attempts GROUP BY user_id, quiz_id) b
+       JOIN quizzes q ON q.id = b.quiz_id
+      WHERE q.category IS NOT NULL
+      GROUP BY b.user_id, q.category`
+  ).all()) addCat(r.user_id, r.category, r.pts);
+  for (const r of db.prepare(
+    `SELECT qp.user_id, q.category, SUM(qp.points) AS pts
+       FROM quiz_penalties qp JOIN quizzes q ON q.id = qp.quiz_id
+      WHERE q.category IS NOT NULL
+      GROUP BY qp.user_id, q.category`
+  ).all()) addCat(r.user_id, r.category, -r.pts);
+  for (const row of scored) row.categoryPoints = byCat.get(row.id) || {};
+
+  return rankBy(scored, (r) => r.points);
 }
 
-module.exports = { rankedUsers, WEIGHTS };
+// Sort rows by `pointsOf` (highest first; ties alphabetical) and assign shared
+// ranks. Sets row.rank and returns the array.
+function rankBy(rows, pointsOf) {
+  rows.sort((a, b) => pointsOf(b) - pointsOf(a) || a.displayName.localeCompare(b.displayName));
+  rows.forEach((row, i) => {
+    row.rank = i > 0 && pointsOf(row) === pointsOf(rows[i - 1]) ? rows[i - 1].rank : i + 1;
+  });
+  return rows;
+}
+
+// Every leaderboard: the overall "Kings & Queens" board, then one per quiz
+// category listing the members who have points (or penalties) in it.
+// `decorate(row)` may add viewer-specific fields to every row.
+function leaderboards(decorate = (r) => r) {
+  const overall = rankedUsers().map(decorate);
+  const boards = [{
+    id: 'kings_queens',
+    label: 'Kings & Queens',
+    emoji: '👑',
+    description: 'The highest points overall.',
+    rows: overall,
+  }];
+  for (const c of QUIZ_CATEGORIES) {
+    const rows = overall
+      .filter((r) => r.categoryPoints[c.id] !== undefined)
+      .map((r) => ({ ...r, points: r.categoryPoints[c.id] }));
+    boards.push({
+      id: c.id,
+      label: c.label,
+      emoji: c.emoji,
+      description: `The highest points in ${c.label} quizzes.`,
+      rows: rankBy(rows, (r) => r.points),
+    });
+  }
+  return boards;
+}
+
+module.exports = { rankedUsers, leaderboards, WEIGHTS };

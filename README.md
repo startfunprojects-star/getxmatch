@@ -99,9 +99,17 @@ self-host on a single VPS: no external database or storage service required.
   dashboard's **Highway** tab, the admin can **delete any post** and **pin a post
   to a fixed position 1–10** — pinned posts show first everywhere and are exempt
   from the 100-post prune.
-- **Leaderboard** — ranks every member by an engagement score built from their
-  ratings, friends and quiz activity. Users can send a **friend request** to
-  anyone directly from the leaderboard.
+- **Leaderboards** — **Kings & Queens** (highlighted in gold) ranks every
+  member by overall points, built from their ratings, friends, quiz activity
+  and more. Every quiz belongs to one category the admin picks — **The Grand
+  Polymath**, **The Think Tank**, **The Wordsmith** or **The Knowledge Vault** —
+  and each category has its own board, ranked by the best attempt at each of
+  its quizzes minus the penalties taken on them (`src/points.js`,
+  `src/quizCategories.js`). Points have no floor and can go negative: a quiz
+  stopped for leaving full screen costs 10, and **every reattempt of a quiz
+  costs 10 points as soon as it starts** (resuming an unfinished attempt is
+  free; the best attempt still counts). Users can send a **friend request** to
+  anyone directly from a leaderboard.
 - **Recent Events** — a unified activity feed aggregating new friendships,
   recent chats and quiz attempts, plus **admin-curated announcements**. Friend
   requests can be sent inline from the feed.

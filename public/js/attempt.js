@@ -349,7 +349,14 @@
         .then(function (d) {
           if (!d) return;
           if (d.penalty) penalty = d.penalty;
-          if (d.lockedUntil) showLocked(d.lockedUntil);
+          if (d.lockedUntil) { showLocked(d.lockedUntil); return; }
+          // Already attempted: starting again costs points straight away.
+          if (d.reattempt) {
+            var cost = d.reattemptPenalty || 10;
+            startBtn.textContent = 'Reattempt quiz (−' + cost + ' points)';
+            showNote('<strong>You’ve attempted this quiz before.</strong> Starting it again deducts ' + cost +
+              ' points from your score straight away. Your best attempt still counts.');
+          }
         })
         .catch(function () {});
     }
@@ -372,6 +379,7 @@
           }
           session = d.session;
           if (d.penalty) penalty = d.penalty;
+          if (note) note.hidden = true;
           fsReady.then(function (ok) {
             if (!ok && fsSupported) {
               startBtn.disabled = false;

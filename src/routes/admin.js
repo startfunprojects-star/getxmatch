@@ -14,6 +14,7 @@ const { sendAdminResetLink, smtpReady } = require('../mail');
 const { isOnline, broadcastNotify } = require('../socket');
 const { rankedUsers } = require('../points');
 const { QUIZ_TYPES } = require('../quizTypes');
+const { isValidCategory } = require('../quizCategories');
 const { imageUpload } = require('../upload');
 const { buildProfile } = require('../profileData');
 const { saveProfile } = require('../profileWrite');
@@ -334,6 +335,11 @@ function normalizeQuestions(raw) {
 
 /* ---------------- Quizzes ---------------- */
 
+function normalizeCategory(raw) {
+  const c = String(raw || '');
+  return isValidCategory(c) ? { value: c } : { error: 'Please choose the quiz category.' };
+}
+
 function normalizeType(raw) {
   const t = String(raw || 'compatibility');
   return QUIZ_TYPES[t] ? { value: t } : { error: 'Unknown quiz type.' };
@@ -351,7 +357,7 @@ function normalizeNegative(raw) {
 
 // GET /api/admin/quizzes — full quizzes including correct answers.
 router.get('/quizzes', requireAdmin, (req, res) => {
-  const rows = db.prepare('SELECT id, title, description, questions, negative_marks, type, seo, created_at, updated_at FROM quizzes ORDER BY created_at DESC').all();
+  const rows = db.prepare('SELECT id, title, description, questions, negative_marks, type, category, seo, created_at, updated_at FROM quizzes ORDER BY created_at DESC').all();
   res.json({
     quizzes: rows.map((r) => ({
       id: r.id,
@@ -360,6 +366,7 @@ router.get('/quizzes', requireAdmin, (req, res) => {
       questions: parseJson(r.questions, []),
       negativeMarks: r.negative_marks || 0,
       type: r.type,
+      category: r.category || null,
       seo: parseJson(r.seo, {}),
       attempts: db.prepare('SELECT COUNT(*) AS n FROM quiz_attempts WHERE quiz_id = ?').get(r.id).n,
       createdAt: r.created_at,
@@ -379,12 +386,14 @@ router.post('/quizzes', requireAdmin, (req, res) => {
   if (neg.error) return res.status(400).json({ error: neg.error });
   const type = normalizeType(req.body && req.body.type);
   if (type.error) return res.status(400).json({ error: type.error });
+  const category = normalizeCategory(req.body && req.body.category);
+  if (category.error) return res.status(400).json({ error: category.error });
 
   const seo = normalizeSeo(req.body && req.body.seo, title);
   const now = Date.now();
   const info = db.prepare(
-    'INSERT INTO quizzes (title, description, questions, negative_marks, type, seo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(title.slice(0, 150), description, JSON.stringify(q.value), neg.value, type.value, seo, now, now);
+    'INSERT INTO quizzes (title, description, questions, negative_marks, type, category, seo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(title.slice(0, 150), description, JSON.stringify(q.value), neg.value, type.value, category.value, seo, now, now);
   broadcastNotify(); // "new quiz" in members' Notifications
   res.status(201).json({ id: info.lastInsertRowid });
 });
@@ -402,10 +411,12 @@ router.put('/quizzes/:id', requireAdmin, (req, res) => {
   if (neg.error) return res.status(400).json({ error: neg.error });
   const type = normalizeType(req.body && req.body.type);
   if (type.error) return res.status(400).json({ error: type.error });
+  const category = normalizeCategory(req.body && req.body.category);
+  if (category.error) return res.status(400).json({ error: category.error });
 
   const seo = normalizeSeo(req.body && req.body.seo, title);
-  db.prepare('UPDATE quizzes SET title = ?, description = ?, questions = ?, negative_marks = ?, type = ?, seo = ?, updated_at = ? WHERE id = ?')
-    .run(title.slice(0, 150), description, JSON.stringify(q.value), neg.value, type.value, seo, Date.now(), row.id);
+  db.prepare('UPDATE quizzes SET title = ?, description = ?, questions = ?, negative_marks = ?, type = ?, category = ?, seo = ?, updated_at = ? WHERE id = ?')
+    .run(title.slice(0, 150), description, JSON.stringify(q.value), neg.value, type.value, category.value, seo, Date.now(), row.id);
   res.json({ ok: true });
 });
 

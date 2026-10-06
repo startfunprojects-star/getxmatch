@@ -674,12 +674,27 @@
     return block;
   }
 
+  // Mirrors QUIZ_CATEGORIES in src/quizCategories.js.
+  const QUIZ_CATEGORIES = [
+    { id: 'polymath', label: 'The Grand Polymath' },
+    { id: 'think_tank', label: 'The Think Tank' },
+    { id: 'wordsmith', label: 'The Wordsmith' },
+    { id: 'knowledge_vault', label: 'The Knowledge Vault' },
+  ];
+  const categoryName = (id) => (QUIZ_CATEGORIES.find((c) => c.id === id) || {}).label || null;
+
   function renderQuizEditor(quiz) {
     const host = document.getElementById('quizEditor');
     host.innerHTML = `
       <h2>${quiz ? 'Edit quiz' : 'Create quiz'}</h2>
       <label>Title</label><input id="quizTitle" value="${esc(quiz ? quiz.title : '')}" />
       <label>Description</label><input id="quizDesc" value="${esc(quiz ? quiz.description : '')}" />
+      <label>Category <span class="req">*</span></label>
+      <select id="quizCategory">
+        <option value="">Choose a category…</option>
+        ${QUIZ_CATEGORIES.map((c) => `<option value="${c.id}"${quiz && quiz.category === c.id ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}
+      </select>
+      <p class="count">Every quiz belongs to one category. Points earned in it count toward that category's leaderboard as well as the overall Kings &amp; Queens board.</p>
       <label>Quiz type</label>
       <select id="quizType">
         <option value="standard"${!quiz || quiz.type === 'standard' ? ' selected' : ''}>Standard Quiz — timed questions, no sharing</option>
@@ -729,7 +744,8 @@
       try {
         const negativeMarks = Number(host.querySelector('#quizNegative').value || 0);
         const type = host.querySelector('#quizType').value;
-        const payload = { title, description, type, questions: questionsOut, negativeMarks, seo: collectSeo(host) };
+        const category = host.querySelector('#quizCategory').value;
+        const payload = { title, description, type, category, questions: questionsOut, negativeMarks, seo: collectSeo(host) };
         if (quiz) await api.put('/api/admin/quizzes/' + quiz.id, payload);
         else await api.post('/api/admin/quizzes', payload);
         msg.className = 'msg ok'; msg.textContent = 'Saved.';
@@ -759,7 +775,7 @@
       const item = el(`
         <div class="admin-item">
           <h3>${esc(q.title)}</h3>
-          <div class="count">${({ compatibility: 'Compatibility', open_compatibility: 'Open Compatibility' })[q.type] || 'Standard'} · ${q.questions.length} questions · ${q.questions.reduce((n, x) => n + (Number(x.points) || 0), 0)} points · ${q.negativeMarks ? `−${q.negativeMarks} per unanswered` : 'no negative marking'} · ${q.attempts} attempts</div>
+          <div class="count">${q.category ? esc(categoryName(q.category)) : '<strong style="color:var(--danger,#c0392b)">⚠ No category — edit to classify</strong>'} · ${({ compatibility: 'Compatibility', open_compatibility: 'Open Compatibility' })[q.type] || 'Standard'} · ${q.questions.length} questions · ${q.questions.reduce((n, x) => n + (Number(x.points) || 0), 0)} points · ${q.negativeMarks ? `−${q.negativeMarks} per unanswered` : 'no negative marking'} · ${q.attempts} attempts</div>
           <div class="admin-item-actions">
             <button class="ghost small" data-edit>Edit</button>
             <button class="danger small" data-del>Delete</button>
@@ -1552,7 +1568,7 @@
 
   async function renderLeaderboardTab() {
     const host = tabHost();
-    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Ranked by points (highest first; equal points share a rank). Points come from ratings, Highway likes, friends, quiz points, polls (5 per poll voted in), completed compatibility links (10 to the sharer, 5 to the responder), referrals (4 to the referrer, 2 to the new member) and followers (double each follower’s fee; following costs the followee’s fee), minus deductions for stopped quizzes.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Likes</th><th>Polls</th><th>Points</th></tr></thead><tbody id="lbRows"><tr><td colspan="8" class="count">Loading…</td></tr></tbody></table></div><div id="lbPager"></div></div>';
+    host.innerHTML = '<div class="admin-card"><h2>Leaderboard</h2><p class="count">Ranked by points (highest first; equal points share a rank). Points come from ratings, Highway likes, friends, quiz points, polls (5 per poll voted in), completed compatibility links (10 to the sharer, 5 to the responder), referrals (4 to the referrer, 2 to the new member) and followers (double each follower’s fee; following costs the followee’s fee), minus deductions for stopped quizzes and quiz reattempts (10 each). Points can go below zero. This is the overall Kings &amp; Queens board; members also see one board per quiz category.</p><div class="table-scroll"><table class="users"><thead><tr><th>Rank</th><th>User</th><th>Rating</th><th>Friends</th><th>Quizzes</th><th>Likes</th><th>Polls</th><th>Points</th></tr></thead><tbody id="lbRows"><tr><td colspan="8" class="count">Loading…</td></tr></tbody></table></div><div id="lbPager"></div></div>';
     const rowsEl = host.querySelector('#lbRows');
     try { leaderboardCache = (await api.get('/api/admin/leaderboard')).leaderboard; }
     catch (e) { if (e.status === 401) return renderLogin(true); rowsEl.innerHTML = `<tr><td colspan="8" class="count">${esc(e.message)}</td></tr>`; return; }
@@ -1576,7 +1592,7 @@
           <td>${r.quizzes}</td>
           <td>${r.likes}</td>
           <td>${r.polls}</td>
-          <td><strong>${r.points}</strong>${r.penalty ? `<div class="pill" title="Deducted for stopped quizzes">−${r.penalty}</div>` : ''}</td>
+          <td><strong>${r.points}</strong>${r.penalty ? `<div class="pill" title="Deducted for stopped quizzes and reattempts">−${r.penalty}</div>` : ''}</td>
         </tr>
       `));
     });
