@@ -8,7 +8,7 @@ const db = require('../db');
 const config = require('../config');
 const { requireAuth } = require('../auth');
 const { imageUpload, videoUpload } = require('../upload');
-const { nsfwGuard } = require('../nsfw');
+const { nsfwGuard, nsfwVideoGuard } = require('../nsfw');
 const { videoDuration } = require('../videoDuration');
 const { buildProfile } = require('../profileData');
 const { saveProfile } = require('../profileWrite');
@@ -107,7 +107,7 @@ router.post('/gallery/reel', requireAuth, (req, res, next) => {
     }
     next(err);
   });
-}, (req, res) => {
+}, nsfwVideoGuard, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No video uploaded.' });
   const reject = (status, error) => {
     removeUpload(req.file.filename);

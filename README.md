@@ -52,13 +52,19 @@ self-host on a single VPS: no external database or storage service required.
 - **Everything on a profile is publicly visible except the email address**,
   which is never returned by the profile or browse APIs — it's only visible to
   the account owner and the admin dashboard.
-- **NSFW image filter** — every image a member uploads (profile picture,
-  gallery photo, picture buffer, GIF, Recent Activity and Highway images) is
-  checked by [NSFWJS](https://github.com/infinitered/nsfwjs) running locally in
-  a worker thread (`src/nsfw.js`); images that look pornographic or sexually
-  explicit are deleted and rejected. No image is sent to an outside service.
-  Tune or disable it with `NSFW_FILTER`, `NSFW_THRESHOLD` and
-  `NSFW_SEXY_THRESHOLD`. Videos (reels) are not scanned.
+- **NSFW filter** — every image and video a member uploads (profile picture,
+  gallery photos and reels, picture buffer, GIFs, Recent Activity and Highway
+  images) and every image or video sent as a chat file is checked by
+  [NSFWJS](https://github.com/infinitered/nsfwjs) running locally in a worker
+  thread (`src/nsfw.js`, WebAssembly backend). Animated images are checked on
+  up to 4 frames and videos on 8 frames spread across the clip (extracted with
+  the bundled `ffmpeg-static`, or `FFMPEG_PATH`). Anything that looks
+  pornographic or sexually explicit is rejected (uploads are deleted, chat
+  files are not delivered). Nothing is sent to an outside service. Tune or
+  disable it with `NSFW_FILTER`, `NSFW_THRESHOLD` and `NSFW_SEXY_THRESHOLD`.
+  To check files uploaded before the filter existed, run `npm run nsfw-scan`
+  (report only) or `npm run nsfw-scan -- --quarantine` (moves flagged files to
+  `data/quarantine/`, which stops them being served).
 - **Age wall** — members under 18 (by date of birth) and adults can't contact
   each other: no friend or group requests, chat, gifts, follows, ratings,
   comments or reactions between them, and their profiles show
@@ -66,7 +72,8 @@ self-host on a single VPS: no external database or storage service required.
 - **Real-time 1:1 chat** over WebSockets (Socket.IO). Text history is saved so
   conversations persist across sessions.
 - **File sharing in chat** — files are **relayed live and never stored** on the
-  server (not on disk, not in the database). If the recipient is offline the
+  server (not on disk, not in the database; for the NSFW check a video is held
+  briefly in `/dev/shm`, which is RAM). If the recipient is offline the
   file is simply not delivered. Only text messages are persisted.
 - **Browse & search** other users.
 - **Quizzes, Polls & Blogs** — admin-authored content users can engage with:

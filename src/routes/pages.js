@@ -1067,7 +1067,7 @@ const FAQS = [
   ['Is getxmatch free?', 'Yes. Creating a profile, browsing people, taking quizzes, voting in polls and chatting are all free.'],
   ['Is there a minimum age?', 'No. getxmatch is open to everyone. Members under 18 and adults cannot contact each other, and members under 18 should use it with the permission of a parent or guardian.'],
   ['Is my email address visible to other people?', 'No. Your email is used only to verify your account and for notifications. It is never shown to other members and is never returned by our public APIs.'],
-  ['What happens to files I share in chat?', 'Files shared in chat are relayed live between you and the recipient and are never stored on our servers — not on disk and not in the database. Only text messages are kept as history.'],
+  ['What happens to files I share in chat?', 'Files shared in chat are relayed live between you and the recipient and are never stored on our servers — not on disk and not in the database. Images and videos are automatically checked for nudity before they are delivered. Only text messages are kept as history.'],
   ['How do compatibility quizzes work?', 'You answer a short set of questions, then share a private link. When the other person answers, you both see how many answers you picked in common and a compatibility score.'],
   ['How do I stay safe?', 'Read our Safety & Community Guidelines. In short: keep chats on-platform, never send money, protect personal details, and block or report anyone who breaks the rules.'],
   ['How do I delete my account?', 'You can remove your profile from the app. If you need help, use the contact details in our Privacy Policy and we will assist you.'],

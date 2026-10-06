@@ -10,6 +10,7 @@ const polls = require('./polls');
 const chatQuiz = require('./chatQuiz');
 const { isCompatibility } = require('./quizTypes');
 const { isValidActivity } = require('./activities');
+const nsfw = require('./nsfw');
 
 // Emoji reactions a user may place on a message/gift. Server-side allow-list so
 // clients can't store arbitrary strings.
@@ -324,8 +325,15 @@ function initSocket(io) {
           at: Date.now(),
         };
 
-        io.to(`user:${to}`).emit('chat:file', meta);
-        ack && ack({ ok: true, id: fid });
+        // Images and videos are checked for nudity before they're passed on.
+        nsfw.checkBuffer(Buffer.isBuffer(data) ? data : Buffer.from(data)).then((result) => {
+          if (result.blocked) {
+            const what = String(meta.mime).startsWith('video/') ? 'a video' : 'an image';
+            return ack && ack({ error: nsfw.rejectionMessage(result, what) });
+          }
+          io.to(`user:${to}`).emit('chat:file', meta);
+          ack && ack({ ok: true, id: fid });
+        }, () => ack && ack({ error: 'Server error.' }));
       } catch (e) {
         ack && ack({ error: 'Server error.' });
       }
