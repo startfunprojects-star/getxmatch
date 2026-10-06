@@ -6,17 +6,11 @@
 
 const GENDER = ['Male', 'Female', 'Non-binary', 'Other', 'Prefer not to say'];
 const DIET = ['Vegetarian', 'Non-vegetarian', 'Vegan', 'Eggetarian'];
-// Where a member is in their education (optional, shown on the profile).
-const EDUCATION = [
-  'School student',
-  'College / university student',
-  'Graduate',
-  'Postgraduate',
-  'Researcher / PhD',
-  'Teacher / educator',
-  'Lifelong learner',
-  'Prefer not to say',
-];
+// Academic background, chosen at signup (all three are required) and shown on
+// the profile. Stored on the users row, since the profile is created later.
+const EDUCATION = ['School', 'Graduate', 'Masters', 'PhD', 'Post Doc']; // minimum education
+const EDUCATION_STREAM = ['Arts', 'Commerce', 'Science (Math)', 'Science (Biology)'];
+const WORK_STATUS = ['Student', 'Working', 'Working Student'];
 const FRIENDS_VISIBILITY = ['public', 'friends', 'hidden'];
 
 // Who may see a user's GIF "feelings" collection.
@@ -69,6 +63,8 @@ module.exports = {
   GENDER,
   DIET,
   EDUCATION,
+  EDUCATION_STREAM,
+  WORK_STATUS,
   FRIENDS_VISIBILITY,
   GIF_VISIBILITY,
   INTEREST_GROUPS,

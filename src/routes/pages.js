@@ -843,6 +843,8 @@ router.get('/u/:username', optionalAuth, (req, res) => {
 
   const details = [
     ['Education', pr.education],
+    ['Stream', pr.educationStream],
+    ['Working status', pr.workStatus],
   ].filter(([, v]) => v).map(([k, v]) => `<div class="pf-detail"><span>${k}</span><strong>${esc(v)}</strong></div>`).join('');
 
   const interests = (pr.interests || []).map((t) => `<span class="pf-chip">${esc(t)}</span>`).join('');

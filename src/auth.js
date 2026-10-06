@@ -33,7 +33,9 @@ function userFromToken(token) {
   try {
     const payload = jwt.verify(token, config.jwtSecret);
     const user = db
-      .prepare('SELECT id, username, email, created_at, suspended_until, suspended_reason FROM users WHERE id = ?')
+      .prepare(`SELECT id, username, email, created_at, suspended_until, suspended_reason,
+                       education, education_stream, work_status
+                FROM users WHERE id = ?`)
       .get(payload.uid);
     return user || null;
   } catch (_e) {

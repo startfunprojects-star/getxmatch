@@ -294,7 +294,7 @@ function buildProfile(userId, viewerId) {
       `SELECT u.id, u.username,
               p.display_name, p.bio, p.avatar, p.updated_at,
               p.gender, p.date_of_birth, p.country, p.state, p.city, p.interests,
-              p.education, p.friends_visibility,
+              u.education, u.education_stream, u.work_status, p.friends_visibility,
               p.gif_visibility, p.hidden
        FROM users u JOIN profiles p ON p.user_id = u.id
        WHERE u.id = ?`
@@ -359,6 +359,8 @@ function buildProfile(userId, viewerId) {
     city: row.city || null,
     interests: parseInterests(row.interests),
     education: row.education || null,
+    educationStream: row.education_stream || null,
+    workStatus: row.work_status || null,
     gallery,
     gifs,
     // The chosen audience level for the GIF collection. `gifsLocked` tells a

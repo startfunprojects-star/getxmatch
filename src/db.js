@@ -217,7 +217,6 @@ db.exec(`
     ['city', 'TEXT'], // optional: a listed city or one the member typed
     ['diet', 'TEXT'],
     ['interests', "TEXT NOT NULL DEFAULT '[]'"],
-    ['education', 'TEXT'], // optional: School student, Graduate, …
     ['friends_visibility', "TEXT NOT NULL DEFAULT 'public'"],
     // Who may see the user's GIF "feelings" collection: public | friends | private.
     ['gif_visibility', "TEXT NOT NULL DEFAULT 'public'"],
@@ -959,6 +958,36 @@ db.exec(`
   }
 
   db.prepare('DELETE FROM message_reactions WHERE emoji = ?').run('😍');
+})();
+
+// --- Migration: academic background moves to signup. users carries the
+// minimum education, stream and working status (required for new signups);
+// email_otps holds them until the code is verified. The old optional
+// profiles.education is carried over where it maps onto the new levels, then
+// dropped.
+(function migrateSignupEducation() {
+  const add = (table, names) => {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    for (const n of names) if (!cols.includes(n)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${n} TEXT;`);
+  };
+  add('users', ['education', 'education_stream', 'work_status']);
+  add('email_otps', ['education', 'education_stream', 'work_status']);
+
+  const pcols = db.prepare('PRAGMA table_info(profiles)').all().map((c) => c.name);
+  if (pcols.includes('education')) {
+    const map = {
+      'School student': 'School',
+      'College / university student': 'School',
+      Graduate: 'Graduate',
+      Postgraduate: 'Masters',
+      'Researcher / PhD': 'PhD',
+    };
+    const set = db.prepare('UPDATE users SET education = ? WHERE id = ? AND education IS NULL');
+    for (const r of db.prepare('SELECT user_id, education FROM profiles WHERE education IS NOT NULL').all()) {
+      if (map[r.education]) set.run(map[r.education], r.user_id);
+    }
+    db.exec('ALTER TABLE profiles DROP COLUMN education;');
+  }
 })();
 
 // --- Migration: the "romantic" background-music track is now "piano".

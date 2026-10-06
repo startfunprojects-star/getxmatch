@@ -15,15 +15,6 @@ function removeUpload(filename) {
   fs.promises.unlink(p).catch(() => {});
 }
 
-// Validate an optional enum field: empty string clears it, a listed value is
-// accepted, anything else is rejected. Returns { value } or { error }.
-function optionalEnum(raw, allowed, label) {
-  const v = (raw == null ? '' : String(raw)).trim();
-  if (!v) return { value: null };
-  if (!allowed.includes(v)) return { error: `Invalid value for ${label}.` };
-  return { value: v };
-}
-
 // Validate `body` and create/update the profile for `userId`. `file` is the
 // optional uploaded avatar (a multer file). On failure the upload is cleaned
 // up and { error } is returned; on success { profile } is returned. Shared by
@@ -79,9 +70,19 @@ function saveProfile(userId, body, file) {
   // fields and the partner link are no longer part of the profile; their
   // columns are dropped at startup (migrateRemoveAdultFeatures in src/db.js).
 
-  // --- Optional enum fields.
-  const education = optionalEnum(b.education, F.EDUCATION, 'education');
+  // --- Academic background (required; chosen at signup, kept on the users
+  // row). A field the form leaves out keeps its saved value.
+  const curUser = db.prepare('SELECT education, education_stream, work_status FROM users WHERE id = ?').get(userId) || {};
+  const pick = (raw, allowed, saved, msg) => {
+    const v = raw == null ? saved : String(raw).trim();
+    return allowed.includes(v) ? { value: v } : { error: msg };
+  };
+  const education = pick(b.education, F.EDUCATION, curUser.education, 'Please select your minimum education.');
   if (education.error) return fail(education.error);
+  const educationStream = pick(b.educationStream, F.EDUCATION_STREAM, curUser.education_stream, 'Please select your education stream.');
+  if (educationStream.error) return fail(educationStream.error);
+  const workStatus = pick(b.workStatus, F.WORK_STATUS, curUser.work_status, 'Please select your working status.');
+  if (workStatus.error) return fail(workStatus.error);
 
   let friendsVisibility = (b.friendsVisibility || 'public').trim();
   if (!F.FRIENDS_VISIBILITY.includes(friendsVisibility)) friendsVisibility = 'public';
@@ -130,27 +131,30 @@ function saveProfile(userId, body, file) {
 
   const interestsJson = JSON.stringify(interests);
 
+  db.prepare('UPDATE users SET education = ?, education_stream = ?, work_status = ? WHERE id = ?')
+    .run(education.value, educationStream.value, workStatus.value, userId);
+
   if (existing) {
     db.prepare(
       `UPDATE profiles SET
          display_name = ?, bio = ?, avatar = ?,
          gender = ?, date_of_birth = ?, country = ?, state = ?, city = ?, interests = ?,
-         education = ?, friends_visibility = ?, hidden = ?, updated_at = ?
+         friends_visibility = ?, hidden = ?, updated_at = ?
        WHERE user_id = ?`
     ).run(
       displayName, about, avatar,
       gender, dob, country, state, city, interestsJson,
-      education.value, friendsVisibility, hidden, now, userId
+      friendsVisibility, hidden, now, userId
     );
   } else {
     db.prepare(
       `INSERT INTO profiles
          (user_id, display_name, bio, avatar, gender, date_of_birth, country, state, city, interests,
-          education, friends_visibility, hidden, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          friends_visibility, hidden, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       userId, displayName, about, avatar, gender, dob, country, state, city, interestsJson,
-      education.value, friendsVisibility, hidden, now
+      friendsVisibility, hidden, now
     );
   }
 

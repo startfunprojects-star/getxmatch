@@ -8,7 +8,11 @@ self-host on a single VPS: no external database or storage service required.
 - **Sign up / log in** with a terms checkbox and **email OTP
   verification** — a 6-digit code is emailed on signup and the account is only
   created once the code is entered. Passwords are hashed (bcrypt); sessions use
-  a signed httpOnly JWT cookie.
+  a signed httpOnly JWT cookie. Signup also requires the member's **minimum
+  education** (School, Graduate, Masters, PhD, Post Doc), **education stream**
+  (Arts, Commerce, Science (Math), Science (Biology)) and **working status**
+  (Student, Working, Working Student); they're stored on the account, shown on
+  the profile and editable (still required) in the profile editor.
 - **Admin dashboard** at `/admin` — lists every user with a live green
   online/offline indicator, lets the admin create users **without** an email
   address (username + password), and delete users. The admin password is set

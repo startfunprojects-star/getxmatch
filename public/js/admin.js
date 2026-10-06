@@ -75,7 +75,9 @@
   const OPT = {
     gender: ['Male', 'Female', 'Non-binary', 'Other', 'Prefer not to say'],
     yesNo: ['Yes', 'No', 'Occasionally', 'Prefer not to say'],
-    education: ['School student', 'College / university student', 'Graduate', 'Postgraduate', 'Researcher / PhD', 'Teacher / educator', 'Lifelong learner', 'Prefer not to say'],
+    education: ['School', 'Graduate', 'Masters', 'PhD', 'Post Doc'],
+    educationStream: ['Arts', 'Commerce', 'Science (Math)', 'Science (Biology)'],
+    workStatus: ['Student', 'Working', 'Working Student'],
     // Mirrors INTEREST_GROUPS / MAX_INTERESTS in src/profileFields.js.
     interestGroups: [
       { group: "Arts & culture", items: ['Art', 'Music', 'Movies', 'Photography', 'Dancing', 'Theatre', 'Poetry', 'Painting', 'Design', 'Architecture', 'Museums', 'Classical music'] },
@@ -546,7 +548,9 @@
           <div><label>Gender <span class="req">*</span></label>${selectHtml('pfGender', OPT.gender, e.gender, 'Select gender')}</div>
           <div><label>Date of birth <span class="req">*</span></label><input type="date" id="pfDob" value="${esc(e.dateOfBirth || '')}" max="9999-12-31" /></div>
           <div><label>Country <span class="req">*</span></label>${selectHtml('pfCountry', COUNTRIES, e.country, 'Select country')}</div>
-          <div><label>Education</label>${selectHtml('pfEducation', OPT.education, e.education, 'Select…')}</div>
+          <div><label>Minimum education <span class="req">*</span></label>${selectHtml('pfEducation', OPT.education, e.education, 'Select…')}</div>
+          <div><label>Education stream <span class="req">*</span></label>${selectHtml('pfStream', OPT.educationStream, e.educationStream, 'Select…')}</div>
+          <div><label>Working status <span class="req">*</span></label>${selectHtml('pfWork', OPT.workStatus, e.workStatus, 'Select…')}</div>
         </div>
 
         <label>About</label>
@@ -593,6 +597,8 @@
       fd.append('dateOfBirth', val('pfDob'));
       fd.append('country', val('pfCountry'));
       fd.append('education', val('pfEducation'));
+      fd.append('educationStream', val('pfStream'));
+      fd.append('workStatus', val('pfWork'));
       fd.append('about', val('pfAbout'));
       fd.append('interests', JSON.stringify(interests));
       if (avatarFile) fd.append('avatar', avatarFile);

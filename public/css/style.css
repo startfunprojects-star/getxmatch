@@ -498,7 +498,7 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .section-title { margin: 26px 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 
 /* ---------- Profile editor form ---------- */
-.editor select {
+.editor select, #authForm select {
   font: inherit; width: 100%;
   background: var(--bg); border: 1px solid var(--border); color: var(--text);
   border-radius: 10px; padding: 10px 12px;

@@ -339,7 +339,9 @@
   const OPT = {
     gender: ['Male', 'Female', 'Non-binary', 'Other', 'Prefer not to say'],
     yesNo: ['Yes', 'No', 'Occasionally', 'Prefer not to say'],
-    education: ['School student', 'College / university student', 'Graduate', 'Postgraduate', 'Researcher / PhD', 'Teacher / educator', 'Lifelong learner', 'Prefer not to say'],
+    education: ['School', 'Graduate', 'Masters', 'PhD', 'Post Doc'],
+    educationStream: ['Arts', 'Commerce', 'Science (Math)', 'Science (Biology)'],
+    workStatus: ['Student', 'Working', 'Working Student'],
     // Mirrors INTEREST_GROUPS / MAX_INTERESTS in src/profileFields.js.
     interestGroups: [
       { group: "Arts & culture", items: ['Art', 'Music', 'Movies', 'Photography', 'Dancing', 'Theatre', 'Poetry', 'Painting', 'Design', 'Architecture', 'Museums', 'Classical music'] },
@@ -403,7 +405,7 @@
     'United Kingdom', 'United States', 'Vietnam', 'Other'];
 
   // Build a <select> with a placeholder first option. `current` is preselected.
-  function selectHtml(id, options, current, placeholder) {
+  function selectHtml(id, options, current, placeholder, attrs) {
     // placeholder === false → no empty first option (field always has a value).
     const head = placeholder === false ? [] : ['<option value="">' + esc(placeholder || 'Select…') + '</option>'];
     const opts = head.concat(options.map((o) => {
@@ -411,7 +413,7 @@
       const value = o.value != null ? o.value : o;
       return `<option value="${esc(value)}"${value === current ? ' selected' : ''}>${esc(label)}</option>`;
     }));
-    return `<select id="${id}">${opts.join('')}</select>`;
+    return `<select id="${id}"${attrs ? ' ' + attrs : ''}>${opts.join('')}</select>`;
   }
   function starsHtml(n, interactive) {
     let out = '';
@@ -589,6 +591,12 @@
             <input name="email" type="email" autocomplete="email" placeholder="Your email address" required />
             <label>Password</label>
             <input name="password" type="password" autocomplete="new-password" placeholder="At least 8 characters" required />
+            <label>Minimum education</label>
+            ${selectHtml('suEducation', OPT.education, '', 'Select your education', 'name="education" required')}
+            <label>Education stream</label>
+            ${selectHtml('suStream', OPT.educationStream, '', 'Select your stream', 'name="educationStream" required')}
+            <label>Working status</label>
+            ${selectHtml('suWork', OPT.workStatus, '', 'Select your working status', 'name="workStatus" required')}
             ${referralsOn ? `<label>Referral code <span class="hint">(optional)</span></label>
             <input name="referralCode" maxlength="16" autocomplete="off" placeholder="If someone referred you" value="${esc(pendingReferral)}" style="text-transform:uppercase" />` : ''}
             <div class="checkbox-row">
@@ -635,6 +643,9 @@
             username: fd.get('username'),
             email: fd.get('email'),
             password: fd.get('password'),
+            education: fd.get('education'),
+            educationStream: fd.get('educationStream'),
+            workStatus: fd.get('workStatus'),
             termsAccepted: fd.get('termsAccepted') === 'on',
             referralCode: String(fd.get('referralCode') || '').trim(),
           });
@@ -741,6 +752,13 @@
       try { existing = (await api.get('/api/profile/me')).profile; } catch (_e) {}
     }
     const e = existing || {};
+    // The academic fields were chosen at signup; prefill them from the account.
+    const me = state.me || {};
+    const edu = {
+      education: e.education || me.education || '',
+      educationStream: e.educationStream || me.educationStream || '',
+      workStatus: e.workStatus || me.workStatus || '',
+    };
     const selectedInterests = new Set(e.interests || []);
     root.innerHTML = '';
     const wrap = el(`
@@ -773,8 +791,16 @@
             ${selectHtml('country', COUNTRIES, e.country, 'Select country')}
           </div>
           <div>
-            <label>Education</label>
-            ${selectHtml('education', OPT.education, e.education, 'Select…')}
+            <label>Minimum education <span class="req">*</span></label>
+            ${selectHtml('education', OPT.education, edu.education, 'Select…')}
+          </div>
+          <div>
+            <label>Education stream <span class="req">*</span></label>
+            ${selectHtml('educationStream', OPT.educationStream, edu.educationStream, 'Select…')}
+          </div>
+          <div>
+            <label>Working status <span class="req">*</span></label>
+            ${selectHtml('workStatus', OPT.workStatus, edu.workStatus, 'Select…')}
           </div>
           <div>
             <label>State</label>
@@ -925,6 +951,8 @@
       fd.append('state', stateSel.value);
       fd.append('city', citySel.value === CITY_OTHER ? cityCustom.value.trim() : citySel.value);
       fd.append('education', val('education'));
+      fd.append('educationStream', val('educationStream'));
+      fd.append('workStatus', val('workStatus'));
       fd.append('about', val('about'));
       fd.append('interests', JSON.stringify(interests));
       fd.append('hidden', wrap.querySelector('#hidden').checked ? '1' : '0');
@@ -4286,7 +4314,7 @@
       profile.country,
     ].filter(Boolean).join(' · ');
 
-    const relLine = profile.education ? esc(profile.education) : '';
+    const relLine = [profile.education, profile.educationStream, profile.workStatus].filter(Boolean).map(esc).join(' · ');
 
     const badges = [];
     if (profile.age != null) badges.push(`🎂 ${profile.age}`);

@@ -9,6 +9,7 @@ const referrals = require('../referrals');
 const db = require('../db');
 const config = require('../config');
 const { sendSignupOtp } = require('../mail');
+const F = require('../profileFields');
 const { signToken, setAuthCookie, clearAuthCookie, requireAuth } = require('../auth');
 
 const router = express.Router();
@@ -25,7 +26,14 @@ const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function publicUser(user) {
-  return { id: user.id, username: user.username, email: user.email };
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    education: user.education || null,
+    educationStream: user.education_stream || null,
+    workStatus: user.work_status || null,
+  };
 }
 
 function sha256(s) {
@@ -53,6 +61,16 @@ router.post('/signup/start', authLimiter, async (req, res) => {
   if (!password || password.length < 8) {
     return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   }
+  const { education, educationStream, workStatus } = req.body;
+  if (!F.EDUCATION.includes(education)) {
+    return res.status(400).json({ error: 'Please select your minimum education.' });
+  }
+  if (!F.EDUCATION_STREAM.includes(educationStream)) {
+    return res.status(400).json({ error: 'Please select your education stream.' });
+  }
+  if (!F.WORK_STATUS.includes(workStatus)) {
+    return res.status(400).json({ error: 'Please select your working status.' });
+  }
 
   const emailLc = email.toLowerCase();
   const existing = db
@@ -72,17 +90,22 @@ router.post('/signup/start', authLimiter, async (req, res) => {
 
   // Upsert the pending signup for this email (replaces any prior attempt).
   db.prepare(
-    `INSERT INTO email_otps (email, username, password_hash, code_hash, attempts, expires_at, created_at, referral_code)
-     VALUES (?, ?, ?, ?, 0, ?, ?, ?)
+    `INSERT INTO email_otps (email, username, password_hash, code_hash, attempts, expires_at, created_at, referral_code,
+                             education, education_stream, work_status)
+     VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(email) DO UPDATE SET
        username = excluded.username,
        referral_code = excluded.referral_code,
+       education = excluded.education,
+       education_stream = excluded.education_stream,
+       work_status = excluded.work_status,
        password_hash = excluded.password_hash,
        code_hash = excluded.code_hash,
        attempts = 0,
        expires_at = excluded.expires_at,
        created_at = excluded.created_at`
-  ).run(emailLc, username, passwordHash, sha256(code), now + config.otpTtlMs, now, referralCode || null);
+  ).run(emailLc, username, passwordHash, sha256(code), now + config.otpTtlMs, now, referralCode || null,
+    education, educationStream, workStatus);
 
   try {
     await sendSignupOtp(emailLc, code);
@@ -130,11 +153,16 @@ router.post('/signup/verify', authLimiter, (req, res) => {
 
   const now = Date.now();
   const info = db
-    .prepare('INSERT INTO users (username, email, password_hash, created_at) VALUES (?, ?, ?, ?)')
-    .run(pending.username, emailLc, pending.password_hash, now);
+    .prepare(`INSERT INTO users (username, email, password_hash, created_at, education, education_stream, work_status)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(pending.username, emailLc, pending.password_hash, now,
+      pending.education, pending.education_stream, pending.work_status);
   db.prepare('DELETE FROM email_otps WHERE email = ?').run(emailLc);
 
-  const user = { id: info.lastInsertRowid, username: pending.username, email: emailLc };
+  const user = {
+    id: info.lastInsertRowid, username: pending.username, email: emailLc,
+    education: pending.education, education_stream: pending.education_stream, work_status: pending.work_status,
+  };
   referrals.ensureCode(user.id);
   if (pending.referral_code) referrals.applyReferral(user.id, pending.referral_code);
   recordLogin(user.id);
