@@ -55,10 +55,7 @@ self-host on a single VPS: no external database or storage service required.
 - **Age wall** — members under 18 (by date of birth) and adults can't contact
   each other: no friend or group requests, chat, gifts, follows, ratings,
   comments or reactions between them, and their profiles show
-  "Age-restricted" instead of the friend button (`src/relations.js`). Adult-only
-  features were removed: sexual photo reactions, disappearing messages, the
-  12-hour chat auto-delete, live chat broadcasts, and the old intimate profile
-  fields (dropped from the database at startup).
+  "Age-restricted" instead of the friend button (`src/relations.js`).
 - **Real-time 1:1 chat** over WebSockets (Socket.IO). Text history is saved so
   conversations persist across sessions.
 - **File sharing in chat** — files are **relayed live and never stored** on the
@@ -71,7 +68,7 @@ self-host on a single VPS: no external database or storage service required.
 - **Highway** — a shared community pool on the main menu where any registered
   member can post text, an image and/or links (YouTube videos embed inline;
   Instagram/Facebook and other links render as rich links). Each post shows who
-  posted it, and viewers can send that person a relationship request straight
+  posted it, and viewers can send that person a friend request straight
   from the post. Members only see posts from people **near** them — at least
   **5 shared areas of interest**, the **same country**, or born in the **same
   decade** (their own and admin-pinned posts are always shown). Every picture a

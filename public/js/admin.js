@@ -684,7 +684,7 @@
       <p class="count">Open Compatibility: after attempting, the member shares a link (active for 24 hours) that any registered member can answer. The sharer sees their compatibility with every responder; each responder sees only their own compatibility with the sharer. The sharer earns 3 points and the responder 1 for each response (once per quiz for each pair).</p>
       <p class="count">Compatibility: after attempting, the member shares a link (active for 24 hours). When a signed-in member answers it, both see their compatibility results; the sharer earns 10 points and the responder 5 (once per quiz for each pair).</p>
       <label>Questions</label>
-      <p class="count">There are no right or wrong answers. In a compatibility quiz, two people answer the same questions and get a match score based on how many they pick in common. Set how many points each question is worth and how long members have to answer it: answering in time earns that question's points toward the leaderboard, and a question left unanswered when time runs out earns none.</p>
+      <p class="count">There are no right or wrong answers. In a compatibility quiz, two people answer the same questions and get a score based on how many answers they pick in common. Set how many points each question is worth and how long members have to answer it: answering in time earns that question's points toward the leaderboard, and a question left unanswered when time runs out earns none.</p>
       <div id="quizQuestions"></div>
       <label>Negative marking (points deducted per unanswered question)</label>
       <input id="quizNegative" type="number" min="0" max="1000" step="1" value="${quiz ? Number(quiz.negativeMarks) || 0 : 0}" />

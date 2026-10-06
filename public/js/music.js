@@ -14,7 +14,7 @@ window.gxmMusic = (function () {
     { id: 'chill', name: 'Chill vibes', emoji: '🌴' },
     { id: 'upbeat', name: 'Upbeat pop', emoji: '🎉' },
     { id: 'lofi', name: 'Lo-fi beats', emoji: '☕' },
-    { id: 'romantic', name: 'Romantic piano', emoji: '💞' },
+    { id: 'piano', name: 'Calm piano', emoji: '🎹' },
     { id: 'dreamy', name: 'Dreamy night', emoji: '🌙' },
   ];
 
@@ -39,7 +39,7 @@ window.gxmMusic = (function () {
       arp: [3, -1, -1, 2, -1, -1, 1, -1, -1, -1, 2, -1, 0, -1, -1, -1], arpOct: 12,
       kick: 'x.....x...x.....', snare: '....x.......x...', hat: 'x.x.x.x.x.x.x.x.',
     },
-    romantic: {
+    piano: {
       bpm: 68, pad: 'sine', lead: 'piano', cutoff: 2200,
       chords: [[48, 52, 55], [45, 48, 52], [41, 45, 48], [43, 47, 50]],
       arp: [0, 1, 2, 1, 2, 1, 0, 1, 0, 1, 2, 1, 2, 1, 0, 1], arpOct: 24,

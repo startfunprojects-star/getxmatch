@@ -45,7 +45,7 @@ const MAX_CAPTION = 500;   // caption / statement, may include #tags
 const MAX_LOCATION = 120;  // place name
 // Background-music tracks (composed in the browser by public/js/music.js —
 // original, so royalty-free). Keep the ids in sync with that file.
-const MUSIC_TRACKS = ['chill', 'upbeat', 'lofi', 'romantic', 'dreamy'];
+const MUSIC_TRACKS = ['chill', 'upbeat', 'lofi', 'piano', 'dreamy'];
 const MAX_BUFFER_PHOTOS = 10;
 const MAX_GIFS = 100;
 // Members under this age are walled off from adults (see src/relations.js).

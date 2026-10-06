@@ -2455,7 +2455,7 @@
     }
 
     // ----- answer form -----
-    body.appendChild(el('<div class="quiz-sub">Answer together — pick your response to each. You’ll both see how well you match once you’re both done.</div>'));
+    body.appendChild(el('<div class="quiz-sub">Answer together — pick your response to each. You’ll both see how much you have in common once you’re both done.</div>'));
     q.questions.forEach((qq, i) => {
       const block = el('<div class="quiz-q"></div>');
       block.appendChild(el('<div class="quiz-q-prompt"></div>')).textContent = (i + 1) + '. ' + qq.prompt;
@@ -5435,7 +5435,7 @@
 
   async function renderQuizzes() {
     const main = openMainView();
-    main.appendChild(sectionShell('Quizzes', 'Answer timed questions to earn points. Compatibility quizzes also give you a link to share — see how well you match.'));
+    main.appendChild(sectionShell('Quizzes', 'Answer timed questions to earn points. Compatibility quizzes also give you a link to share — see how much you have in common.'));
     const body = main.querySelector('#sectionBody');
     let quizzes;
     try { quizzes = (await api.get('/api/content/quizzes')).quizzes; }
@@ -5505,7 +5505,7 @@
     let adCount = 0; // running index into the content_inline slot list
 
     const form = el('<div class="quiz-form card"></div>');
-    form.appendChild(el('<p class="hint">Pick the answer that fits you for each question. When you finish you\'ll get a private link to send to someone — your match score is revealed once they answer too.</p>'));
+    form.appendChild(el('<p class="hint">Pick the answer that fits you for each question. When you finish you\'ll get a private link to send to someone — your shared score is revealed once they answer too.</p>'));
     const stepHost = el('<div class="quiz-step"></div>');
     form.appendChild(stepHost);
     const result = el('<div class="msg" id="quizResult"></div>');
@@ -5591,7 +5591,7 @@
   // Render the shareable link + copy / WhatsApp / Telegram buttons.
   function renderShareBox(host, token) {
     const link = location.origin + '/m/' + token;
-    const text = 'Take this compatibility quiz with me — let\'s see how well we match! ' + link;
+    const text = 'Take this compatibility quiz with me — let\'s see how much we have in common! ' + link;
     host.hidden = false;
     host.innerHTML = `
       <label class="share-label">Your private link</label>

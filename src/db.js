@@ -961,4 +961,7 @@ db.exec(`
   db.prepare('DELETE FROM message_reactions WHERE emoji = ?').run('😍');
 })();
 
+// --- Migration: the "romantic" background-music track is now "piano".
+db.exec("UPDATE gallery_photos SET music = 'piano' WHERE music = 'romantic';");
+
 module.exports = db;

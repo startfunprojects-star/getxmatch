@@ -344,7 +344,7 @@ router.get('/quizzes', (req, res) => {
   const seoDescriptor = resolveSeo({}, {
     canonicalPath: '/quizzes',
     title: 'Quizzes',
-    description: 'Timed quizzes on getxmatch — answer questions to earn points, and take compatibility quizzes to find out how well you match with someone.',
+    description: 'Timed quizzes on getxmatch — answer questions to earn points, and take compatibility quizzes to find out how much you have in common with someone.',
   });
   const jsonLd = [
     breadcrumbLd([{ name: 'Home', path: '/' }, { name: 'Quizzes', path: '/quizzes' }]),
@@ -358,7 +358,7 @@ router.get('/quizzes', (req, res) => {
 ${QUIZ_CARD_STYLE}
 ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Quizzes', path: '/quizzes' }])}
 <h1>Quizzes</h1>
-<p class="lede">Answer timed questions and earn points for the leaderboard. Quizzes marked <strong>Compatibility Quiz</strong> also give you a link to share, so you can compare answers and see how well you match. An <strong>Open Compatibility Quiz</strong> link can be answered by any member, and you see your match with each of them.</p>
+<p class="lede">Answer timed questions and earn points for the leaderboard. Quizzes marked <strong>Compatibility Quiz</strong> also give you a link to share, so you can compare answers and see how much you have in common. An <strong>Open Compatibility Quiz</strong> link can be answered by any member, and you see your match with each of them.</p>
 ${cards}`;
   sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
@@ -969,7 +969,7 @@ router.get('/about', (req, res) => {
 <ul>
   <li><strong>Verified accounts.</strong> Every account verifies an email before it's created.</li>
   <li><strong>Real conversations.</strong> Chat is instant over WebSockets, and files you share are relayed live and never stored on our servers.</li>
-  <li><strong>Play, don't just scroll.</strong> Compatibility quizzes, community polls and shareable match links make meeting people fun.</li>
+  <li><strong>Play, don't just scroll.</strong> Compatibility quizzes, community polls and shareable quiz links make learning together fun.</li>
   <li><strong>Privacy by design.</strong> Your email address is never shown to other members, and the app is lightweight enough to self-host on a single server.</li>
 </ul>
 <h2>Who's behind it</h2>
@@ -985,7 +985,7 @@ router.get('/how-it-works', (req, res) => {
     ['Build your profile', 'Add your gender, date of birth and country, then pick your state and city, write a few words about yourself and choose up to 10 areas of interest. Add a display picture and a gallery of photos and short reels (videos up to 1 minute) — upload them, or shoot them with the built-in camera and add a caption with #tags, a location and background music.'],
     ['Find your people on the Highway', 'The Highway is the community feed. You see posts from members who share at least 5 of your interests, live in your country or were born in your decade. Post text, pictures and links — every picture you upload is shared there too.'],
     ['Connect', 'Send friend requests, follow members, rate profiles and leave comments. Browse and search members, or send a request straight from a Highway post or the leaderboard.'],
-    ['Take quizzes and vote in polls', 'Quizzes are played in full screen with a timer on each question, and every question you answer in time earns its points. Quizzes marked as a Compatibility Quiz also give you a share link that stays open for 24 hours — when someone answers it, you both see how well you match and both earn points. An Open Compatibility Quiz link can be answered by any member: you see your compatibility with everyone who answers, and each of them sees their own result with you.'],
+    ['Take quizzes and vote in polls', 'Quizzes are played in full screen with a timer on each question, and every question you answer in time earns its points. Quizzes marked as a Compatibility Quiz also give you a share link that stays open for 24 hours — when someone answers it, you both see how much you have in common and both earn points. An Open Compatibility Quiz link can be answered by any member: you see your compatibility with everyone who answers, and each of them sees their own result with you.'],
     ['Chat in real time', 'Message one-to-one or in groups and send everyday gifts like a thank-you or a warm hug. Shared files are relayed live and never stored on our servers.'],
     ['Earn points and climb the leaderboard', 'Almost everything you do earns points, and the leaderboard ranks every member strictly by points.'],
   ];
@@ -1038,7 +1038,7 @@ router.get('/safety', (req, res) => {
   renderInfo(res, {
     pathname: '/safety',
     title: 'Safety & Community Guidelines',
-    description: `Stay safe on ${SITE_NAME}. Our community guidelines, safety tips for meeting people online, and how to block or report someone.`,
+    description: `Stay safe on ${SITE_NAME}. Our community guidelines, safety tips for connecting with people online, and how to block or report someone.`,
     lede: `These guidelines keep the ${SITE_NAME} community respectful and safe.`,
     bodyHtml: `
 <h2>The essentials</h2>
