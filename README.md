@@ -102,8 +102,8 @@ self-host on a single VPS: no external database or storage service required.
 - **Leaderboards** — **Kings & Queens** (highlighted in gold) ranks every
   member by overall points, built from their ratings, friends, quiz activity
   and more. Every quiz belongs to one category the admin picks — **The Grand
-  Polymath**, **The Think Tank**, **The Wordsmith** or **The Knowledge Vault** —
-  and each category has its own board, ranked by the best attempt at each of
+  Polymath**, **The Think Tank**, **The Wordsmith**, **The Knowledge Vault** or
+  **Others** — and each category except Others has its own board, ranked by the best attempt at each of
   its quizzes minus the penalties taken on them (`src/points.js`,
   `src/quizCategories.js`). Points have no floor and can go negative: a quiz
   stopped for leaving full screen costs 10, and **every reattempt of a quiz

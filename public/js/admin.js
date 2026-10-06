@@ -680,6 +680,7 @@
     { id: 'think_tank', label: 'The Think Tank' },
     { id: 'wordsmith', label: 'The Wordsmith' },
     { id: 'knowledge_vault', label: 'The Knowledge Vault' },
+    { id: 'others', label: 'Others (overall points only, no leaderboard of its own)' },
   ];
   const categoryName = (id) => (QUIZ_CATEGORIES.find((c) => c.id === id) || {}).label || null;
 
@@ -694,7 +695,7 @@
         <option value="">Choose a category…</option>
         ${QUIZ_CATEGORIES.map((c) => `<option value="${c.id}"${quiz && quiz.category === c.id ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}
       </select>
-      <p class="count">Every quiz belongs to one category. Points earned in it count toward that category's leaderboard as well as the overall Kings &amp; Queens board.</p>
+      <p class="count">Every quiz belongs to one category. Points earned in it count toward the overall Kings &amp; Queens board and, except for Others, that category's own leaderboard.</p>
       <label>Quiz type</label>
       <select id="quizType">
         <option value="standard"${!quiz || quiz.type === 'standard' ? ' selected' : ''}>Standard Quiz — timed questions, no sharing</option>

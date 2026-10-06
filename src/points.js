@@ -161,7 +161,7 @@ function rankBy(rows, pointsOf) {
 }
 
 // Every leaderboard: the overall "Kings & Queens" board, then one per quiz
-// category listing the members who have points (or penalties) in it.
+// category that has a board (not "Others"), listing the members who have points (or penalties) in it.
 // `decorate(row)` may add viewer-specific fields to every row.
 function leaderboards(decorate = (r) => r) {
   const overall = rankedUsers().map(decorate);
@@ -172,7 +172,7 @@ function leaderboards(decorate = (r) => r) {
     description: 'The highest points overall.',
     rows: overall,
   }];
-  for (const c of QUIZ_CATEGORIES) {
+  for (const c of QUIZ_CATEGORIES.filter((cat) => cat.board)) {
     const rows = overall
       .filter((r) => r.categoryPoints[c.id] !== undefined)
       .map((r) => ({ ...r, points: r.categoryPoints[c.id] }));
