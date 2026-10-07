@@ -5985,6 +5985,7 @@
      polls instead (startAuthActivityPoll).
   */
   const activityFeeds = []; // mounted feed elements that live socket updates flow into
+  const ACTIVITY_MAX = 200; // the feed shows the latest 200 activities (mirrors FEED_SIZE in src/routes/events.js)
 
   function activityIcon(activity) {
     const a = String(activity).toLowerCase();
@@ -6014,7 +6015,7 @@
     }
     activityFeeds.forEach((feed) => {
       feed.insertBefore(feedItemEl(ev, true), feed.firstChild);
-      while (feed.children.length > 60) feed.removeChild(feed.lastChild);
+      while (feed.querySelectorAll('.feed-item').length > ACTIVITY_MAX) feed.removeChild(feed.lastChild);
     });
   }
 
@@ -6031,7 +6032,7 @@
         fresh.forEach((ev) => {
           feed.insertBefore(feedItemEl(ev, true), feed.firstChild);
           lastAt = Math.max(lastAt, ev.at || 0);
-          while (feed.children.length > 60) feed.removeChild(feed.lastChild);
+          while (feed.querySelectorAll('.feed-item').length > ACTIVITY_MAX) feed.removeChild(feed.lastChild);
         });
       } catch (_e) { /* ignore transient errors */ }
       setTimeout(poll, 6000);

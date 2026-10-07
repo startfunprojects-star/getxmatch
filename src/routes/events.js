@@ -31,7 +31,13 @@ const { acceptedText, sentText, relEmoji } = require('../relationships');
 
 const router = express.Router();
 
-const PER_SOURCE = 40;
+// Recent Activity shows the latest FEED_SIZE activities. Anything older is
+// dropped: rows that exist only for the feed (shared images and their files,
+// announcements, hidden markers) are deleted by pruneActivity(); rows built
+// from real data (friendships, quiz attempts, gallery photos…) just stop
+// appearing — that data belongs to profiles, points and friendships.
+const FEED_SIZE = 200;
+const PER_SOURCE = FEED_SIZE;
 const ACTIVITY_IMG_MAX_BYTES = 5 * 1024 * 1024; // 5 MB cap for shared activity images
 
 function userMini(id, viewerId) {
@@ -86,6 +92,7 @@ router.post('/activity-image', requireAuth, imageUpload.single('image'), nsfwGua
     image: url,
   };
   shareUploadToHighway(req.user.id, req.file.filename, '');
+  setImmediate(pruneActivity); // the oldest activity may now fall out of the feed
   // Stream it live onto everyone's open feeds as a thumbnail.
   broadcastActivity({ at: now, icon: '🖼️', text: event.text, image: url });
   res.status(201).json({ event });
@@ -300,8 +307,28 @@ function buildFeed(viewerId, opts) {
     merged.push(ev);
     if ((i + 1) % NEWS_EVERY === 0 && headlines.length) merged.push(headlines.shift());
   });
-  return merged.concat(headlines).slice(0, 100);
+  return merged.concat(headlines).slice(0, FEED_SIZE);
 }
+
+// Delete feed-only rows that have fallen out of the latest FEED_SIZE. The
+// cut-off comes from the shared feed (no viewer): a member's own feed only
+// adds rows, so nothing older than it can be in anyone's latest FEED_SIZE.
+function pruneActivity() {
+  try {
+    const feed = buildFeed(null);
+    if (feed.length < FEED_SIZE) return;
+    const cutoff = feed[FEED_SIZE - 1].at;
+    const old = db.prepare('SELECT id, image FROM activity_posts WHERE created_at < ?').all(cutoff);
+    db.prepare('DELETE FROM activity_posts WHERE created_at < ?').run(cutoff);
+    old.forEach((r) => {
+      if (r.image) fs.promises.unlink(path.join(config.uploadsDir, path.basename(r.image))).catch(() => {});
+    });
+    db.prepare('DELETE FROM admin_events WHERE created_at < ?').run(cutoff);
+    db.prepare('DELETE FROM hidden_activities WHERE hidden_up_to < ?').run(cutoff);
+  } catch (_e) { /* pruning must never break the feed */ }
+}
+setTimeout(pruneActivity, 15000).unref();
+setInterval(pruneActivity, 60 * 60 * 1000).unref();
 
 const NEWS_EVERY = 3;
 
@@ -312,3 +339,5 @@ router.get('/', requireAuth, (req, res) => {
 
 module.exports = router;
 module.exports.buildFeed = buildFeed;
+module.exports.pruneActivity = pruneActivity;
+module.exports.FEED_SIZE = FEED_SIZE;

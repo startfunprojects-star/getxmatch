@@ -12,7 +12,7 @@ const db = require('../db');
 const config = require('../config');
 const { sendAdminResetLink, smtpReady } = require('../mail');
 const { isOnline, broadcastNotify, disconnectUser, notifyUser } = require('../socket');
-const { buildFeed } = require('./events');
+const { buildFeed, pruneActivity } = require('./events');
 const { leaderboards } = require('../points');
 const { QUIZ_TYPES } = require('../quizTypes');
 const { isValidCategory } = require('../quizCategories');
@@ -766,6 +766,7 @@ router.post('/events', requireAdmin, (req, res) => {
   const now = Date.now();
   const info = db.prepare('INSERT INTO admin_events (title, body, created_at, updated_at) VALUES (?, ?, ?, ?)')
     .run(title.slice(0, 200), body, now, now);
+  setImmediate(pruneActivity); // keep only the latest Recent Activity
   res.status(201).json({ id: info.lastInsertRowid });
 });
 
