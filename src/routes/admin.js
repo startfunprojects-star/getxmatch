@@ -291,6 +291,108 @@ router.delete('/activity/:id', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+/* ---------------------------------------------------------------------------
+   News feeds for Recent Activity (src/news.js)
+--------------------------------------------------------------------------- */
+const news = require('../news');
+
+function feedRow(f) {
+  return {
+    id: f.id,
+    url: f.url,
+    title: f.title || '',
+    interests: news.parseInterestList(f.interests),
+    familySafe: !!f.family_safe,
+    enabled: !!f.enabled,
+    lastFetchedAt: f.last_fetched_at || null,
+    lastError: f.last_error || null,
+    items: f.items || 0,
+  };
+}
+
+function cleanInterests(raw) {
+  const allowed = new Set(news.INTERESTS);
+  return [...new Set((Array.isArray(raw) ? raw : []).filter((i) => allowed.has(i)))];
+}
+
+// GET /api/admin/news — every feed (with its item count), the interest list
+// and the latest headlines.
+router.get('/news', requireAdmin, (_req, res) => {
+  const feeds = db.prepare(
+    `SELECT f.*, (SELECT COUNT(*) FROM news_items i WHERE i.feed_id = f.id) AS items
+       FROM news_feeds f ORDER BY f.created_at DESC, f.id DESC`
+  ).all().map(feedRow);
+  const items = db.prepare(
+    `SELECT i.id, i.title, i.link, i.published_at, i.hidden, f.title AS source, f.url AS feed_url
+       FROM news_items i JOIN news_feeds f ON f.id = i.feed_id
+      ORDER BY i.published_at DESC LIMIT 100`
+  ).all().map((r) => ({ id: r.id, title: r.title, link: r.link, at: r.published_at, hidden: !!r.hidden, source: r.source || r.feed_url }));
+  res.json({ feeds, items, interests: news.INTERESTS });
+});
+
+// POST /api/admin/news/feeds  { url, interests: [], familySafe } — add a feed
+// and fetch it straight away (the result says whether it worked).
+router.post('/news/feeds', requireAdmin, async (req, res) => {
+  const b = req.body || {};
+  const url = news.safeUrl(b.url);
+  if (!url) return res.status(400).json({ error: 'Enter the feed’s full http(s) address.' });
+  const interests = cleanInterests(b.interests);
+  if (!interests.length) return res.status(400).json({ error: 'Pick at least one area of interest.' });
+  if (db.prepare('SELECT 1 FROM news_feeds WHERE url = ?').get(url)) return res.status(409).json({ error: 'That feed is already on the list.' });
+  const info = db.prepare(
+    'INSERT INTO news_feeds (url, title, interests, family_safe, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)'
+  ).run(url, String(b.title || '').trim().slice(0, 120), JSON.stringify(interests), b.familySafe === false ? 0 : 1, Date.now());
+  const result = await news.fetchFeed({ id: info.lastInsertRowid, url });
+  res.status(201).json({ result });
+});
+
+// PUT /api/admin/news/feeds/:id  { title?, interests?, familySafe?, enabled? }
+router.put('/news/feeds/:id', requireAdmin, (req, res) => {
+  const f = db.prepare('SELECT * FROM news_feeds WHERE id = ?').get(req.params.id);
+  if (!f) return res.status(404).json({ error: 'Feed not found.' });
+  const b = req.body || {};
+  const interests = b.interests !== undefined ? cleanInterests(b.interests) : news.parseInterestList(f.interests);
+  if (!interests.length) return res.status(400).json({ error: 'Pick at least one area of interest.' });
+  db.prepare('UPDATE news_feeds SET title = ?, interests = ?, family_safe = ?, enabled = ? WHERE id = ?').run(
+    b.title !== undefined ? String(b.title).trim().slice(0, 120) : f.title,
+    JSON.stringify(interests),
+    b.familySafe !== undefined ? (b.familySafe ? 1 : 0) : f.family_safe,
+    b.enabled !== undefined ? (b.enabled ? 1 : 0) : f.enabled,
+    f.id
+  );
+  res.json({ ok: true });
+});
+
+// DELETE /api/admin/news/feeds/:id — remove a feed and its headlines.
+router.delete('/news/feeds/:id', requireAdmin, (req, res) => {
+  db.prepare('DELETE FROM news_items WHERE feed_id = ?').run(req.params.id);
+  const info = db.prepare('DELETE FROM news_feeds WHERE id = ?').run(req.params.id);
+  if (!info.changes) return res.status(404).json({ error: 'Feed not found.' });
+  res.json({ ok: true });
+});
+
+// POST /api/admin/news/feeds/:id/fetch — fetch one feed now.
+router.post('/news/feeds/:id/fetch', requireAdmin, async (req, res) => {
+  const f = db.prepare('SELECT id, url FROM news_feeds WHERE id = ?').get(req.params.id);
+  if (!f) return res.status(404).json({ error: 'Feed not found.' });
+  res.json({ result: await news.fetchFeed(f) });
+});
+
+// POST /api/admin/news/fetch — fetch every enabled feed now (in the background).
+router.post('/news/fetch', requireAdmin, (_req, res) => {
+  news.fetchAll().catch(() => {});
+  res.json({ ok: true });
+});
+
+// POST /api/admin/news/items/:id/hide  { hidden } — take a headline off (or
+// put it back on) members' feeds.
+router.post('/news/items/:id/hide', requireAdmin, (req, res) => {
+  const hidden = !(req.body && req.body.hidden === false);
+  const info = db.prepare('UPDATE news_items SET hidden = ? WHERE id = ?').run(hidden ? 1 : 0, req.params.id);
+  if (!info.changes) return res.status(404).json({ error: 'Headline not found.' });
+  res.json({ ok: true, hidden });
+});
+
 const MAX_BLOCK_HOURS = 365 * 24;
 
 // POST /api/admin/users/:id/block  { amount, unit: 'hours' | 'days', reason }

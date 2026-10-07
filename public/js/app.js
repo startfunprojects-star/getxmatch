@@ -5930,6 +5930,20 @@
     `);
     if (ev.type === 'admin' && ev.title) item.querySelector('.feed-title').textContent = ev.title;
     item.querySelector('.feed-text').textContent = ev.text;
+    // News headline (matched to my interests): opens the article on the
+    // source's own site.
+    if (ev.type === 'news' && ev.news && /^https?:\/\//i.test(ev.news.link)) {
+      item.classList.add('feed-news');
+      const a = el('<a class="feed-news-link" target="_blank" rel="noopener noreferrer nofollow"></a>');
+      a.href = ev.news.link;
+      a.textContent = ev.text;
+      const text = item.querySelector('.feed-text');
+      text.textContent = '';
+      text.appendChild(a);
+      if (ev.news.snippet) text.after(Object.assign(document.createElement('div'), { className: 'feed-news-snippet', textContent: ev.news.snippet }));
+      const meta = item.querySelector('.feed-time');
+      meta.textContent = `${ev.news.source}${ev.news.interest ? ' · ' + ev.news.interest : ''} · ${meta.textContent}`;
+    }
     if (ev.image) {
       const img = el('<img class="feed-thumb" alt="shared image" loading="lazy" />');
       img.src = ev.image;

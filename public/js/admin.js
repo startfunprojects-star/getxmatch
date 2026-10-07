@@ -358,6 +358,7 @@
     ['blogs', 'Blogs'],
     ['events', 'Recent Events'],
     ['activity', 'Activity'],
+    ['news', 'News'],
     ['ads', 'Ads'],
     ['highway', 'Highway'],
     ['seo', 'Site SEO'],
@@ -408,6 +409,7 @@
     if (tab === 'blogs') return renderBlogsTab();
     if (tab === 'events') return renderEventsTab();
     if (tab === 'activity') return renderActivityTab();
+    if (tab === 'news') return renderNewsTab();
     if (tab === 'ads') return renderAdsTab();
     if (tab === 'highway') return renderHighwayTab();
     if (tab === 'seo') return renderSeoTab();
@@ -1584,6 +1586,191 @@
       box.appendChild(item);
     });
     const ph = document.getElementById('activityPager');
+    if (ph) { ph.innerHTML = ''; if (pager) ph.appendChild(pager); }
+  }
+
+  /* ---- News tab: RSS / Atom feeds shown on Recent Activity by interest ---- */
+  let newsData = null;
+
+  async function renderNewsTab() {
+    const host = tabHost();
+    host.innerHTML = `
+      <div class="admin-card" id="newsAdd"></div>
+      <div class="admin-card">
+        <h2>News feeds</h2>
+        <p class="count">Headlines from these feeds appear on members’ Recent Activity when they match the members’ areas of interest. Only the headline, a short snippet and a link are shown; members read the article on the source’s site. Members under 18 only see feeds marked family-safe. Feeds are checked every 30 minutes.</p>
+        <div class="row-actions" style="margin-bottom:10px"><button class="ghost small" id="newsFetchAll">↻ Fetch all now</button></div>
+        <div id="newsFeeds" class="count">Loading…</div>
+        <div id="newsFeedsPager"></div>
+      </div>
+      <div class="admin-card">
+        <h2>Latest headlines</h2>
+        <p class="count"><strong>Hide</strong> takes a headline off every member’s feed.</p>
+        <div id="newsItems" class="count">Loading…</div>
+        <div id="newsItemsPager"></div>
+      </div>`;
+    host.querySelector('#newsFetchAll').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      try { await api.post('/api/admin/news/fetch', {}); alert('Fetching every feed in the background. Refresh this tab in a minute.'); }
+      catch (err) { alert(err.message); }
+      e.target.disabled = false;
+    });
+    await loadNews();
+  }
+
+  async function loadNews() {
+    try { newsData = await api.get('/api/admin/news'); }
+    catch (e) {
+      if (e.status === 401) return renderLogin(true);
+      const box = document.getElementById('newsFeeds');
+      if (box) box.textContent = e.message;
+      return;
+    }
+    paintNewsAdd();
+    paintNewsFeeds();
+    paintNewsItems();
+  }
+
+  // Interest checkboxes for a feed.
+  function interestPicker(selected) {
+    const sel = new Set(selected || []);
+    return `<div class="news-interests">${newsData.interests.map((i) =>
+      `<label class="news-int"><input type="checkbox" value="${esc(i)}"${sel.has(i) ? ' checked' : ''} /> ${esc(i)}</label>`).join('')}</div>`;
+  }
+  const pickedInterests = (box) => Array.from(box.querySelectorAll('.news-interests input:checked')).map((c) => c.value);
+
+  function paintNewsAdd() {
+    const box = document.getElementById('newsAdd');
+    if (!box || box.dataset.ready) return;
+    box.dataset.ready = '1';
+    box.innerHTML = `
+      <h2>Add a feed</h2>
+      <label>Feed address (RSS or Atom)<input type="url" id="nfUrl" placeholder="https://example.com/feed.xml" /></label>
+      <label>Name <span class="count">(optional — taken from the feed if left empty)</span><input type="text" id="nfTitle" maxlength="120" /></label>
+      <label class="checkbox-row"><input type="checkbox" id="nfSafe" checked /> Family-safe (also shown to members under 18)</label>
+      <div class="count" style="margin:8px 0 4px">Show it to members interested in:</div>
+      ${interestPicker([])}
+      <div class="row-actions" style="margin-top:10px"><button class="primary" id="nfAdd">Add feed</button></div>
+      <div class="msg" id="nfMsg"></div>`;
+    box.querySelector('#nfAdd').addEventListener('click', async (e) => {
+      const msg = box.querySelector('#nfMsg');
+      msg.className = 'msg';
+      e.target.disabled = true;
+      try {
+        const out = await api.post('/api/admin/news/feeds', {
+          url: box.querySelector('#nfUrl').value.trim(),
+          title: box.querySelector('#nfTitle').value.trim(),
+          familySafe: box.querySelector('#nfSafe').checked,
+          interests: pickedInterests(box),
+        });
+        msg.className = out.result.ok ? 'msg ok' : 'msg error';
+        msg.textContent = out.result.ok
+          ? `Added — ${out.result.found} headline${out.result.found === 1 ? '' : 's'} found.`
+          : `Added, but the first fetch failed: ${out.result.error}`;
+        box.querySelector('#nfUrl').value = '';
+        box.querySelector('#nfTitle').value = '';
+        box.querySelectorAll('.news-interests input').forEach((c) => { c.checked = false; });
+        await loadNews();
+      } catch (err) { msg.className = 'msg error'; msg.textContent = err.message; }
+      e.target.disabled = false;
+    });
+  }
+
+  function paintNewsFeeds() {
+    const box = document.getElementById('newsFeeds');
+    if (!box) return;
+    const feeds = newsData.feeds || [];
+    if (!feeds.length) { box.innerHTML = 'No feeds yet.'; return; }
+    const { slice, pager } = pageFor('newsFeeds', feeds, paintNewsFeeds);
+    box.innerHTML = '';
+    slice.forEach((f) => {
+      const item = el(`
+        <div class="admin-item news-feed${f.enabled ? '' : ' news-off'}">
+          <div><strong>${esc(f.title || f.url)}</strong>
+            ${f.familySafe ? '<span class="pill">family-safe</span>' : '<span class="pill">18+ only</span>'}
+            ${f.enabled ? '' : '<span class="pill">paused</span>'}</div>
+          <div class="count news-url">${esc(f.url)}</div>
+          <div class="count">For: ${f.interests.map(esc).join(', ')}</div>
+          <div class="count">${f.items} headline${f.items === 1 ? '' : 's'} · ${f.lastFetchedAt ? 'checked ' + esc(fmtDate(f.lastFetchedAt)) : 'not checked yet'}
+            ${f.lastError ? `<span class="news-err">· ⚠ ${esc(f.lastError)}</span>` : ''}</div>
+          <div class="admin-item-actions">
+            <button class="ghost small" data-fetch>↻ Fetch now</button>
+            <button class="ghost small" data-edit>Edit</button>
+            <button class="ghost small" data-toggle>${f.enabled ? 'Pause' : 'Resume'}</button>
+            <button class="danger small" data-del>Delete</button>
+          </div>
+        </div>`);
+      item.querySelector('[data-fetch]').addEventListener('click', async (e) => {
+        e.target.disabled = true;
+        try {
+          const { result } = await api.post('/api/admin/news/feeds/' + f.id + '/fetch', {});
+          if (!result.ok) alert('Fetch failed: ' + result.error);
+          await loadNews();
+        } catch (err) { alert(err.message); e.target.disabled = false; }
+      });
+      item.querySelector('[data-toggle]').addEventListener('click', async () => {
+        try { await api.put('/api/admin/news/feeds/' + f.id, { enabled: !f.enabled }); await loadNews(); }
+        catch (err) { alert(err.message); }
+      });
+      item.querySelector('[data-del]').addEventListener('click', async () => {
+        if (!confirm(`Delete this feed and its headlines?\n${f.url}`)) return;
+        try { await api.del('/api/admin/news/feeds/' + f.id); await loadNews(); }
+        catch (err) { alert(err.message); }
+      });
+      item.querySelector('[data-edit]').addEventListener('click', () => {
+        if (item.querySelector('.news-edit')) return;
+        const form = el(`
+          <div class="news-edit">
+            <label>Name<input type="text" maxlength="120" data-title value="${esc(f.title)}" /></label>
+            <label class="checkbox-row"><input type="checkbox" data-safe${f.familySafe ? ' checked' : ''} /> Family-safe</label>
+            ${interestPicker(f.interests)}
+            <div class="row-actions"><button class="primary small" data-save>Save</button><button class="ghost small" data-cancel>Cancel</button></div>
+          </div>`);
+        form.querySelector('[data-cancel]').addEventListener('click', () => form.remove());
+        form.querySelector('[data-save]').addEventListener('click', async () => {
+          try {
+            await api.put('/api/admin/news/feeds/' + f.id, {
+              title: form.querySelector('[data-title]').value,
+              familySafe: form.querySelector('[data-safe]').checked,
+              interests: pickedInterests(form),
+            });
+            await loadNews();
+          } catch (err) { alert(err.message); }
+        });
+        item.appendChild(form);
+      });
+      box.appendChild(item);
+    });
+    const ph = document.getElementById('newsFeedsPager');
+    if (ph) { ph.innerHTML = ''; if (pager) ph.appendChild(pager); }
+  }
+
+  function paintNewsItems() {
+    const box = document.getElementById('newsItems');
+    if (!box) return;
+    const items = newsData.items || [];
+    if (!items.length) { box.innerHTML = 'No headlines yet — feeds are fetched shortly after the server starts, then every 30 minutes.'; return; }
+    const { slice, pager } = pageFor('newsItems', items, paintNewsItems);
+    box.innerHTML = '';
+    slice.forEach((n) => {
+      const item = el(`
+        <div class="admin-item news-item${n.hidden ? ' news-off' : ''}">
+          <div class="act-main">
+            <a target="_blank" rel="noopener noreferrer nofollow"></a>
+            <div class="count">${esc(n.source)} · ${esc(fmtDate(n.at))}${n.hidden ? ' · hidden' : ''}</div>
+          </div>
+          <button class="${n.hidden ? 'ghost' : 'danger'} small">${n.hidden ? 'Show' : 'Hide'}</button>
+        </div>`);
+      const a = item.querySelector('a');
+      a.href = /^https?:\/\//i.test(n.link) ? n.link : '#';
+      a.textContent = n.title;
+      item.querySelector('button').addEventListener('click', async () => {
+        try { await api.post('/api/admin/news/items/' + n.id + '/hide', { hidden: !n.hidden }); await loadNews(); }
+        catch (err) { alert(err.message); }
+      });
+      box.appendChild(item);
+    });
+    const ph = document.getElementById('newsItemsPager');
     if (ph) { ph.innerHTML = ''; if (pager) ph.appendChild(pager); }
   }
 

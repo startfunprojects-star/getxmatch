@@ -8,6 +8,8 @@
 //   • user-shared images    (photos/GIFs posted to the feed)
 //   • profile updates       (new gallery photos/reels, GIFs and profile edits
 //                            by members the viewer follows or is friends with)
+//   • news                  (headlines from the admin's RSS feeds matching the
+//                            viewer's areas of interest — src/news.js)
 // Each activity row carries the viewer's friendship state with the actor so the
 // UI can offer an "Add friend" action inline.
 
@@ -18,7 +20,9 @@ const express = require('express');
 const db = require('../db');
 const config = require('../config');
 const { requireAuth } = require('../auth');
-const { friendState, canSeePhoto } = require('../profileData');
+const { friendState, canSeePhoto, parseInterests } = require('../profileData');
+const news = require('../news');
+const { isMinor } = require('../relations');
 const { imageUpload } = require('../upload');
 const { nsfwGuard } = require('../nsfw');
 const { broadcastActivity } = require('../socket');
@@ -245,6 +249,26 @@ function buildFeed(viewerId, opts) {
     });
   }
 
+  // 3e) News for the viewer's areas of interest (signed-in feed only; members
+  //     under 18 see family-safe sources only). Each row links out to the
+  //     article on the source's own site.
+  if (me) {
+    const prof = db.prepare('SELECT interests FROM profiles WHERE user_id = ?').get(me);
+    const interests = prof ? parseInterests(prof.interests) : [];
+    news.itemsForInterests(interests, { familySafeOnly: isMinor(me), limit: 25 }).forEach((n) => {
+      events.push({
+        id: 'news-' + n.id,
+        type: 'news',
+        at: n.at,
+        icon: '📰',
+        actor: null,
+        target: null,
+        text: n.title,
+        news: { source: n.source, link: n.link, snippet: n.snippet, interest: n.interest },
+      });
+    });
+  }
+
   // 4) Admin-curated announcements.
   db.prepare('SELECT id, title, body, created_at FROM admin_events ORDER BY created_at DESC LIMIT ?')
     .all(PER_SOURCE)
@@ -267,8 +291,19 @@ function buildFeed(viewerId, opts) {
   const visible = events.filter((ev) => !(hidden.has(ev.id) && ev.at <= hidden.get(ev.id)));
 
   visible.sort((a, b) => b.at - a.at);
-  return visible.slice(0, 100);
+  // News is woven in (one headline after every NEWS_EVERY other items) rather
+  // than sorted by time, so fresh headlines never bury members' own activity.
+  const others = visible.filter((ev) => ev.type !== 'news');
+  const headlines = visible.filter((ev) => ev.type === 'news');
+  const merged = [];
+  others.forEach((ev, i) => {
+    merged.push(ev);
+    if ((i + 1) % NEWS_EVERY === 0 && headlines.length) merged.push(headlines.shift());
+  });
+  return merged.concat(headlines).slice(0, 100);
 }
+
+const NEWS_EVERY = 3;
 
 // GET /api/events — merged recent activity for the signed-in user.
 router.get('/', requireAuth, (req, res) => {
