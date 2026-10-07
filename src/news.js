@@ -216,7 +216,11 @@ function parseFeed(xml) {
     const dateRaw = textOf(tag(b, 'pubDate') || tag(b, 'published') || tag(b, 'updated') || tag(b, 'dc:date'));
     const when = Date.parse(dateRaw);
     const snippet = clip(textOf(tag(b, 'description') || tag(b, 'summary') || tag(b, 'content') || ''), MAX_SNIPPET);
-    items.push({ guid, title, link, snippet: snippet === title ? '' : snippet, publishedAt: Number.isFinite(when) ? when : null });
+    // <source url="https://site">Site name</source> (aggregators like Google News).
+    const src = /<source\b([^>]*)>([\s\S]*?)<\/source>/i.exec(b);
+    const sourceName = src ? clip(textOf(src[2]), 120) : '';
+    const sourceUrl = src ? safeUrl(attr(src[1], 'url')) : null;
+    items.push({ guid, title, link, snippet: snippet === title ? '' : snippet, publishedAt: Number.isFinite(when) ? when : null, sourceName, sourceUrl });
   }
   return { title: feedTitle, items };
 }
@@ -335,6 +339,7 @@ function itemsForInterests(interests, { familySafeOnly = false, limit = 25 } = {
 
 module.exports = {
   INTERESTS,
+  clip,
   start,
   fetchAll,
   fetchFeed,

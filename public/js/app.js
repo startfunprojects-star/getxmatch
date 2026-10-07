@@ -1549,12 +1549,54 @@
             <input type="file" id="activityImgInput" accept="image/*" class="hidden" />
             <span class="hint" id="activityShareMsg"></span>
           </div>
+          <div id="homeAlerts"></div>
           <div id="homeFeed"></div>
         </div>
       </div>`;
     renderChatTabs();
     wireActivityShare();
+    renderAlertsInto(document.getElementById('homeAlerts'));
     renderActivityInto(document.getElementById('homeFeed'), { compact: false });
+  }
+
+  // Alerts: the latest news about the admin's keywords (from the websites the
+  // admin chose), above the activity feed. Hidden when there's nothing to show.
+  async function renderAlertsInto(box) {
+    if (!box) return;
+    let data;
+    try { data = await api.get('/api/events/alerts'); } catch (_e) { return; }
+    const items = (data && data.alerts) || [];
+    if (!items.length || !document.body.contains(box)) return;
+    const SHOW = 5;
+    const panel = el(`
+      <section class="alerts-panel card">
+        <div class="alerts-head"><span>🔔 Alerts</span><span class="hint alerts-kw"></span></div>
+        <div class="alerts-list"></div>
+      </section>`);
+    panel.querySelector('.alerts-kw').textContent = (data.keywords || []).join(' · ');
+    const list = panel.querySelector('.alerts-list');
+    items.forEach((a, i) => {
+      if (!/^https?:\/\//i.test(a.link)) return;
+      const row = el(`<div class="alert-item${i >= SHOW ? ' hidden' : ''}">
+          <a class="alert-link" target="_blank" rel="noopener noreferrer nofollow"></a>
+          <div class="hint alert-meta"></div>
+        </div>`);
+      const link = row.querySelector('a');
+      link.href = a.link;
+      link.textContent = a.title;
+      row.querySelector('.alert-meta').textContent = `${a.source} · ${a.keyword} · ${fmtDate(a.at)} ${fmtTime(a.at)}`;
+      list.appendChild(row);
+    });
+    if (items.length > SHOW) {
+      const more = el(`<button class="ghost small alerts-more" type="button">Show ${items.length - SHOW} more</button>`);
+      more.addEventListener('click', () => {
+        list.querySelectorAll('.alert-item.hidden').forEach((r) => r.classList.remove('hidden'));
+        more.remove();
+      });
+      panel.appendChild(more);
+    }
+    box.innerHTML = '';
+    box.appendChild(panel);
   }
 
   // Max size for an image/GIF shared onto Recent Activity (matches the server).

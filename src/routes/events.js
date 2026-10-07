@@ -22,6 +22,7 @@ const config = require('../config');
 const { requireAuth } = require('../auth');
 const { friendState, canSeePhoto, parseInterests } = require('../profileData');
 const news = require('../news');
+const alerts = require('../alerts');
 const { isMinor } = require('../relations');
 const { imageUpload } = require('../upload');
 const { nsfwGuard } = require('../nsfw');
@@ -331,6 +332,16 @@ setTimeout(pruneActivity, 15000).unref();
 setInterval(pruneActivity, 60 * 60 * 1000).unref();
 
 const NEWS_EVERY = 3;
+
+// GET /api/events/alerts — the latest alerts for the admin's keywords (and
+// websites), shown above the feed on Recent Activity (src/alerts.js).
+router.get('/alerts', requireAuth, (_req, res) => {
+  const { keywords } = alerts.getConfig();
+  res.json({
+    alerts: alerts.listAlerts().map(({ hidden: _h, ...a }) => a),
+    keywords,
+  });
+});
 
 // GET /api/events — merged recent activity for the signed-in user.
 router.get('/', requireAuth, (req, res) => {

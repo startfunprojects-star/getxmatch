@@ -1474,6 +1474,7 @@
   async function renderActivityTab() {
     const host = tabHost();
     host.innerHTML = `
+      <div class="admin-card" id="alertsCard"><h2>Alerts</h2><p class="count">Loading…</p></div>
       <div class="admin-card" id="blockedCard"></div>
       <div class="admin-card">
         <h2>Recent Activity</h2>
@@ -1481,7 +1482,102 @@
         <div id="activityList" class="count">Loading…</div>
         <div id="activityPager"></div>
       </div>`;
+    loadAlerts();
     await loadActivity();
+  }
+
+  /* ---- Alerts: latest news for admin keywords, from admin-chosen websites ---- */
+  let alertsData = null;
+
+  async function loadAlerts() {
+    try { alertsData = await api.get('/api/admin/alerts'); }
+    catch (e) {
+      if (e.status === 401) return renderLogin(true);
+      const box = document.getElementById('alertsCard');
+      if (box) box.innerHTML = `<h2>Alerts</h2><p class="count">${esc(e.message)}</p>`;
+      return;
+    }
+    paintAlerts();
+  }
+
+  function alertsStatus() {
+    const lf = alertsData.lastFetch;
+    if (!lf) return 'Not fetched yet.';
+    return `Last checked ${esc(fmtDate(lf.at))} · ${lf.added} new` +
+      (lf.errors && lf.errors.length ? ` · <span class="news-err">⚠ ${esc(lf.errors.join('; '))}</span>` : '');
+  }
+
+  function paintAlerts() {
+    const box = document.getElementById('alertsCard');
+    if (!box) return;
+    box.innerHTML = `
+      <h2>Alerts</h2>
+      <p class="count">Members see the latest news about these keywords in an <strong>Alerts</strong> panel at the top of Recent Activity. Alerts come from a Google News search for each keyword and from your <strong>News</strong> tab feeds, and are checked every 30 minutes. Only the headline, source and a link are shown.</p>
+      <label>Keywords <span class="count">(comma-separated, up to ${alertsData.maxKeywords})</span>
+        <textarea id="alKeywords" rows="2" placeholder="e.g. Dehradun, Uttarakhand weather, board exams, ISRO">${esc(alertsData.keywords.join(', '))}</textarea></label>
+      <label>Websites <span class="count">(comma-separated, up to ${alertsData.maxSites}; leave empty to allow any website)</span>
+        <textarea id="alSites" rows="2" placeholder="e.g. thehindu.com, hindustantimes.com, bbc.com">${esc(alertsData.sites.join(', '))}</textarea></label>
+      <div class="row-actions">
+        <button class="primary" id="alSave">Save &amp; fetch</button>
+        <button class="ghost small" id="alFetch">↻ Fetch now</button>
+      </div>
+      <p class="count" id="alStatus">${alertsStatus()}</p>
+      <h3 style="margin:14px 0 6px">Current alerts <span class="count">(${alertsData.items.length})</span></h3>
+      <div id="alItems"></div>
+      <div id="alPager"></div>`;
+    const status = box.querySelector('#alStatus');
+    const busy = (on, text) => {
+      box.querySelectorAll('#alSave, #alFetch').forEach((b) => { b.disabled = on; });
+      if (text) status.textContent = text;
+    };
+    box.querySelector('#alSave').addEventListener('click', async () => {
+      busy(true, 'Saving and fetching alerts…');
+      try {
+        await api.put('/api/admin/alerts', {
+          keywords: box.querySelector('#alKeywords').value,
+          sites: box.querySelector('#alSites').value,
+        });
+        await loadAlerts();
+      } catch (e) { busy(false); alert(e.message); }
+    });
+    box.querySelector('#alFetch').addEventListener('click', async () => {
+      busy(true, 'Fetching alerts…');
+      try { await api.post('/api/admin/alerts/fetch', {}); await loadAlerts(); }
+      catch (e) { busy(false); alert(e.message); }
+    });
+    paintAlertItems();
+  }
+
+  function paintAlertItems() {
+    const list = document.getElementById('alItems');
+    if (!list) return;
+    const items = alertsData.items || [];
+    if (!items.length) {
+      list.innerHTML = `<p class="count">${alertsData.keywords.length ? 'No alerts found yet for these keywords and websites.' : 'Add keywords to start collecting alerts.'}</p>`;
+      return;
+    }
+    const { slice, pager } = pageFor('alerts', items, paintAlertItems);
+    list.innerHTML = '';
+    slice.forEach((a) => {
+      const item = el(`
+        <div class="admin-item news-item${a.hidden ? ' news-off' : ''}">
+          <div class="act-main">
+            <a target="_blank" rel="noopener noreferrer nofollow"></a>
+            <div class="count">${esc(a.source)} · <span class="pill">${esc(a.keyword)}</span> · ${esc(fmtDate(a.at))}${a.hidden ? ' · hidden' : ''}</div>
+          </div>
+          <button class="${a.hidden ? 'ghost' : 'danger'} small">${a.hidden ? 'Show' : 'Hide'}</button>
+        </div>`);
+      const link = item.querySelector('a');
+      link.href = /^https?:\/\//i.test(a.link) ? a.link : '#';
+      link.textContent = a.title;
+      item.querySelector('button').addEventListener('click', async () => {
+        try { await api.post('/api/admin/alerts/items/' + a.id + '/hide', { hidden: !a.hidden }); await loadAlerts(); }
+        catch (e) { alert(e.message); }
+      });
+      list.appendChild(item);
+    });
+    const ph = document.getElementById('alPager');
+    if (ph) { ph.innerHTML = ''; if (pager) ph.appendChild(pager); }
   }
 
   async function loadActivity() {

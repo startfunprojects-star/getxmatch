@@ -393,6 +393,42 @@ router.post('/news/items/:id/hide', requireAdmin, (req, res) => {
   res.json({ ok: true, hidden });
 });
 
+/* ---------------------------------------------------------------------------
+   Keyword alerts on Recent Activity (src/alerts.js)
+--------------------------------------------------------------------------- */
+const alerts = require('../alerts');
+
+// GET /api/admin/alerts — the keywords, websites, last fetch and current alerts.
+router.get('/alerts', requireAdmin, (_req, res) => {
+  res.json({
+    ...alerts.getConfig(),
+    maxKeywords: alerts.MAX_KEYWORDS,
+    maxSites: alerts.MAX_SITES,
+    lastFetch: alerts.lastFetch(),
+    items: alerts.listAlerts({ limit: 100, includeHidden: true }),
+  });
+});
+
+// PUT /api/admin/alerts  { keywords: "a, b", sites: "x.com, y.com" } — save,
+// then fetch fresh alerts for the new lists (awaited so the admin sees them).
+router.put('/alerts', requireAdmin, async (req, res) => {
+  const cfg = alerts.setConfig({ keywords: req.body && req.body.keywords, sites: req.body && req.body.sites });
+  const result = cfg.keywords.length ? await alerts.fetchAll() : { ok: true, added: 0, errors: [] };
+  res.json({ ...cfg, result });
+});
+
+// POST /api/admin/alerts/fetch — fetch alerts now.
+router.post('/alerts/fetch', requireAdmin, async (_req, res) => {
+  res.json({ result: await alerts.fetchAll() });
+});
+
+// POST /api/admin/alerts/items/:id/hide  { hidden } — hide / show one alert.
+router.post('/alerts/items/:id/hide', requireAdmin, (req, res) => {
+  const hidden = !(req.body && req.body.hidden === false);
+  if (!alerts.setHidden(req.params.id, hidden)) return res.status(404).json({ error: 'Alert not found.' });
+  res.json({ ok: true, hidden });
+});
+
 const MAX_BLOCK_HOURS = 365 * 24;
 
 // POST /api/admin/users/:id/block  { amount, unit: 'hours' | 'days', reason }
