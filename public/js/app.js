@@ -2202,10 +2202,14 @@
       img.addEventListener('click', () => openLightbox(objectUrl));
       bubble.appendChild(img);
     }
-    // No download link: files are view-only. A non-anchor label keeps the name
-    // and size without a browser "Save as…" affordance.
     bubble.appendChild(el(`<span class="file">📄 ${esc(meta.name)} (${fmtSize(meta.size)})</span>`));
-    bubble.appendChild(el(`<span class="ephemeral-note">View-only · stays until the chat is closed · not stored on the server</span>`));
+    // Either side can save the file. It lives only in this browser (relayed
+    // live, never stored on the server), so this is the way to keep a copy.
+    const dl = el('<a class="ghost small btn-link file-download">⬇ Download</a>');
+    dl.href = objectUrl;
+    dl.download = meta.name || 'file';
+    bubble.appendChild(dl);
+    bubble.appendChild(el(`<span class="ephemeral-note">Not stored on the server · download it to keep a copy</span>`));
     // Share an image/gif from this chat to the Highway (1-on-1 chats only).
     if (isImg && state.peer) {
       const share = el('<button class="ghost small hw-share-btn" type="button">🌊 Share to Highway</button>');

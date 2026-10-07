@@ -1712,3 +1712,7 @@ button.primary, .chat-cta { letter-spacing: .01em; }
 .act-block-form input[type=text] { flex: 1; min-width: 180px; width: auto; }
 .act-block-form select { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 .act-blocked { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+/* Download link on a file shared in chat. */
+.file-download { align-self: flex-start; margin-top: 6px; border: 1px solid var(--border); border-radius: 10px; padding: 5px 10px; color: var(--text); }
+.file-download:hover { background: var(--bg-3); border-color: var(--border-strong); }
