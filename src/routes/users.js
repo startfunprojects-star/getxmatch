@@ -6,6 +6,8 @@ const { requireAuth } = require('../auth');
 const { getGift } = require('../gifts');
 const polls = require('../polls');
 const chatQuiz = require('../chatQuiz');
+const { areFriends } = require('../profileData');
+const { areBlocked } = require('../relations');
 
 // Build the compact quoted-message preview attached to a reply. Mirrors
 // replyPreview() in src/socket.js so live and historical replies render alike.
@@ -48,6 +50,8 @@ router.get('/', requireAuth, (req, res) => {
       username: r.username,
       displayName: r.display_name,
       avatar: r.avatar ? `/uploads/${r.avatar}` : null,
+      // Only friends can chat; the sidebar opens a profile for anyone else.
+      isFriend: areFriends(req.user.id, r.id),
     })),
   });
 });
@@ -59,7 +63,9 @@ router.get('/:id/avatars', requireAuth, (req, res) => {
   const uid = parseInt(req.params.id, 10);
   if (!uid) return res.status(400).json({ error: 'Invalid user id.' });
 
-  const buffer = db
+  // The picture buffer is part of the complete profile: friends (and the
+  // member themself) only. Everyone else gets the single display picture.
+  const buffer = uid !== req.user.id && !areFriends(req.user.id, uid) ? [] : db
     .prepare('SELECT filename FROM profile_buffer_photos WHERE user_id = ? ORDER BY created_at DESC')
     .all(uid)
     .map((r) => `/uploads/${r.filename}`);
@@ -106,6 +112,8 @@ router.get('/:id/messages', requireAuth, (req, res) => {
   }
 
   res.json({
+    // One-to-one chat is for friends only (enforced on send in src/socket.js).
+    canChat: areFriends(req.user.id, otherId) && !areBlocked(req.user.id, otherId),
     messages: rows.map((m) => ({
       id: m.id,
       from: m.sender_id,

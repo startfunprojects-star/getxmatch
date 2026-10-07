@@ -31,9 +31,12 @@ const WEIGHTS = {
   // Per response (once per quiz for each pair of members).
   openShareAnswered: 3, // to the member who shared the link
   openAnswer: 1, // to the member who answered it
-  // Follows: each follower pays the fee they followed at; the member followed
-  // earns double (src/follows.js). Default fee 1 → -1 / +2.
-  followGainMultiplier: 2,
+  // Follows are free; the member followed earns this per follower.
+  follower: 1,
+  // Friend requests: once accepted, the requester pays the fee fixed on the
+  // request and the addressee earns double (src/friendFees.js). Default fee
+  // 1 → -1 / +2. This is on top of WEIGHTS.friend for both of them.
+  friendFeeGainMultiplier: 2,
   // Referrals (src/referrals.js): per new member who joined with your code,
   // and once to a member who joined with someone's code.
   referrer: 4,
@@ -57,10 +60,10 @@ function rankedUsers() {
                 WHERE hp.user_id = u.id)                                       AS likes,
               (SELECT COUNT(*) FROM poll_votes pv WHERE pv.user_id = u.id)     AS polls,
               (SELECT COUNT(*) FROM follows fo WHERE fo.followee_id = u.id)    AS followers,
-              (SELECT COALESCE(SUM(fee), 0) FROM follows fo
-                WHERE fo.followee_id = u.id)                                   AS follow_fees_in,
-              (SELECT COALESCE(SUM(fee), 0) FROM follows fo
-                WHERE fo.follower_id = u.id)                                   AS follow_fees_out,
+              (SELECT COALESCE(SUM(fee), 0) FROM friendships ff
+                WHERE ff.addressee_id = u.id AND ff.status = 'accepted')       AS friend_fees_in,
+              (SELECT COALESCE(SUM(fee), 0) FROM friendships ff
+                WHERE ff.requester_id = u.id AND ff.status = 'accepted')       AS friend_fees_out,
               (SELECT COUNT(*) FROM quiz_matches qm
                 WHERE qm.a_user_id = u.id AND qm.points_awarded = 1)           AS shares_completed,
               (SELECT COUNT(*) FROM quiz_matches qm
@@ -99,8 +102,9 @@ function rankedUsers() {
           r.open_answered * WEIGHTS.openAnswer +
           r.referrals * WEIGHTS.referrer +
           r.was_referred * WEIGHTS.referred +
-          r.follow_fees_in * WEIGHTS.followGainMultiplier -
-          r.follow_fees_out
+          r.followers * WEIGHTS.follower +
+          r.friend_fees_in * WEIGHTS.friendFeeGainMultiplier -
+          r.friend_fees_out
       ) - r.penalty;
     return {
       id: r.id,

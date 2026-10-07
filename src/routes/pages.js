@@ -1015,7 +1015,8 @@ router.get('/how-it-works', (req, res) => {
   <li><strong>Polls:</strong> 5 points for each poll you vote in (changing your vote doesn't earn more).</li>
   <li><strong>Highway:</strong> 4 points for every like your posts receive.</li>
   <li><strong>Friends &amp; ratings:</strong> 8 points per friend, 5 per rating you receive, plus 20 × your average star rating.</li>
-  <li><strong>Follows:</strong> following someone costs their follow fee (1 point by default) and earns them double. Each member sets their own fee, and unfollowing reverses it.</li>
+  <li><strong>Friend requests:</strong> when someone accepts your friend request you pay their friend fee (1 point by default) and they earn double. Each member sets their own fee, and unfriending reverses it.</li>
+  <li><strong>Follows:</strong> following is free, and you earn 1 point for every follower you have.</li>
   <li><strong>Referrals:</strong> share your personal code with the Refer button on your profile — you earn 4 points for each person who joins with it, and they get 2.</li>
 </ul>
 
@@ -1025,6 +1026,7 @@ router.get('/how-it-works', (req, res) => {
 <h2>Privacy and safety</h2>
 <ul>
   <li>Your email address is never shown to other members.</li>
+  <li>Only friends can see each other's complete profile and chat. Followers see a preview (your newest 3 photos) and your profile updates on Recent Activity.</li>
   <li>Chat files are relayed live and never stored. Chat messages stay until you delete them.</li>
   <li>Members under 18 and adults can't contact each other: no requests, chat, follows, ratings, comments or gifts between them.</li>
   <li>You can ignore or report any member. Profiles that collect many reports are suspended for 7 days. Read our <a href="/safety">Safety guidelines</a> for more.</li>

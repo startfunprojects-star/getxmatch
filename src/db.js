@@ -832,10 +832,9 @@ db.exec(`
   if (!cols.includes('notif_read_at')) db.exec('ALTER TABLE users ADD COLUMN notif_read_at INTEGER;');
 })();
 
-// --- Follows. One-way, no approval. `fee` is what the follower paid at the
-// time (the followee earns double); users.follow_fee is what a NEW follower
-// pays now (default 1). Stored per follow so changing the fee never alters
-// earlier follows. See src/follows.js.
+// --- Follows. One-way, no approval, free; the followee earns 1 point per
+// follower (src/follows.js). `fee` and users.follow_fee are left over from
+// when follows cost points and are no longer used.
 db.exec(`
   CREATE TABLE IF NOT EXISTS follows (
     follower_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -849,6 +848,22 @@ db.exec(`
 (function migrateFollowFee() {
   const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
   if (!cols.includes('follow_fee')) db.exec('ALTER TABLE users ADD COLUMN follow_fee INTEGER NOT NULL DEFAULT 1;');
+})();
+
+// --- Friend request fees (src/friendFees.js). Follows no longer move points
+// beyond +1 per follower; the fee rules now apply to friend requests instead.
+// users.friend_fee is what a NEW request to the member costs (carried over from
+// their old follow fee); friendships.fee is fixed when the request is sent.
+// Friendships made before this change keep fee 0, so nobody's points shift
+// retroactively for them.
+(function migrateFriendFee() {
+  const ucols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!ucols.includes('friend_fee')) {
+    db.exec('ALTER TABLE users ADD COLUMN friend_fee INTEGER NOT NULL DEFAULT 1;');
+    db.exec('UPDATE users SET friend_fee = follow_fee;');
+  }
+  const fcols = db.prepare('PRAGMA table_info(friendships)').all().map((c) => c.name);
+  if (!fcols.includes('fee')) db.exec('ALTER TABLE friendships ADD COLUMN fee INTEGER NOT NULL DEFAULT 0;');
 })();
 
 (function migrateQuizTypes() {

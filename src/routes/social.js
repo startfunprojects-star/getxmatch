@@ -4,8 +4,9 @@ const express = require('express');
 
 const db = require('../db');
 const { requireAuth } = require('../auth');
-const { friendState, ratingSummary, RATING_DIMS, photoReactionState, photoComments, commentReactionState } = require('../profileData');
+const { friendState, ratingSummary, RATING_DIMS, photoReactionState, photoComments, commentReactionState, canSeePhoto } = require('../profileData');
 const { areBlocked } = require('../relations');
+const { MAX_FEE, GAIN_MULTIPLIER, friendFeeOf, friendFeeTotals } = require('../friendFees');
 const moderation = require('../moderation');
 const { GIFTS } = require('../gifts');
 const { GALLERY_REACTIONS, GALLERY_REACTION_SET } = require('../galleryReactions');
@@ -119,6 +120,10 @@ router.post('/comment/:username', requireAuth, (req, res) => {
   if (target.id !== req.user.id && areBlocked(req.user.id, target.id)) {
     return res.status(403).json({ error: 'You cannot comment on this profile.' });
   }
+  // Profile comments are part of the complete profile, which is for friends.
+  if (target.id !== req.user.id && friendState(target.id, req.user.id) !== 'friends') {
+    return res.status(403).json({ error: 'Only friends can comment on a profile.' });
+  }
   const body = ((req.body && req.body.body) || '').trim();
   if (!body) return res.status(400).json({ error: 'Comment cannot be empty.' });
   if (body.length > 500) return res.status(400).json({ error: 'Comment must be 500 characters or fewer.' });
@@ -173,6 +178,11 @@ function resolvePhoto(req, res) {
   const photo = db.prepare('SELECT id, user_id FROM gallery_photos WHERE id = ?').get(id);
   if (!photo) {
     res.status(404).json({ error: 'Photo not found.' });
+    return null;
+  }
+  // The full gallery is for friends; a follower may open only the newest few.
+  if (!canSeePhoto(photo, req.user.id)) {
+    res.status(403).json({ error: 'Only friends can see this photo.' });
     return null;
   }
   return photo;
@@ -282,14 +292,14 @@ router.post('/photo-comment/:id/react', requireAuth, (req, res) => {
   if (!id) return res.status(400).json({ error: 'Invalid comment.' });
   const row = db
     .prepare(
-      `SELECT gc.id, gp.user_id AS owner_id
+      `SELECT gc.id, gp.id AS photo_id, gp.user_id AS owner_id
        FROM gallery_comments gc
        JOIN gallery_photos gp ON gp.id = gc.photo_id
        WHERE gc.id = ?`
     )
     .get(id);
   if (!row) return res.status(404).json({ error: 'Comment not found.' });
-  if (areBlocked(req.user.id, row.owner_id)) {
+  if (areBlocked(req.user.id, row.owner_id) || !canSeePhoto({ id: row.photo_id, user_id: row.owner_id }, req.user.id)) {
     return res.status(403).json({ error: 'You cannot react to this.' });
   }
   const emoji = ((req.body && req.body.emoji) || '').trim();
@@ -377,13 +387,34 @@ router.post('/friend/:username', requireAuth, (req, res) => {
     return res.status(409).json({ error: 'You already sent a request.' });
   }
 
+  // The request is priced at the addressee's current friend fee; points move
+  // only once it's accepted (src/friendFees.js).
+  const fee = friendFeeOf(target.id);
   db.prepare(
-    'INSERT INTO friendships (requester_id, addressee_id, status, rel_type, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(req.user.id, target.id, 'pending', type, Date.now());
+    'INSERT INTO friendships (requester_id, addressee_id, status, rel_type, fee, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(req.user.id, target.id, 'pending', type, fee, Date.now());
   announceRelation('sent', type, req.user.id, req.user.username, target.id, target.username);
   // Live-notify the addressee so their "Requests" button lights up immediately.
   notifyUser(target.id, 'notify:request', { from: req.user.username, type });
-  res.status(201).json({ state: 'outgoing', type });
+  res.status(201).json({ state: 'outgoing', type, fee, theyEarn: fee * GAIN_MULTIPLIER });
+});
+
+// GET /api/social/friend-fee — my friend fee and points earned/spent on
+// accepted friend requests.
+router.get('/friend-fee', requireAuth, (req, res) => {
+  const fee = friendFeeOf(req.user.id);
+  res.json({ fee, gain: fee * GAIN_MULTIPLIER, maxFee: MAX_FEE, multiplier: GAIN_MULTIPLIER, ...friendFeeTotals(req.user.id) });
+});
+
+// PUT /api/social/friend-fee  { fee } — what future friend requests to me cost
+// the sender (I get double once I accept). Earlier requests keep their fee.
+router.put('/friend-fee', requireAuth, (req, res) => {
+  const fee = Number(req.body && req.body.fee);
+  if (!Number.isInteger(fee) || fee < 0 || fee > MAX_FEE) {
+    return res.status(400).json({ error: `Friend fee must be a whole number from 0 to ${MAX_FEE}.` });
+  }
+  db.prepare('UPDATE users SET friend_fee = ? WHERE id = ?').run(fee, req.user.id);
+  res.json({ fee, gain: fee * GAIN_MULTIPLIER });
 });
 
 // POST /api/social/friend/:username/accept — accept an incoming request
@@ -412,11 +443,13 @@ router.post('/friend/:username/accept', requireAuth, (req, res) => {
 router.delete('/friend/:username', requireAuth, (req, res) => {
   const target = resolveTarget(req, res);
   if (!target) return;
-  db.prepare(
+  const info = db.prepare(
     `DELETE FROM friendships
      WHERE (requester_id = ? AND addressee_id = ?)
         OR (requester_id = ? AND addressee_id = ?)`
   ).run(req.user.id, target.id, target.id, req.user.id);
+  // Unfriending reverses the accepted request's fee (and the friend points).
+  if (info.changes) broadcastLeaderboardChange();
   res.json({ state: 'none' });
 });
 
@@ -492,7 +525,7 @@ router.post('/block/:username', requireAuth, (req, res) => {
      ON CONFLICT(blocker_id, blocked_id) DO NOTHING`
   ).run(req.user.id, target.id, now);
 
-  // A block ends follows both ways (each follow's points are reversed).
+  // A block ends follows both ways.
   db.prepare(
     `DELETE FROM follows
      WHERE (follower_id = ? AND followee_id = ?)
@@ -505,6 +538,7 @@ router.post('/block/:username', requireAuth, (req, res) => {
      WHERE (requester_id = ? AND addressee_id = ?)
         OR (requester_id = ? AND addressee_id = ?)`
   ).run(req.user.id, target.id, target.id, req.user.id);
+  broadcastLeaderboardChange(); // ended follows / friendship change points
 
   res.json({ state: 'blocked' });
 });

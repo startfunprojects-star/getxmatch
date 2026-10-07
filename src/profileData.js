@@ -1,7 +1,8 @@
 'use strict';
 
 const db = require('./db');
-const { followSummary } = require('./follows');
+const { followSummary, isFollowing } = require('./follows');
+const { friendFeeOf, GAIN_MULTIPLIER: FRIEND_FEE_GAIN } = require('./friendFees');
 const { ageFromDob } = require('./profileFields');
 const { blockState, ignoreState } = require('./relations');
 const { isOnline } = require('./socket');
@@ -45,6 +46,44 @@ function friendsOf(userId) {
     relType: r.rel_type || 'friend',
     online: isOnline(r.id),
   }));
+}
+
+// How many of a member's newest gallery photos a follower (who isn't a friend)
+// may see.
+const FOLLOWER_PREVIEW_PHOTOS = 3;
+
+// What `viewerId` may see of `ownerId`'s profile:
+//   'full'     — the owner themself, or a friend: the complete profile;
+//   'follower' — follows the owner: the basics plus the newest few photos;
+//   'basic'    — anyone else: name, picture, about, age, gender, country.
+function profileAccess(ownerId, viewerId) {
+  if (!viewerId || viewerId === ownerId) return viewerId ? 'full' : 'basic';
+  if (friendState(ownerId, viewerId) === 'friends') return 'full';
+  return isFollowing(viewerId, ownerId) ? 'follower' : 'basic';
+}
+
+// The gallery photo ids `viewerId` may open on `ownerId`'s profile (null =
+// all of them).
+function visiblePhotoIds(ownerId, viewerId) {
+  const access = profileAccess(ownerId, viewerId);
+  if (access === 'full') return null;
+  if (access === 'basic') return new Set();
+  return new Set(db
+    .prepare('SELECT id FROM gallery_photos WHERE user_id = ? ORDER BY created_at DESC LIMIT ?')
+    .all(ownerId, FOLLOWER_PREVIEW_PHOTOS)
+    .map((r) => r.id));
+}
+
+// True if `viewerId` may open (react to, comment on) this gallery photo.
+function canSeePhoto(photo, viewerId) {
+  const ids = visiblePhotoIds(photo.user_id, viewerId);
+  return ids === null || ids.has(photo.id);
+}
+
+// True if two members are friends (accepted request either way). Chat is for
+// friends only.
+function areFriends(a, b) {
+  return !!a && !!b && a !== b && friendState(a, b) === 'friends';
 }
 
 // The four independent rating dimensions, each scored 1-5 stars. Mirrored on
@@ -303,16 +342,21 @@ function buildProfile(userId, viewerId) {
   if (!row) return null;
 
   const isMe = viewerId === row.id;
+  // Friends (and the owner) see everything; a follower sees a preview; anyone
+  // else sees the basics only.
+  const access = profileAccess(row.id, viewerId);
+  const full = access === 'full';
 
-  const gallery = buildGallery(userId, viewerId);
+  const allPhotos = buildGallery(userId, viewerId);
+  const gallery = full ? allPhotos : access === 'follower' ? allPhotos.slice(0, FOLLOWER_PREVIEW_PHOTOS) : [];
 
   // GIF "feelings" collection, gated by the owner's chosen visibility.
   const fStateForGifs = friendState(row.id, viewerId);
   const gifVisibility = row.gif_visibility || 'public';
-  const gifsAllowed =
+  const gifsAllowed = full && (
     isMe ||
     gifVisibility === 'public' ||
-    (gifVisibility === 'friends' && fStateForGifs === 'friends');
+    (gifVisibility === 'friends' && fStateForGifs === 'friends'));
   const gifs = gifsAllowed ? buildGifs(userId) : [];
   // Only flag the collection as "locked" for a viewer when it's both hidden
   // from them AND actually has something in it.
@@ -325,8 +369,8 @@ function buildProfile(userId, viewerId) {
     .prepare('SELECT id, filename FROM profile_buffer_photos WHERE user_id = ? ORDER BY created_at DESC')
     .all(userId);
 
-  // All profile information is public; the friends list is always visible.
-  // Email is the only private field and is never included in this payload.
+  // The complete profile (details, friends list, comments, GIFs, the whole
+  // gallery) is for friends only. Email is never included in this payload.
   const fState = friendState(row.id, viewerId);
   const friendList = friendsOf(row.id);
   const blocked = blockState(row.id, viewerId);
@@ -352,38 +396,47 @@ function buildProfile(userId, viewerId) {
     about: row.bio,
     avatar: row.avatar ? `/uploads/${row.avatar}` : null,
     gender: row.gender || null,
-    dateOfBirth: row.date_of_birth || null,
+    dateOfBirth: full ? row.date_of_birth || null : null,
     age: ageFromDob(row.date_of_birth),
     country: row.country || null,
-    state: row.state || null,
-    city: row.city || null,
-    interests: parseInterests(row.interests),
-    education: row.education || null,
-    educationStream: row.education_stream || null,
-    workStatus: row.work_status || null,
+    state: full ? row.state || null : null,
+    city: full ? row.city || null : null,
+    interests: full ? parseInterests(row.interests) : [],
+    education: full ? row.education || null : null,
+    educationStream: full ? row.education_stream || null : null,
+    workStatus: full ? row.work_status || null : null,
+    // 'full' | 'follower' | 'basic' — see profileAccess().
+    access,
     gallery,
+    // How many photos/reels the gallery really has (a follower sees only the
+    // newest FOLLOWER_PREVIEW_PHOTOS of them, others none).
+    galleryTotal: allPhotos.length,
     gifs,
     // The chosen audience level for the GIF collection. `gifsLocked` tells a
     // viewer the owner has GIFs they're not allowed to see, so the UI can show
     // a small lock hint instead of an empty section.
     gifVisibility,
     gifsLocked: gifsHidden,
-    buffer: bufferPhotos.map((ph) => ({ id: ph.id, url: `/uploads/${ph.filename}` })),
+    buffer: isMe ? bufferPhotos.map((ph) => ({ id: ph.id, url: `/uploads/${ph.filename}` })) : [],
     rating: ratingSummary(row.id, viewerId),
     // Total likes this user has received on their Highway posts (shared images
     // included). Shown on the profile and factored into leaderboard ranking.
     likes: db
       .prepare('SELECT COUNT(*) AS n FROM highway_likes hl JOIN highway_posts hp ON hp.id = hl.post_id WHERE hp.user_id = ?')
       .get(row.id).n,
-    comments: commentsFor(row.id, viewerId),
+    comments: full ? commentsFor(row.id, viewerId) : [],
     // Followers / following, the fee a new follower pays, and whether the
     // viewer already follows (src/follows.js).
     follow: followSummary(row.id, viewerId),
     friends: {
       count: friendList.length,
-      list: friendList,
+      list: full ? friendList : [],
       state: fState,
       relType,
+      // What a friend request to this member costs once accepted (they earn
+      // `gain`) — see src/friendFees.js.
+      fee: friendFeeOf(row.id),
+      gain: friendFeeOf(row.id) * FRIEND_FEE_GAIN,
     },
     blocked,
     ignore: ignoreState(row.id, viewerId),
@@ -398,6 +451,10 @@ function buildProfile(userId, viewerId) {
 
 module.exports = {
   buildProfile,
+  profileAccess,
+  canSeePhoto,
+  areFriends,
+  FOLLOWER_PREVIEW_PHOTOS,
   friendState,
   friendsOf,
   ratingSummary,

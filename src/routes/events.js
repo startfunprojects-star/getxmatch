@@ -7,6 +7,8 @@
 //   • quiz attempts         (quizzes users attempted)
 //   • admin events          (curated announcements)
 //   • user-shared images    (photos/GIFs posted to the feed)
+//   • profile updates       (new gallery photos/reels, GIFs and profile edits
+//                            by members the viewer follows or is friends with)
 // Each activity row carries the viewer's friendship state with the actor so the
 // UI can offer an "Add friend" action inline.
 
@@ -17,7 +19,7 @@ const express = require('express');
 const db = require('../db');
 const config = require('../config');
 const { requireAuth } = require('../auth');
-const { friendState } = require('../profileData');
+const { friendState, canSeePhoto } = require('../profileData');
 const { imageUpload } = require('../upload');
 const { nsfwGuard } = require('../nsfw');
 const { broadcastActivity } = require('../socket');
@@ -228,6 +230,68 @@ function buildFeed(viewerId, opts) {
         target: null,
         text: `${a.displayName} shared an image`,
         image: `/uploads/${row.image}`,
+      });
+    });
+  }
+
+  // 3d) Profile updates from the members the viewer follows (or is friends
+  //     with): new gallery photos / reels, new GIFs, and profile edits. Only in
+  //     the viewer's own feed, never the public one. A photo carries a
+  //     thumbnail only when the viewer is allowed to see it on the profile.
+  if (me) {
+    const watched = `(SELECT followee_id FROM follows WHERE follower_id = @me
+                      UNION
+                      SELECT CASE WHEN requester_id = @me THEN addressee_id ELSE requester_id END
+                        FROM friendships
+                       WHERE (requester_id = @me OR addressee_id = @me) AND status = 'accepted')`;
+    db.prepare(
+      `SELECT id, user_id, filename, kind, created_at FROM gallery_photos
+        WHERE user_id IN ${watched} ORDER BY created_at DESC LIMIT @n`
+    ).all({ me, n: PER_SOURCE }).forEach((row) => {
+      const a = userMini(row.user_id, me);
+      if (!a) return;
+      const isReel = row.kind === 'reel';
+      events.push({
+        id: 'gallery-' + row.id,
+        type: 'profile-update',
+        at: row.created_at,
+        icon: isReel ? '🎬' : '📷',
+        actor: a,
+        target: null,
+        text: `${a.displayName} added a new ${isReel ? 'reel' : 'photo'} to their gallery`,
+        image: !isReel && canSeePhoto({ id: row.id, user_id: row.user_id }, me) ? `/uploads/${row.filename}` : undefined,
+      });
+    });
+    db.prepare(
+      `SELECT id, user_id, created_at FROM user_gifs
+        WHERE user_id IN ${watched} ORDER BY created_at DESC LIMIT @n`
+    ).all({ me, n: PER_SOURCE }).forEach((row) => {
+      const a = userMini(row.user_id, me);
+      if (!a) return;
+      events.push({
+        id: 'gif-' + row.id,
+        type: 'profile-update',
+        at: row.created_at,
+        icon: '🎞️',
+        actor: a,
+        target: null,
+        text: `${a.displayName} added a new GIF feeling`,
+      });
+    });
+    db.prepare(
+      `SELECT user_id, updated_at FROM profiles
+        WHERE user_id IN ${watched} AND updated_at IS NOT NULL ORDER BY updated_at DESC LIMIT @n`
+    ).all({ me, n: PER_SOURCE }).forEach((row) => {
+      const a = userMini(row.user_id, me);
+      if (!a) return;
+      events.push({
+        id: `profile-${row.user_id}-${row.updated_at}`,
+        type: 'profile-update',
+        at: row.updated_at,
+        icon: '✏️',
+        actor: a,
+        target: null,
+        text: `${a.displayName} updated their profile`,
       });
     });
   }

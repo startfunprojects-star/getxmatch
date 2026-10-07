@@ -48,6 +48,24 @@ function friendIdsOf(userId) {
     .map((r) => r.fid);
 }
 
+// True if two members are friends (an accepted request either way).
+function areFriends(a, b) {
+  return !!db.prepare(
+    `SELECT 1 FROM friendships
+     WHERE ((requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?))
+       AND status = 'accepted'`
+  ).get(a, b, b, a);
+}
+
+// Why `a` may not direct-message `b` (null if they may). One-to-one chat —
+// messages, files, gifts, polls, quizzes, screen sharing — is for friends only,
+// and never across a block or the age wall.
+function dmDenied(a, b, blockedMsg) {
+  if (areBlocked(a, b)) return blockedMsg || 'You cannot message this user.';
+  if (!areFriends(a, b)) return 'Only friends can chat. Send a friend request first.';
+  return null;
+}
+
 // Tell a user's friends/relations that they just came online or went offline,
 // so open clients can flip the little presence dot live.
 function broadcastPresence(io, userId, isOnlineNow) {
@@ -252,8 +270,9 @@ function initSocket(io) {
 
         const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
-        if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot message this user.' });
+        {
+          const denied = dmDenied(me.id, to, 'You cannot message this user.');
+          if (denied) return ack && ack({ error: denied });
         }
 
         // Optional reply: only accept an id that belongs to THIS conversation.
@@ -300,8 +319,9 @@ function initSocket(io) {
         if (size > config.maxChatFileBytes) {
           return ack && ack({ error: 'File exceeds the size limit.' });
         }
-        if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot share files with this user.' });
+        {
+          const denied = dmDenied(me.id, to, 'You cannot share files with this user.');
+          if (denied) return ack && ack({ error: denied });
         }
         if (!isOnline(to)) {
           return ack && ack({ error: 'Recipient is offline. Files are only delivered live and are never stored.' });
@@ -363,8 +383,9 @@ function initSocket(io) {
 
         const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
-        if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot send a gift to this user.' });
+        {
+          const denied = dmDenied(me.id, to, 'You cannot send a gift to this user.');
+          if (denied) return ack && ack({ error: denied });
         }
 
         const now = Date.now();
@@ -427,8 +448,9 @@ function initSocket(io) {
         if (!to) return ack && ack({ error: 'Invalid recipient.' });
         const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
-        if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot send a poll to this user.' });
+        {
+          const denied = dmDenied(me.id, to, 'You cannot send a poll to this user.');
+          if (denied) return ack && ack({ error: denied });
         }
 
         const pollId = polls.createPoll({ creatorId: me.id, ...clean, dmA: me.id, dmB: to });
@@ -486,8 +508,9 @@ function initSocket(io) {
         if (!to || !quizId) return ack && ack({ error: 'Invalid quiz.' });
         const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
-        if (areBlocked(me.id, to)) {
-          return ack && ack({ error: 'You cannot start a quiz with this user.' });
+        {
+          const denied = dmDenied(me.id, to, 'You cannot start a quiz with this user.');
+          if (denied) return ack && ack({ error: denied });
         }
         const quiz = db.prepare('SELECT id, questions, type FROM quizzes WHERE id = ?').get(quizId);
         if (!quiz) return ack && ack({ error: 'Quiz not found.' });
@@ -577,7 +600,7 @@ function initSocket(io) {
     // Typing indicator (transient).
     socket.on('chat:typing', (payload) => {
       const to = parseInt(payload && payload.to, 10);
-      if (to && !areBlocked(me.id, to)) io.to(`user:${to}`).emit('chat:typing', { from: me.id });
+      if (to && !dmDenied(me.id, to)) io.to(`user:${to}`).emit('chat:typing', { from: me.id });
     });
 
     /* ----------------------------------------------------------------
@@ -594,7 +617,7 @@ function initSocket(io) {
     const relayScreen = (payload, event) => {
       const to = parseInt(payload && payload.to, 10);
       if (!to) return;
-      if (areBlocked(me.id, to)) return;
+      if (dmDenied(me.id, to)) return;
       const out = { from: me.id };
       if (payload.sdp) out.sdp = payload.sdp;
       if (payload.candidate) out.candidate = payload.candidate;
@@ -636,7 +659,7 @@ function initSocket(io) {
         if (!to) return ack && ack({ error: 'Invalid request.' });
         const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
-        if (areBlocked(me.id, to)) return ack && ack({ error: 'You cannot set an activity with this member.' });
+        { const denied = dmDenied(me.id, to, 'You cannot set an activity with this member.'); if (denied) return ack && ack({ error: denied }); }
 
         // Only the predefined verbs (src/activities.js) are accepted — no free
         // text, since the activity is shown on the public feed.

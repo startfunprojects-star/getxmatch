@@ -1004,10 +1004,17 @@
           <div class="search"><input id="searchInput" placeholder="Search people…" /></div>
           <div class="list" id="list"></div>
         </aside>
-        <section class="main" id="main"></section>
+        <div class="main-col">
+          <div class="mobile-bar">
+            <button class="ghost small" id="mobileBack" title="Back to the dashboard">← Dashboard</button>
+            <span class="mobile-bar-title" id="mobileBarTitle"></span>
+          </div>
+          <section class="main" id="main"></section>
+        </div>
       </div>
     `);
     root.appendChild(shell);
+    setupMobileBack(shell);
 
     // Load my avatar into the topbar (and remember it for chat rows).
     api.get('/api/profile/me').then(({ profile }) => {
@@ -1072,6 +1079,47 @@
       pendingChatUser = null;
       openChatByUsername(u);
     }
+  }
+
+  // Phones show either the sidebar (the dashboard) or the main pane, never both
+  // (.viewing-main). The mobile bar above the main pane always offers a way
+  // back to the dashboard, and the phone's own Back button does the same.
+  function setupMobileBack(shell) {
+    const phone = window.matchMedia('(max-width: 720px)');
+    const title = shell.querySelector('#mobileBarTitle');
+    const toDashboard = () => {
+      shell.classList.remove('viewing-main');
+      closeReactionPalette();
+      resetAvatars();
+      state.peer = null;
+      state.group = null;
+      shell.querySelectorAll('#exploreNav button').forEach((x) => x.classList.remove('active'));
+      document.querySelectorAll('.list-item').forEach((r) => r.classList.remove('active'));
+    };
+    const label = () => {
+      const active = shell.querySelector('#exploreNav button.active');
+      if (active) return active.textContent.replace(/\d+$/, '').trim();
+      if (state.peer) return state.peer.displayName || '@' + state.peer.username;
+      if (state.group) return '👥 Group chat';
+      return 'getxmatch';
+    };
+    // Each switch to the main pane on a phone adds one history entry, so Back
+    // returns to the dashboard instead of leaving the app.
+    new MutationObserver(() => {
+      if (!shell.classList.contains('viewing-main')) return;
+      title.textContent = label();
+      if (phone.matches && !(history.state && history.state.gxMain)) history.pushState({ gxMain: 1 }, '');
+    }).observe(shell, { attributes: true, attributeFilter: ['class'] });
+    // Section switches inside the main pane don't touch the class; refresh the
+    // title on any sidebar click too.
+    shell.querySelector('.sidebar').addEventListener('click', () => setTimeout(() => { title.textContent = label(); }, 0));
+    window.addEventListener('popstate', () => {
+      if (shell.isConnected && shell.classList.contains('viewing-main')) toDashboard();
+    });
+    shell.querySelector('#mobileBack').addEventListener('click', () => {
+      if (history.state && history.state.gxMain) history.back(); // → popstate → toDashboard
+      else toDashboard();
+    });
   }
 
   // Update the sidebar "Requests" badge with the number of incoming requests
@@ -1184,7 +1232,8 @@
         </div>
       `);
       if (state.peer && state.peer.id === u.id) row.classList.add('active');
-      row.addEventListener('click', () => openChat(u));
+      // Only friends can chat: searching for anyone else opens their profile.
+      row.addEventListener('click', () => (state.tab === 'people' && !u.isFriend ? showProfile(u.username) : openChat(u)));
       listEl.appendChild(row);
     });
   }
@@ -1200,7 +1249,7 @@
     listEl.innerHTML = '';
     if (!friends.length) {
       listEl.appendChild(el(
-        `<div style="padding:20px;color:var(--muted)">No friends yet.<br><span class="hint">Search above to find people, open a chat, and send a friend request.</span></div>`
+        `<div style="padding:20px;color:var(--muted)">No friends yet.<br><span class="hint">Search above to find people, follow them or send a friend request. Only friends can chat.</span></div>`
       ));
       return;
     }
@@ -1767,7 +1816,9 @@
     // Load persisted history (text + gifts).
     adState.counters.chat = 0; // restart the every-20-messages ad cadence per chat
     try {
-      const { messages } = await api.get(`/api/users/${peer.id}/messages`);
+      const { messages, canChat } = await api.get(`/api/users/${peer.id}/messages`);
+      // Only friends can chat: swap the composer for a notice otherwise.
+      if (canChat === false && state.peer && state.peer.id === peer.id) lockChatComposer(view, peer);
 
       // Shared files aren't stored on the server; they're kept in THIS browser's
       // IndexedDB so they survive a refresh (per user/device). Fall back to the
@@ -1791,6 +1842,18 @@
       }
     } catch (_e) {}
     scrollBody();
+  }
+
+  // Replace a conversation's composer (and its share / group / activity
+  // controls) with a "friends only" notice and a way to their profile.
+  function lockChatComposer(view, peer) {
+    ['.composer', '#activityBar', '#screenShareBtn', '#makeGroupBtn', '#giftPicker'].forEach((sel) => {
+      const n = view.querySelector(sel);
+      if (n) n.remove();
+    });
+    const note = el(`<div class="chat-locked">🔒 Only friends can chat. <button class="primary small">View profile</button></div>`);
+    note.querySelector('button').addEventListener('click', () => showProfile(peer.username));
+    view.appendChild(note);
   }
 
   function chatBody() { return document.getElementById('chatBody'); }
@@ -4106,12 +4169,13 @@
   // Non-owners see the GIFs they're allowed to (subject to the owner's chosen
   // visibility); the owner additionally gets a visibility selector and upload +
   // delete controls. Clicking any GIF opens the slideshow at that GIF.
-  // Follower counts, the Follow button (someone else's profile) and the follow
-  // fee setting (your own profile). Following costs the follower the fee the
-  // member has set; the member earns double. The fee is fixed per follow when
-  // it's made, so changing it never touches earlier follows.
+  // Follower counts, the Follow button (someone else's profile) and the friend
+  // fee setting (your own profile). Following is free and earns the member a
+  // point. Friend requests cost the sender the member's friend fee once
+  // accepted; the member earns double. The fee is fixed on each request when
+  // it's sent, so changing it never touches earlier requests.
   function renderFollow(view, profile, isMe) {
-    let f = profile.follow || { followers: 0, following: 0, fee: 1, gain: 2, isFollowing: false };
+    let f = profile.follow || { followers: 0, following: 0, isFollowing: false };
     const counts = view.querySelector('#pvFollowCounts');
     const paintCounts = () => {
       counts.innerHTML = `<strong>${f.followers}</strong> follower${f.followers === 1 ? '' : 's'} · <strong>${f.following}</strong> following`;
@@ -4123,19 +4187,18 @@
       const paintBtn = () => {
         slot.innerHTML = '';
         const btn = f.isFollowing
-          ? el(`<button class="ghost following-btn" title="You paid ${f.paidFee} point${f.paidFee === 1 ? '' : 's'} to follow. Unfollowing refunds it.">✓ Following</button>`)
-          : el(`<button class="ghost" title="Costs you ${f.fee} point${f.fee === 1 ? '' : 's'}; they earn ${f.gain}.">➕ Follow · ${f.fee} pt${f.fee === 1 ? '' : 's'}</button>`);
+          ? el('<button class="ghost following-btn" title="Unfollow">✓ Following</button>')
+          : el('<button class="ghost" title="Free — they earn a point, and you see a preview of their profile and their updates on Recent Activity.">➕ Follow</button>');
         btn.addEventListener('click', async () => {
-          const who = profile.displayName || '@' + profile.username;
-          if (f.isFollowing) {
-            if (!confirm(`Unfollow ${who}? Your ${f.paidFee} point${f.paidFee === 1 ? ' is' : 's are'} refunded and they lose the ${f.paidFee * 2} they earned from your follow.`)) return;
-          } else if (!confirm(`Follow ${who}? It costs you ${f.fee} point${f.fee === 1 ? '' : 's'} and they earn ${f.gain}.`)) return;
+          if (f.isFollowing && !confirm(`Unfollow ${profile.displayName || '@' + profile.username}?`)) return;
           btn.disabled = true;
           try {
             const out = f.isFollowing
               ? await api.del('/api/follow/' + encodeURIComponent(profile.username))
               : await api.post('/api/follow/' + encodeURIComponent(profile.username), {});
             f = out.follow;
+            // Following changes what of the profile is visible: reload it.
+            if (profile.access !== 'full') return showProfile(profile.username);
             paintCounts();
             paintBtn();
           } catch (e) { btn.disabled = false; alert(e.message); }
@@ -4145,26 +4208,26 @@
       paintBtn();
     }
 
-    const feeBox = view.querySelector('#pvFollowFee');
+    const feeBox = view.querySelector('#pvFriendFee');
     if (isMe && feeBox) {
-      api.get('/api/follow/me').then((me) => {
+      api.get('/api/social/friend-fee').then((me) => {
         feeBox.innerHTML = `
           <div class="ff-row">
-            <label for="ffInput">Follow fee</label>
+            <label for="ffInput">Friend request fee</label>
             <input id="ffInput" type="number" min="0" max="${me.maxFee}" step="1" value="${me.fee}" />
-            <span class="ff-gain">you earn <strong id="ffGain">${me.gain}</strong> per new follower</span>
+            <span class="ff-gain">you earn <strong id="ffGain">${me.gain}</strong> per accepted request</span>
             <button class="ghost small" id="ffSave">Save</button>
           </div>
-          <p class="hint">Each new follower pays this many points (0–${me.maxFee}) and you receive double. Changing it only affects future follows. So far you’ve earned <strong>${me.earned}</strong> from followers and spent <strong>${me.spent}</strong> following others.</p>
+          <p class="hint">When you accept someone’s friend request, they pay this many points (0–${me.maxFee}) and you receive double. Changing it only affects future requests; unfriending reverses it. So far you’ve earned <strong>${me.earned}</strong> from friend requests and spent <strong>${me.spent}</strong> on yours. Followers are free and earn you 1 point each.</p>
         `;
         const input = feeBox.querySelector('#ffInput');
         const gain = feeBox.querySelector('#ffGain');
         input.addEventListener('input', () => { gain.textContent = (Number(input.value) || 0) * me.multiplier; });
         feeBox.querySelector('#ffSave').addEventListener('click', async () => {
           try {
-            const out = await api.put('/api/follow/fee', { fee: Number(input.value) });
+            const out = await api.put('/api/social/friend-fee', { fee: Number(input.value) });
             gain.textContent = out.gain;
-            notifyToast(`Follow fee saved: new followers pay ${out.fee}, you earn ${out.gain}.`);
+            notifyToast(`Friend fee saved: new requests cost ${out.fee}, you earn ${out.gain}.`);
           } catch (e) { alert(e.message); }
         });
       }).catch(() => {});
@@ -4354,7 +4417,7 @@
             </div>
           </div>
           <div class="pro-actions pv-actions">
-            ${!isMe ? '<button class="primary" id="pvChat">💬 Message</button>' : ''}
+            ${!isMe && profile.friends.state === 'friends' ? '<button class="primary" id="pvChat">💬 Message</button>' : ''}
             ${!isMe ? `<span id="pvFollow"></span>` : ''}
             ${!isMe ? `<span id="pvFriend"></span>` : ''}
             ${!isMe ? `<span id="pvBlock"></span>` : ''}
@@ -4365,7 +4428,10 @@
           </div>
           ${isMe && profile.referralCode ? `<div class="referral-box">Your referral code: <b class="referral-code">${esc(profile.referralCode)}</b>
             <span class="hint">You get 4 points for everyone who joins with it, and they get 2.</span></div>` : ''}
-          ${isMe ? '<div class="follow-fee-box" id="pvFollowFee"></div>' : ''}
+          ${isMe ? '<div class="follow-fee-box" id="pvFriendFee"></div>' : ''}
+          ${!isMe && profile.access !== 'full' ? `<div class="access-note">🔒 ${profile.access === 'follower'
+            ? `You follow ${esc(profile.displayName)}, so you see a preview. Become friends to see the complete profile and to chat.`
+            : `Follow ${esc(profile.displayName)} to see a preview of their photos and their updates on Recent Activity. Become friends to see the complete profile and to chat.`}</div>` : ''}
         </div>
 
         <div class="pro-grid">
@@ -4377,24 +4443,24 @@
               </h3>
               <div class="gallery" id="pvGallery"></div>
             </section>
-            <section class="card">
+            ${profile.access === 'full' ? `<section class="card">
               <h3 class="card-title">🎞️ GIF feelings <span class="hint" id="gifCount"></span>
                 <button class="ghost small gal-slideshow" id="gifSlideshow" title="Play as slideshow" style="float:right">▶ Slideshow</button>
               </h3>
               <p class="hint" style="margin:-4px 0 10px">GIFs that capture a mood. ${isMe ? `Up to ${MAX_GIFS}. Choose who can see them below.` : 'Open one to slide through them.'}</p>
               <div id="pvGifVisibility"></div>
               <div class="gallery gif-gallery" id="pvGifs"></div>
-            </section>
+            </section>` : ''}
             ${isMe ? `<section class="card">
               <h3 class="card-title">🎞️ Profile picture buffer <span class="hint" id="bufCount"></span></h3>
               <p class="hint" style="margin:-4px 0 10px">Up to ${MAX_BUFFER} pictures. In chat, your picture is picked at random from these and changes every 20 seconds.</p>
               <div class="gallery" id="pvBuffer"></div>
             </section>` : ''}
-            <section class="card">
+            ${profile.access === 'full' ? `<section class="card">
               <h3 class="card-title">💬 Comments</h3>
               <div id="pvCommentForm"></div>
               <div class="comments" id="pvComments"></div>
-            </section>
+            </section>` : ''}
           </div>
           <div class="pro-col-side">
             <section class="card pro-qr-card">
@@ -4441,7 +4507,7 @@
     const galCount = view.querySelector('#galCount');
     const updateCount = () => {
       const n = gal.querySelectorAll('.cell').length;
-      galCount.textContent = `(${n})`;
+      galCount.textContent = profile.access === 'full' ? `(${n})` : `(${profile.galleryTotal || 0})`;
     };
     // The photos currently in the grid, in DOM order — the slider pages through
     // exactly these. Each cell keeps a reference to its photo + meta repainter.
@@ -4494,9 +4560,15 @@
       }
       return cell;
     };
-    if (!profile.gallery.length) gal.appendChild(el('<div class="hint">No photos or reels yet.</div>'));
-    else profile.gallery.forEach((ph) => gal.appendChild(makeCell(ph)));
+    if (!profile.gallery.length) {
+      gal.appendChild(el(`<div class="hint">${profile.access === 'full' || !profile.galleryTotal
+        ? 'No photos or reels yet.'
+        : `🔒 ${profile.galleryTotal} photo${profile.galleryTotal === 1 ? '' : 's'} — follow to see a preview, or become friends to see them all.`}</div>`));
+    } else profile.gallery.forEach((ph) => gal.appendChild(makeCell(ph)));
     updateCount();
+    if (profile.access === 'follower' && profile.galleryTotal > profile.gallery.length) {
+      gal.after(el(`<p class="hint gal-locked">🔒 Showing the newest ${profile.gallery.length} of ${profile.galleryTotal}. Become friends to see the whole gallery.</p>`));
+    }
 
     /* ----- gallery slideshow ----- */
     const galSlideBtn = view.querySelector('#galSlideshow');
@@ -4582,8 +4654,8 @@
     const camTop = view.querySelector('#pvCameraTop');
     if (camTop) camTop.addEventListener('click', () => openCamera(addPosted));
 
-    /* ----- GIF "feelings" collection ----- */
-    renderGifSection(view, profile, isMe);
+    /* ----- GIF "feelings" collection (complete profile only) ----- */
+    if (profile.access === 'full') renderGifSection(view, profile, isMe);
 
     /* ----- profile picture buffer (own profile only) ----- */
     if (isMe) {
@@ -4644,7 +4716,9 @@
 
     /* ----- connections, grouped into a block per relationship kind ----- */
     const friendsBox = view.querySelector('#pvFriends');
-    if (!profile.friends.list.length) {
+    if (profile.access !== 'full' && profile.friends.count) {
+      friendsBox.appendChild(el('<div class="hint">🔒 Only friends can see who they’re connected with.</div>'));
+    } else if (!profile.friends.list.length) {
       friendsBox.appendChild(el('<div class="hint">No connections yet.</div>'));
     } else {
       // Bucket each accepted connection by its relationship kind.
@@ -4681,6 +4755,7 @@
 
     /* ----- comments ----- */
     const commentsBox = view.querySelector('#pvComments');
+    if (commentsBox) {
     const renderComment = (c) => {
       const item = el(`
         <div class="comment">
@@ -4727,6 +4802,7 @@
       };
       form.querySelector('#cSend').addEventListener('click', send);
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+    }
     }
 
     /* ----- follows ----- */
@@ -4861,14 +4937,18 @@
 
   // "Add friend" button: sends a friend request to `username`, then calls
   // `refresh`.
-  function relationshipRequestEl(username, refresh) {
+  // `fee` (optional) is what the request costs once accepted (they earn double).
+  function relationshipRequestEl(username, refresh, fee) {
     const u = encodeURIComponent(username);
-    const b = el('<button class="primary small" title="Send a friend request">🤝 Add friend</button>');
+    const priced = Number.isInteger(fee);
+    const b = el(`<button class="primary small" title="Send a friend request${priced ? ` — if accepted it costs you ${fee} point${fee === 1 ? '' : 's'} and they earn ${fee * 2}` : ''}">🤝 Add friend${priced && fee ? ` · ${fee} pt${fee === 1 ? '' : 's'}` : ''}</button>`);
     b.addEventListener('click', async (e) => {
       e.stopPropagation();
+      if (priced && fee && !confirm(`Send a friend request? If they accept, it costs you ${fee} point${fee === 1 ? '' : 's'} and they earn ${fee * 2}.`)) return;
       b.disabled = true;
       try {
-        await api.post('/api/social/friend/' + u, {});
+        const out = await api.post('/api/social/friend/' + u, {});
+        if (!priced && out && out.fee) notifyToast(`Friend request sent. If accepted, it costs you ${out.fee} point${out.fee === 1 ? '' : 's'} and they earn ${out.theyEarn}.`);
         refreshRequestBadge();
         refresh();
       } catch (err) { alert(err.message); b.disabled = false; }
@@ -4902,7 +4982,7 @@
         slot.appendChild(btn('Decline', 'ghost', () => api.del('/api/social/friend/' + u)));
         break;
       default:
-        slot.appendChild(relationshipRequestEl(profile.username, refresh));
+        slot.appendChild(relationshipRequestEl(profile.username, refresh, profile.friends.fee));
     }
   }
 
@@ -5751,7 +5831,7 @@
   /* ---------- Leaderboard ---------- */
   async function renderLeaderboard() {
     const main = openMainView();
-    main.appendChild(sectionShell('Leaderboard', 'Kings & Queens ranks everyone by overall points. The four quiz boards rank members by the points they earned in that category’s quizzes. Points can go below zero: a stopped quiz and every quiz reattempt cost 10 points. Earn points from quizzes, ratings, Highway likes, friends, polls (5 per poll), compatibility links (10 for sharing, 5 for answering) and followers.'));
+    main.appendChild(sectionShell('Leaderboard', 'Kings & Queens ranks everyone by overall points. The four quiz boards rank members by the points they earned in that category’s quizzes. Points can go below zero: a stopped quiz and every quiz reattempt cost 10 points. Earn points from quizzes, ratings, Highway likes, friends and accepted friend requests (the sender pays your friend fee, you earn double), polls (5 per poll), compatibility links (10 for sharing, 5 for answering) and followers (1 each).'));
     const body = main.querySelector('#sectionBody');
     let boards;
     try {

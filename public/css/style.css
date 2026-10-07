@@ -240,6 +240,10 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .list-item .handle { color: var(--muted); font-size: 13px; }
 
 .main { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* Column holding the main pane, with the phone-only "back to dashboard" bar on top. */
+.main-col { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.main-col > .main { flex: 1; }
+.mobile-bar { display: none; }
 .empty-main { display: grid; place-items: center; height: 100%; color: var(--muted); text-align: center; padding: 24px; }
 
 /* ---------- Chat ---------- */
@@ -1068,6 +1072,11 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
 .ff-row input { width: 90px; }
 .ff-gain { color: var(--muted); font-size: 13px; }
 .follow-fee-box .hint { margin: 8px 0 0; }
+/* Shown on a profile the viewer isn't friends with (preview / basics only). */
+.access-note { margin: 0 24px 16px; padding: 10px 14px; border: 1px dashed var(--border); border-radius: 12px; background: var(--bg-3); color: var(--muted); font-size: 14px; }
+.gal-locked { margin: 10px 0 0; }
+/* Replaces the chat composer when the other member isn't a friend. */
+.chat-locked { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; padding: 14px 18px; border-top: 1px solid var(--border); background: var(--bg-2); color: var(--muted); }
 .notif-list { display: flex; flex-direction: column; padding: 6px; gap: 2px; }
 .notif-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px; border-radius: 12px; cursor: pointer; border: 1px solid transparent; }
 .notif-item:hover { background: var(--bg-3); }
@@ -1284,7 +1293,15 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
 @media (max-width: 720px) {
   .shell { grid-template-columns: 1fr; }
   .shell.viewing-main .sidebar { display: none; }
-  .shell:not(.viewing-main) .main { display: none; }
+  .shell:not(.viewing-main) .main-col { display: none; }
+  .mobile-bar {
+    display: flex; align-items: center; gap: 10px; flex: none;
+    padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-2);
+  }
+  .mobile-bar-title { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Chat header buttons wrap instead of running off-screen. */
+  .chat-head { flex-wrap: wrap; padding: 10px 12px; }
+  .access-note { margin: 0 16px 16px; }
   .lb-stats { display: none; }
 }
 
