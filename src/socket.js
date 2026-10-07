@@ -651,8 +651,8 @@ function initSocket(io) {
     });
 
     // "What are you doing" status for this conversation. An empty/blank activity
-    // clears it. Persisted so it surfaces on the Recent Activity feed, and
-    // pushed live to both users so the chat header stays in sync.
+    // clears it. Persisted and pushed live to both users so the chat header
+    // stays in sync. It's private to the two of them (never on Recent Activity).
     socket.on('chat:activity', (payload, ack) => {
       try {
         const to = parseInt(payload && payload.to, 10);
@@ -661,8 +661,7 @@ function initSocket(io) {
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
         { const denied = dmDenied(me.id, to, 'You cannot set an activity with this member.'); if (denied) return ack && ack({ error: denied }); }
 
-        // Only the predefined verbs (src/activities.js) are accepted — no free
-        // text, since the activity is shown on the public feed.
+        // Only the predefined verbs (src/activities.js) are accepted — no free text.
         const raw = String((payload && payload.activity) || '').trim();
         if (raw && !isValidActivity(raw)) return ack && ack({ error: 'Pick an activity from the list.' });
         const now = Date.now();
@@ -680,21 +679,7 @@ function initSocket(io) {
         io.to(`user:${to}`).emit('chat:activity', evt);
         io.to(`user:${me.id}`).emit('chat:activity', evt);
 
-        // Stream it live onto everyone's Recent Activity feed (same non-clickable
-        // "<A> <activity> <B>" line the /api/events feed builds on reload).
-        if (raw) {
-          const nameOf = (uid) => {
-            const r = db.prepare(
-              'SELECT p.display_name, u.username FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?'
-            ).get(uid);
-            return r ? (r.display_name || r.username) : 'Someone';
-          };
-          io.emit('activity:new', {
-            activity: raw,
-            at: now,
-            text: `${nameOf(me.id)} ${raw} ${nameOf(to)}`,
-          });
-        }
+        // Kept between the two of them: chats never appear on Recent Activity.
 
         ack && ack({ ok: true, activity: raw });
       } catch (e) {

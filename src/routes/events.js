@@ -3,7 +3,6 @@
 // Recent Events feed — a unified, time-ordered activity stream aggregated from
 // real activity across the app plus admin-curated announcements:
 //   • user relationships   (new accepted friendships)
-//   • recent chats          (conversations that recently happened)
 //   • quiz attempts         (quizzes users attempted)
 //   • admin events          (curated announcements)
 //   • user-shared images    (photos/GIFs posted to the feed)
@@ -47,18 +46,6 @@ function userMini(id, viewerId) {
     isMe: r.id === viewerId,
     friendState: friendState(r.id, viewerId),
   };
-}
-
-// Pick an emoji that suits the activity verb, so fake rows blend in visually.
-function activityIcon(activity) {
-  const a = String(activity).toLowerCase();
-  if (/(chat|messag|talk)/.test(a)) return '💬';
-  if (/(match|paired|connect)/.test(a)) return '🧩';
-  if (/(rat|star|review)/.test(a)) return '⭐';
-  if (/(gift|sent)/.test(a)) return '🎁';
-  if (/(view|check|look|profile)/.test(a)) return '👀';
-  if (/(friend|follow)/.test(a)) return '🤝';
-  return '✨';
 }
 
 // GET /api/events/public — a PUBLIC, no-auth activity feed for the sign-in page.
@@ -154,27 +141,7 @@ function buildFeed(viewerId, opts) {
     });
   });
 
-  // 2) Recent chats — one event per conversing pair (privacy: no message text).
-  db.prepare(
-    `SELECT MIN(sender_id, recipient_id) AS u1, MAX(sender_id, recipient_id) AS u2,
-            MAX(created_at) AS at, COUNT(*) AS n
-     FROM messages
-     GROUP BY MIN(sender_id, recipient_id), MAX(sender_id, recipient_id)
-     ORDER BY at DESC LIMIT ?`
-  ).all(PER_SOURCE).forEach((m) => {
-    const a = userMini(m.u1, me);
-    const b = userMini(m.u2, me);
-    if (!a || !b) return;
-    events.push({
-      id: `chat-${m.u1}-${m.u2}`,
-      type: 'chat',
-      at: m.at,
-      icon: '💬',
-      actor: a,
-      target: b,
-      text: `${a.displayName} and ${b.displayName} have been chatting (${m.n} message${m.n === 1 ? '' : 's'})`,
-    });
-  });
+  // (Chats are private: who talks to whom never appears on the feed.)
 
   // 3) Quiz attempts.
   db.prepare(
@@ -192,24 +159,6 @@ function buildFeed(viewerId, opts) {
       actor: a,
       target: null,
       text: `${a.displayName} attempted the quiz “${qa.title}” and earned ${qa.score}/${qa.total} points`,
-    });
-  });
-
-  // 3b) User-declared chat activity ("A chatting with B") — real users.
-  db.prepare(
-    'SELECT user_id, peer_id, activity, updated_at FROM chat_activities ORDER BY updated_at DESC LIMIT ?'
-  ).all(PER_SOURCE).forEach((row) => {
-    const a = userMini(row.user_id, me);
-    const b = userMini(row.peer_id, me);
-    if (!a || !b) return;
-    events.push({
-      id: `activity-${row.user_id}-${row.peer_id}`,
-      type: 'chat-activity',
-      at: row.updated_at,
-      icon: activityIcon(row.activity),
-      actor: a,
-      target: b,
-      text: `${a.displayName} ${row.activity} ${b.displayName}`,
     });
   });
 
