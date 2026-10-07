@@ -435,6 +435,7 @@ ${bodyHtml}
       </nav>
     </div>
   </footer>
+  <script src="/js/protect.js" defer></script>
 </body>
 </html>`;
 }

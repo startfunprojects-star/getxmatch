@@ -57,6 +57,14 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
 // Persisted profile & gallery images.
+// Uploaded pictures and videos load inside pages only: opening one directly
+// in a browser tab (address bar, "Open image in new tab") is refused, so
+// members' photos aren't one click from "Save as". Requests without fetch
+// metadata (link-preview crawlers, older browsers) are still served.
+app.use('/uploads', (req, res, next) => {
+  if (req.get('sec-fetch-dest') === 'document') return res.status(403).type('text').send('This picture can only be viewed on getxmatch.');
+  next();
+});
 app.use('/uploads', express.static(config.uploadsDir, { maxAge: '7d', index: false }));
 
 // API routes.

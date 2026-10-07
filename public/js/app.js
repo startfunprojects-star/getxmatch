@@ -5933,7 +5933,7 @@
     if (ev.image) {
       const img = el('<img class="feed-thumb" alt="shared image" loading="lazy" />');
       img.src = ev.image;
-      img.addEventListener('click', () => window.open(ev.image, '_blank', 'noopener'));
+      img.addEventListener('click', () => openLightbox(ev.image));
       item.querySelector('.feed-thumb-wrap').appendChild(img);
     }
     return item;
