@@ -224,6 +224,9 @@ db.exec(`
     // Country for alerts & news on Recent Activity (NULL = profile country;
     // 'Worldwide' = none). See src/newsCountries.js.
     ['news_country', 'TEXT'],
+    // Country for job openings in the Alerts panel (NULL = same as
+    // news_country; 'Worldwide' = every country). See src/jobs.js.
+    ['jobs_country', 'TEXT'],
   ];
   for (const [name, type] of additions) {
     if (!cols.includes(name)) {

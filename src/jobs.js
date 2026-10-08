@@ -221,6 +221,32 @@ function listJobs({ country = null, limit = SHOW_LIMIT, includeHidden = false } 
 }
 
 /* ---------------------------------------------------------------------------
+   The country a member sees jobs for (profiles.jobs_country): one they pick,
+   'Worldwide' for every country, or — until they pick — the same country as
+   their alerts and news.
+--------------------------------------------------------------------------- */
+function jobsCountryFor(userId) {
+  const r = db.prepare('SELECT jobs_country FROM profiles WHERE user_id = ?').get(userId);
+  const v = r && r.jobs_country;
+  if (v === countries.WORLDWIDE || countries.isCountry(v)) return { country: v, chosen: true };
+  return { country: countries.forUser(userId).country, chosen: false };
+}
+
+// Save a member's pick ('' = follow the alerts country again).
+function setJobsCountry(userId, country) {
+  const v = country === countries.WORLDWIDE || countries.isCountry(country) ? country : null;
+  db.prepare('UPDATE profiles SET jobs_country = ? WHERE user_id = ?').run(v, userId);
+  return jobsCountryFor(userId);
+}
+
+// Countries that have an enabled job feed of their own (the picker lists
+// these; other countries only get the "Anywhere" feeds).
+function countriesWithJobs() {
+  return db.prepare('SELECT DISTINCT country FROM job_feeds WHERE enabled = 1 AND country IS NOT NULL ORDER BY country')
+    .all().map((r) => r.country);
+}
+
+/* ---------------------------------------------------------------------------
    Admin
 --------------------------------------------------------------------------- */
 function feedRows() {
@@ -280,6 +306,6 @@ function setHidden(id, hidden) {
 }
 
 module.exports = {
-  start, fetchAll, fetchOne, listJobs, feedRows, addFeed, updateFeed, deleteFeed, setHidden,
+  start, fetchAll, fetchOne, listJobs, jobsCountryFor, setJobsCountry, countriesWithJobs, feedRows, addFeed, updateFeed, deleteFeed, setHidden,
   getKeywords, setKeywords, MAX_KEYWORDS,
 };

@@ -1659,12 +1659,36 @@
       panel.appendChild(more);
     }
 
-    // Job openings from the admin's job-board feeds (for the chosen country,
-    // plus jobs anywhere). Members apply on the job board itself.
+    // Job openings from the admin's job-board feeds, for the country the
+    // member picks here (by default their alerts country), plus jobs anywhere.
+    // Members apply on the job board itself.
     const jobItems = (data.jobs || []).filter((j) => /^https?:\/\//i.test(j.link));
-    if (jobItems.length) {
-      const sec = el(`<div class="alerts-jobs"><div class="alerts-sub">💼 Jobs</div><div class="alerts-list"></div></div>`);
+    const jobCountries = data.jobCountries || [];
+    if (jobItems.length || jobCountries.length) {
+      const sec = el(`<div class="alerts-jobs">
+          <label class="alerts-sub alerts-country">💼 Jobs in <select></select> <span class="alerts-busy hint"></span></label>
+          <div class="alerts-list"></div>
+        </div>`);
+      const jsel = sec.querySelector('select');
+      const jopts = [{ value: '', label: data.jobsChosen ? 'Same as alerts' : `Same as alerts (${data.jobsCountry})` },
+        { value: 'Worldwide', label: 'All countries' }];
+      const listed = jobCountries.slice();
+      if (data.jobsChosen && data.jobsCountry !== 'Worldwide' && !listed.includes(data.jobsCountry)) listed.push(data.jobsCountry);
+      listed.forEach((c) => jopts.push({ value: c, label: c }));
+      jopts.forEach((o) => jsel.appendChild(Object.assign(document.createElement('option'), { value: o.value, textContent: o.label })));
+      jsel.value = data.jobsChosen ? data.jobsCountry : '';
+      jsel.addEventListener('change', async () => {
+        const busy = sec.querySelector('.alerts-busy');
+        jsel.disabled = true;
+        busy.textContent = 'Loading…';
+        try { renderAlertsInto(box, await api.put('/api/events/jobs-country', { country: jsel.value })); }
+        catch (e) { jsel.disabled = false; busy.textContent = e.message; }
+      });
       const jl = sec.querySelector('.alerts-list');
+      if (!jobItems.length) {
+        jl.appendChild(el('<p class="hint alerts-empty"></p>')).textContent =
+          data.jobsCountry === 'Worldwide' ? 'No job openings right now.' : `No job openings for ${data.jobsCountry} right now.`;
+      }
       jobItems.forEach((j, i) => {
         const row = el(`<div class="alert-item${i >= SHOW ? ' hidden' : ''}">
             <a class="alert-link" target="_blank" rel="noopener noreferrer nofollow"></a>
@@ -1673,7 +1697,7 @@
         const link = row.querySelector('a');
         link.href = j.link;
         link.textContent = j.title;
-        const where = data.country === 'Worldwide' && j.country ? ` · ${j.country}` : '';
+        const where = data.jobsCountry === 'Worldwide' && j.country ? ` · ${j.country}` : '';
         row.querySelector('.alert-meta').textContent = `${j.source}${where} · ${fmtDate(j.at)}`;
         jl.appendChild(row);
       });

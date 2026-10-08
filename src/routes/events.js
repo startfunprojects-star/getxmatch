@@ -348,15 +348,32 @@ function alertsFor(userId) {
   const { keywords } = alerts.getConfig();
   const { country, chosen } = newsCountries.forUser(userId);
   const only = country === newsCountries.WORLDWIDE ? null : country;
+  const jc = jobs.jobsCountryFor(userId);
   return {
     alerts: alerts.listAlerts({ country: only }).map(({ hidden: _h, ...a }) => a),
-    jobs: jobs.listJobs({ country: only }).map(({ hidden: _h, ...j }) => j),
+    jobs: jobs.listJobs({ country: jc.country === newsCountries.WORLDWIDE ? null : jc.country })
+      .map(({ hidden: _h, ...j }) => j),
+    jobsCountry: jc.country,
+    jobsChosen: jc.chosen,
+    jobCountries: jobs.countriesWithJobs(),
     keywords,
     country,
     chosen,
     countries: newsCountries.COUNTRIES,
   };
 }
+
+// PUT /api/events/jobs-country  { country } — the country this member wants
+// job openings from: a listed country, 'Worldwide', or '' to follow their
+// alerts country.
+router.put('/jobs-country', requireAuth, (req, res) => {
+  const want = String((req.body && req.body.country) || '');
+  if (want && want !== newsCountries.WORLDWIDE && !newsCountries.isCountry(want)) {
+    return res.status(400).json({ error: 'Choose a country from the list.' });
+  }
+  jobs.setJobsCountry(req.user.id, want);
+  res.json(alertsFor(req.user.id));
+});
 
 router.get('/alerts', requireAuth, (req, res) => {
   res.json(alertsFor(req.user.id));
