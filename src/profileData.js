@@ -3,7 +3,6 @@
 const db = require('./db');
 const { followSummary, isFollowing } = require('./follows');
 const { friendFeeOf, GAIN_MULTIPLIER: FRIEND_FEE_GAIN } = require('./friendFees');
-const { ageFromDob } = require('./profileFields');
 const { blockState, ignoreState } = require('./relations');
 const { isOnline } = require('./socket');
 const referrals = require('./referrals');
@@ -55,7 +54,8 @@ const FOLLOWER_PREVIEW_PHOTOS = 3;
 // What `viewerId` may see of `ownerId`'s profile:
 //   'full'     — the owner themself, or a friend: the complete profile;
 //   'follower' — follows the owner: the basics plus the newest few photos;
-//   'basic'    — anyone else: name, picture, about, age, gender, country.
+//   'basic'    — anyone else: name, picture, about, gender, country.
+// A member's age is never shown; only the owner gets their date of birth (to edit it).
 function profileAccess(ownerId, viewerId) {
   if (!viewerId || viewerId === ownerId) return viewerId ? 'full' : 'basic';
   if (friendState(ownerId, viewerId) === 'friends') return 'full';
@@ -396,8 +396,7 @@ function buildProfile(userId, viewerId) {
     about: row.bio,
     avatar: row.avatar ? `/uploads/${row.avatar}` : null,
     gender: row.gender || null,
-    dateOfBirth: full ? row.date_of_birth || null : null,
-    age: ageFromDob(row.date_of_birth),
+    dateOfBirth: isMe ? row.date_of_birth || null : null,
     country: row.country || null,
     state: full ? row.state || null : null,
     city: full ? row.city || null : null,

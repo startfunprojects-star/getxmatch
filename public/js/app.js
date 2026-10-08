@@ -4452,7 +4452,6 @@
     }
     const isMe = profile.isMe;
     const meta = [
-      profile.age != null ? profile.age + ' yrs' : null,
       profile.gender,
       profile.country,
     ].filter(Boolean).join(' · ');
@@ -4460,7 +4459,6 @@
     const relLine = [profile.education, profile.educationStream, profile.workStatus].filter(Boolean).map(esc).join(' · ');
 
     const badges = [];
-    if (profile.age != null) badges.push(`🎂 ${profile.age}`);
     if (profile.gender) badges.push(`${genderIcon(profile.gender)} ${esc(profile.gender)}`);
     const place = [profile.city, profile.state, profile.country].filter(Boolean).join(', ');
     if (place) badges.push(`📍 ${esc(place)}`);

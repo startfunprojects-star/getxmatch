@@ -22,7 +22,6 @@ const ogImage = require('../ogImage');
 const { quizStats, timeLabel, fmtDuration } = require('../quizStats');
 const { typeLabel, isShareable, isOpen } = require('../quizTypes');
 const { categoryLabel } = require('../quizCategories');
-const { ageFromDob } = require('../profileFields');
 const { buildProfile } = require('../profileData');
 const { renderProfileQr } = require('../qrCard');
 const { optionalAuth } = require('../auth');
@@ -760,7 +759,7 @@ ${cards}`;
    Public profile share pages — /u/<username>
 
    Every profile gets a shareable link. The link unfurls (Open Graph / Twitter
-   card) with the member's profile picture and their age · gender · country,
+   card) with the member's profile picture and their gender · country,
    so recipients preview who it is. A logged-in visitor is sent straight to the
    profile inside the app; a logged-out visitor sees a preview card and must
    sign up to open the full profile or do anything (message, rate, connect).
@@ -805,11 +804,10 @@ router.get('/u/:username', optionalAuth, (req, res) => {
 
   const pr = buildProfile(row.id, null);
   const name = pr.displayName || pr.username;
-  const age = pr.age;
   const avatar = pr.avatar;
 
-  // The facts a shared link surfaces: age · gender · country.
-  const factLine = [age != null ? `${age}` : null, pr.gender || null, pr.country || null]
+  // The facts a shared link surfaces: gender · country (never age).
+  const factLine = [pr.gender || null, pr.country || null]
     .filter(Boolean)
     .join(' · ');
   const description =
@@ -818,7 +816,7 @@ router.get('/u/:username', optionalAuth, (req, res) => {
 
   const seoDescriptor = resolveSeo({ noindex: true }, {
     canonicalPath: '/u/' + pr.username,
-    title: `${name}${age != null ? `, ${age}` : ''}`,
+    title: name,
     description,
     image: avatar || undefined, // the profile picture is the share image
     type: 'profile',
@@ -841,7 +839,6 @@ router.get('/u/:username', optionalAuth, (req, res) => {
   const qrSrc = `/qr/u/${encodeURIComponent(pr.username)}.png`;
 
   const badges = [
-    age != null ? `<span class="pf-badge">🎂 ${age}</span>` : '',
     pr.gender ? `<span class="pf-badge">${genderGlyph(pr.gender)} ${esc(pr.gender)}</span>` : '',
     pr.country ? `<span class="pf-badge">📍 ${esc([pr.city, pr.state, pr.country].filter(Boolean).join(', '))}</span>` : '',
   ].filter(Boolean).join('');
