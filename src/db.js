@@ -1031,4 +1031,7 @@ db.exec(`
 // --- Migration: the "romantic" background-music track is now "piano".
 db.exec("UPDATE gallery_photos SET music = 'piano' WHERE music = 'romantic';");
 
+// --- Migration: education streams are all "Field (specialisation)" now.
+db.exec("UPDATE users SET education_stream = education_stream || ' (General)' WHERE education_stream IN ('Arts', 'Commerce');");
+
 module.exports = db;

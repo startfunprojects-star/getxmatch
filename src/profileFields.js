@@ -9,7 +9,39 @@ const DIET = ['Vegetarian', 'Non-vegetarian', 'Vegan', 'Eggetarian'];
 // Academic background, chosen at signup (all three are required) and shown on
 // the profile. Stored on the users row, since the profile is created later.
 const EDUCATION = ['School', 'Graduate', 'Masters', 'PhD', 'Post Doc']; // minimum education
-const EDUCATION_STREAM = ['Arts', 'Commerce', 'Science (Math)', 'Science (Biology)'];
+// Field (specialisation). Keep in sync with OPT.educationStream in
+// public/js/app.js and public/js/admin.js.
+const EDUCATION_STREAM = [
+  'Arts (General)', 'Arts (English)', 'Arts (Hindi)', 'Arts (Other Languages)',
+  'Arts (History)', 'Arts (Political Science)', 'Arts (Economics)',
+  'Arts (Geography)', 'Arts (Psychology)', 'Arts (Sociology)', 'Arts (Philosophy)',
+  'Arts (Fine Arts)', 'Arts (Music)', 'Arts (Performing Arts)',
+  'Arts (Journalism & Mass Communication)', 'Commerce (General)',
+  'Commerce (Accounting & Finance)', 'Commerce (Banking & Insurance)',
+  'Commerce (Economics)', 'Commerce (Business Studies)',
+  'Commerce (Chartered Accountancy)', 'Commerce (Company Secretary)',
+  'Commerce (Marketing)', 'Science (Math)', 'Science (Biology)', 'Science (Physics)',
+  'Science (Chemistry)', 'Science (Statistics)', 'Science (Computer Science)',
+  'Science (Information Technology)', 'Science (Data Science)',
+  'Science (Biotechnology)', 'Science (Microbiology)',
+  'Science (Environmental Science)', 'Science (Agriculture)',
+  'Science (Home Science)', 'Science (Forensic Science)', 'Science (Engineering)',
+  'Science (Computer Science Engineering)',
+  'Science (Artificial Intelligence & Machine Learning)',
+  'Science (Electronics & Communication Engineering)',
+  'Science (Electrical Engineering)', 'Science (Mechanical Engineering)',
+  'Science (Civil Engineering)', 'Science (Chemical Engineering)',
+  'Science (Aerospace Engineering)', 'Science (Biomedical Engineering)',
+  'Medical (MBBS)', 'Medical (Dental)', 'Medical (Nursing)', 'Medical (Pharmacy)',
+  'Medical (Physiotherapy)', 'Medical (AYUSH)', 'Medical (Allied Health Sciences)',
+  'Medical (Veterinary)', 'Management (Business Administration)',
+  'Management (Hotel Management)', 'Management (Tourism & Hospitality)',
+  'Law (General)', 'Law (Corporate Law)', 'Law (Criminal Law)',
+  'Design (Fashion Design)', 'Design (Interior Design)',
+  'Design (Graphic & Communication Design)', 'Design (Product Design)',
+  'Architecture (General)', 'Education (Teaching)', 'Vocational (ITI / Diploma)',
+  'Vocational (Polytechnic)', 'Other (Other)',
+];
 const WORK_STATUS = ['Student', 'Working', 'Working Student'];
 const FRIENDS_VISIBILITY = ['public', 'friends', 'hidden'];
 
