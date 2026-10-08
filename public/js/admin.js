@@ -1505,6 +1505,7 @@
     const host = tabHost();
     host.innerHTML = `
       <div class="admin-card" id="alertsCard"><h2>Alerts</h2><p class="count">Loading…</p></div>
+      <div class="admin-card" id="jobsCard"><h2>Job alerts</h2><p class="count">Loading…</p></div>
       <div class="admin-card" id="blockedCard"></div>
       <div class="admin-card">
         <h2>Recent Activity</h2>
@@ -1513,7 +1514,143 @@
         <div id="activityPager"></div>
       </div>`;
     loadAlerts();
+    loadJobsAdmin();
     await loadActivity();
+  }
+
+  /* ---- Job alerts: job-board feeds shown in the members' Alerts panel ---- */
+  let jobsData = null;
+
+  async function loadJobsAdmin() {
+    try { jobsData = await api.get('/api/admin/jobs'); }
+    catch (e) {
+      const box = document.getElementById('jobsCard');
+      if (box) box.innerHTML = `<h2>Job alerts</h2><p class="count">${esc(e.message)}</p>`;
+      return;
+    }
+    paintJobs();
+  }
+
+  const jobCountryOptions = () => [{ value: '', label: 'Anywhere (all countries)' }]
+    .concat(COUNTRIES.filter((c) => c !== 'Other').map((c) => ({ value: c, label: c })));
+  function jobCountrySelect(current) {
+    return `<select data-country>${jobCountryOptions().map((o) =>
+      `<option value="${esc(o.value)}"${o.value === (current || '') ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
+  }
+
+  function paintJobs() {
+    const box = document.getElementById('jobsCard');
+    if (!box) return;
+    box.innerHTML = `
+      <h2>Job alerts</h2>
+      <p class="count">Members see the latest jobs from these job-board feeds in a <strong>💼 Jobs</strong> section of the Alerts panel — jobs for the country they picked, plus feeds marked <em>Anywhere</em>. Only the job title, source and a link are shown; members apply on the job board. Feeds are checked every 30 minutes. Only sites that publish an RSS/Atom jobs feed can be added (Indeed has closed its feeds and Naukri doesn't publish one for job listings).</p>
+      <label>Only show jobs mentioning <span class="count">(comma-separated, up to ${jobsData.maxKeywords}; leave empty to show every job)</span>
+        <textarea id="jbKeywords" rows="2" placeholder="e.g. fresher, intern, developer, teacher">${esc(jobsData.keywords.join(', '))}</textarea></label>
+      <div class="row-actions"><button class="primary small" id="jbSaveKw">Save keywords</button></div>
+      <h3 style="margin:14px 0 6px">Job feeds</h3>
+      <div id="jbFeeds"></div>
+      <div class="news-edit">
+        <label>Add a job feed (RSS or Atom)<input type="url" id="jbUrl" placeholder="https://example.com/jobs/feed" /></label>
+        <label>Name <span class="count">(optional)</span><input type="text" id="jbTitle" maxlength="120" /></label>
+        <label>Jobs in ${jobCountrySelect('India')}</label>
+        <div class="row-actions"><button class="primary small" id="jbAdd">Add feed</button></div>
+        <div class="msg" id="jbMsg"></div>
+      </div>
+      <h3 style="margin:14px 0 6px">Latest jobs <span class="count">(${jobsData.items.length})</span></h3>
+      <div id="jbItems"></div>
+      <div id="jbPager"></div>`;
+
+    box.querySelector('#jbSaveKw').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      try { await api.put('/api/admin/jobs/keywords', { keywords: box.querySelector('#jbKeywords').value }); await loadJobsAdmin(); }
+      catch (err) { alert(err.message); e.target.disabled = false; }
+    });
+    box.querySelector('#jbAdd').addEventListener('click', async (e) => {
+      const msg = box.querySelector('#jbMsg');
+      msg.className = 'msg';
+      e.target.disabled = true;
+      try {
+        const out = await api.post('/api/admin/jobs/feeds', {
+          url: box.querySelector('#jbUrl').value.trim(),
+          title: box.querySelector('#jbTitle').value.trim(),
+          country: box.querySelector('.news-edit [data-country]').value,
+        });
+        await loadJobsAdmin();
+        if (!out.result.ok) alert('Added, but the first fetch failed: ' + out.result.error);
+      } catch (err) { msg.className = 'msg error'; msg.textContent = err.message; e.target.disabled = false; }
+    });
+
+    const feedsBox = box.querySelector('#jbFeeds');
+    if (!jobsData.feeds.length) feedsBox.innerHTML = '<p class="count">No job feeds yet.</p>';
+    jobsData.feeds.forEach((f) => {
+      const item = el(`
+        <div class="admin-item news-feed${f.enabled ? '' : ' news-off'}">
+          <div><strong>${esc(f.title || f.url)}</strong>
+            <span class="pill">🌍 ${esc(f.country || 'Anywhere')}</span>
+            ${f.enabled ? '' : '<span class="pill">paused</span>'}</div>
+          <div class="count news-url">${esc(f.url)}</div>
+          <div class="count">${f.items} job${f.items === 1 ? '' : 's'} · ${f.lastFetchedAt ? 'checked ' + esc(fmtDate(f.lastFetchedAt)) : 'not checked yet'}
+            ${f.lastError ? `<span class="news-err">· ⚠ ${esc(f.lastError)}</span>` : ''}</div>
+          <div class="admin-item-actions" style="align-items:center">
+            ${jobCountrySelect(f.country)}
+            <button class="ghost small" data-fetch>↻ Fetch now</button>
+            <button class="ghost small" data-toggle>${f.enabled ? 'Pause' : 'Resume'}</button>
+            <button class="danger small" data-del>Delete</button>
+          </div>
+        </div>`);
+      item.querySelector('[data-country]').addEventListener('change', async (e) => {
+        try { await api.put('/api/admin/jobs/feeds/' + f.id, { country: e.target.value }); await loadJobsAdmin(); }
+        catch (err) { alert(err.message); }
+      });
+      item.querySelector('[data-fetch]').addEventListener('click', async (e) => {
+        e.target.disabled = true;
+        try {
+          const { result } = await api.post('/api/admin/jobs/feeds/' + f.id + '/fetch', {});
+          if (!result.ok) alert('Fetch failed: ' + result.error);
+          await loadJobsAdmin();
+        } catch (err) { alert(err.message); e.target.disabled = false; }
+      });
+      item.querySelector('[data-toggle]').addEventListener('click', async () => {
+        try { await api.put('/api/admin/jobs/feeds/' + f.id, { enabled: !f.enabled }); await loadJobsAdmin(); }
+        catch (err) { alert(err.message); }
+      });
+      item.querySelector('[data-del]').addEventListener('click', async () => {
+        if (!confirm(`Delete this job feed and its jobs?\n${f.url}`)) return;
+        try { await api.del('/api/admin/jobs/feeds/' + f.id); await loadJobsAdmin(); }
+        catch (err) { alert(err.message); }
+      });
+      feedsBox.appendChild(item);
+    });
+    paintJobItems();
+  }
+
+  function paintJobItems() {
+    const list = document.getElementById('jbItems');
+    if (!list) return;
+    const items = jobsData.items || [];
+    if (!items.length) { list.innerHTML = '<p class="count">No jobs yet — feeds are fetched shortly after the server starts, then every 30 minutes.</p>'; return; }
+    const { slice, pager } = pageFor('jobs', items, paintJobItems);
+    list.innerHTML = '';
+    slice.forEach((j) => {
+      const item = el(`
+        <div class="admin-item news-item${j.hidden ? ' news-off' : ''}">
+          <div class="act-main">
+            <a target="_blank" rel="noopener noreferrer nofollow"></a>
+            <div class="count">${esc(j.source)} · 🌍 ${esc(j.country || 'Anywhere')} · ${esc(fmtDate(j.at))}${j.hidden ? ' · hidden' : ''}</div>
+          </div>
+          <button class="${j.hidden ? 'ghost' : 'danger'} small">${j.hidden ? 'Show' : 'Hide'}</button>
+        </div>`);
+      const a = item.querySelector('a');
+      a.href = /^https?:\/\//i.test(j.link) ? j.link : '#';
+      a.textContent = j.title;
+      item.querySelector('button').addEventListener('click', async () => {
+        try { await api.post('/api/admin/jobs/items/' + j.id + '/hide', { hidden: !j.hidden }); await loadJobsAdmin(); }
+        catch (err) { alert(err.message); }
+      });
+      list.appendChild(item);
+    });
+    const ph = document.getElementById('jbPager');
+    if (ph) { ph.innerHTML = ''; if (pager) ph.appendChild(pager); }
   }
 
   /* ---- Alerts: latest news for admin keywords, from admin-chosen websites ---- */

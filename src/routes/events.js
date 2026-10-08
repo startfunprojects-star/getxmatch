@@ -25,6 +25,7 @@ const { friendState, canSeePhoto, parseInterests } = require('../profileData');
 const news = require('../news');
 const alerts = require('../alerts');
 const newsCountries = require('../newsCountries');
+const jobs = require('../jobs');
 const { isMinor } = require('../relations');
 const { imageUpload } = require('../upload');
 const { nsfwGuard } = require('../nsfw');
@@ -346,9 +347,10 @@ const NEWS_EVERY = 3;
 function alertsFor(userId) {
   const { keywords } = alerts.getConfig();
   const { country, chosen } = newsCountries.forUser(userId);
+  const only = country === newsCountries.WORLDWIDE ? null : country;
   return {
-    alerts: alerts.listAlerts({ country: country === newsCountries.WORLDWIDE ? null : country })
-      .map(({ hidden: _h, ...a }) => a),
+    alerts: alerts.listAlerts({ country: only }).map(({ hidden: _h, ...a }) => a),
+    jobs: jobs.listJobs({ country: only }).map(({ hidden: _h, ...j }) => j),
     keywords,
     country,
     chosen,

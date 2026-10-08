@@ -1658,6 +1658,35 @@
       });
       panel.appendChild(more);
     }
+
+    // Job openings from the admin's job-board feeds (for the chosen country,
+    // plus jobs anywhere). Members apply on the job board itself.
+    const jobItems = (data.jobs || []).filter((j) => /^https?:\/\//i.test(j.link));
+    if (jobItems.length) {
+      const sec = el(`<div class="alerts-jobs"><div class="alerts-sub">💼 Jobs</div><div class="alerts-list"></div></div>`);
+      const jl = sec.querySelector('.alerts-list');
+      jobItems.forEach((j, i) => {
+        const row = el(`<div class="alert-item${i >= SHOW ? ' hidden' : ''}">
+            <a class="alert-link" target="_blank" rel="noopener noreferrer nofollow"></a>
+            <div class="hint alert-meta"></div>
+          </div>`);
+        const link = row.querySelector('a');
+        link.href = j.link;
+        link.textContent = j.title;
+        const where = data.country === 'Worldwide' && j.country ? ` · ${j.country}` : '';
+        row.querySelector('.alert-meta').textContent = `${j.source}${where} · ${fmtDate(j.at)}`;
+        jl.appendChild(row);
+      });
+      if (jobItems.length > SHOW) {
+        const more = el(`<button class="ghost small alerts-more" type="button">Show ${jobItems.length - SHOW} more jobs</button>`);
+        more.addEventListener('click', () => {
+          jl.querySelectorAll('.alert-item.hidden').forEach((r) => r.classList.remove('hidden'));
+          more.remove();
+        });
+        sec.appendChild(more);
+      }
+      panel.appendChild(sec);
+    }
     box.innerHTML = '';
     box.appendChild(panel);
   }

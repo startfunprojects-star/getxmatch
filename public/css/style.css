@@ -1747,3 +1747,5 @@ button.primary, .chat-cta { letter-spacing: .01em; }
 .alerts-country select { width: auto; max-width: 100%; padding: 4px 8px; font-size: 13px; }
 .alerts-empty { margin: 4px 0; }
 .alerts-panel .ad-stream { margin: 8px auto; }
+.alerts-jobs { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.alerts-sub { font-weight: 800; margin-bottom: 2px; }

@@ -431,6 +431,59 @@ router.post('/alerts/items/:id/hide', requireAdmin, (req, res) => {
   res.json({ ok: true, hidden });
 });
 
+/* ---------------------------------------------------------------------------
+   Job openings in the Alerts panel (src/jobs.js)
+--------------------------------------------------------------------------- */
+const jobs = require('../jobs');
+
+// GET /api/admin/jobs — job feeds, keyword filter and the latest jobs.
+router.get('/jobs', requireAdmin, (_req, res) => {
+  res.json({
+    feeds: jobs.feedRows(),
+    keywords: jobs.getKeywords(),
+    maxKeywords: jobs.MAX_KEYWORDS,
+    items: jobs.listJobs({ limit: 100, includeHidden: true }),
+  });
+});
+
+// PUT /api/admin/jobs/keywords  { keywords: "fresher, intern" } — '' = all jobs.
+router.put('/jobs/keywords', requireAdmin, (req, res) => {
+  res.json({ keywords: jobs.setKeywords(req.body && req.body.keywords) });
+});
+
+// POST /api/admin/jobs/feeds  { url, title?, country? } — add and fetch a feed.
+router.post('/jobs/feeds', requireAdmin, async (req, res) => {
+  const out = await jobs.addFeed(req.body || {});
+  if (out.error) return res.status(400).json({ error: out.error });
+  res.status(201).json(out);
+});
+
+// PUT /api/admin/jobs/feeds/:id  { title?, country?, enabled? }
+router.put('/jobs/feeds/:id', requireAdmin, (req, res) => {
+  if (!jobs.updateFeed(req.params.id, req.body || {})) return res.status(404).json({ error: 'Feed not found.' });
+  res.json({ ok: true });
+});
+
+// DELETE /api/admin/jobs/feeds/:id — remove a feed and its jobs.
+router.delete('/jobs/feeds/:id', requireAdmin, (req, res) => {
+  if (!jobs.deleteFeed(req.params.id)) return res.status(404).json({ error: 'Feed not found.' });
+  res.json({ ok: true });
+});
+
+// POST /api/admin/jobs/feeds/:id/fetch — fetch one feed now.
+router.post('/jobs/feeds/:id/fetch', requireAdmin, async (req, res) => {
+  const result = await jobs.fetchOne(req.params.id);
+  if (!result) return res.status(404).json({ error: 'Feed not found.' });
+  res.json({ result });
+});
+
+// POST /api/admin/jobs/items/:id/hide  { hidden } — hide / show one job.
+router.post('/jobs/items/:id/hide', requireAdmin, (req, res) => {
+  const hidden = !(req.body && req.body.hidden === false);
+  if (!jobs.setHidden(req.params.id, hidden)) return res.status(404).json({ error: 'Job not found.' });
+  res.json({ ok: true, hidden });
+});
+
 const MAX_BLOCK_HOURS = 365 * 24;
 
 // POST /api/admin/users/:id/block  { amount, unit: 'hours' | 'days', reason }

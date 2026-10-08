@@ -85,6 +85,7 @@ app.use('/api/highway', highwayRoutes); // registered users: shared post pool
 require('./src/referrals').backfill(); // every member gets a fixed referral code
 require('./src/news').start(); // fetch interest-based news for Recent Activity
 require('./src/alerts').start(); // fetch keyword alerts for Recent Activity
+require('./src/jobs').start(); // fetch job openings for the Alerts panel
 app.use('/api/geo', require('./src/routes/geo')); // public: state / city lists for the location picker
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
