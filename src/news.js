@@ -9,10 +9,17 @@
 // FETCH_EVERY_MS and stores just the headline, a one-line snippet, the link and
 // the publish time — never the article itself; members tap through to read it
 // on the source's site. A starter set of feeds is added once on first run.
+//
+// Feeds can also belong to one country (news_feeds.country): for each country
+// members use (src/newsCountries.js) a set of Google News country-edition
+// sections is added once — top stories, shown to everyone in that country, and
+// topic sections matched to interests. Members see the international feeds plus
+// those of the country they picked.
 
 const db = require('./db');
 const { getSetting, setSetting } = require('./settings');
 const { INTERESTS } = require('./profileFields');
+const countries = require('./newsCountries');
 
 const FETCH_EVERY_MS = 30 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 15000;
@@ -48,6 +55,13 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_news_items_pub ON news_items (published_at);
 `);
+(function migrate() {
+  const feedCols = db.prepare('PRAGMA table_info(news_feeds)').all().map((c) => c.name);
+  if (!feedCols.includes('country')) db.exec('ALTER TABLE news_feeds ADD COLUMN country TEXT;'); // NULL = international
+  const itemCols = db.prepare('PRAGMA table_info(news_items)').all().map((c) => c.name);
+  // The article's own publisher, for aggregator feeds (Google News).
+  if (!itemCols.includes('source')) db.exec("ALTER TABLE news_items ADD COLUMN source TEXT NOT NULL DEFAULT '';");
+})();
 
 /* ---------------------------------------------------------------------------
    Starter feeds (all checked to be live when added). [url, interests, familySafe]
@@ -130,6 +144,58 @@ const STARTER_FEEDS = [
   [G('culture/anime'), ['Anime'], 1],
   [G('tv-and-radio'), ['TV series'], 0],
 ];
+
+/* ---------------------------------------------------------------------------
+   Country feeds: Google News sections in a country's edition. [section, label,
+   interests, familySafe]; section null = top stories, shown to every member
+   in that country whatever their interests.
+--------------------------------------------------------------------------- */
+const COUNTRY_SECTIONS = [
+  [null, 'Top stories', [], 1],
+  ['NATION', 'National', ['Politics', 'Law', 'Debating', 'Social causes', 'Sociology', 'Journalism', 'Education'], 1],
+  ['BUSINESS', 'Business', ['Economics', 'Finance', 'Entrepreneurship'], 1],
+  ['TECHNOLOGY', 'Technology', ['Technology', 'Programming', 'Artificial intelligence', 'Robotics', 'Electronics'], 1],
+  ['SCIENCE', 'Science', ['Science', 'Physics', 'Astronomy', 'Biology', 'Chemistry', 'Mathematics', 'Environment'], 1],
+  ['HEALTH', 'Health', ['Medicine', 'Fitness', 'Yoga', 'Psychology'], 1],
+  ['SPORTS', 'Sports', ['Sports', 'Cricket', 'Football', 'Badminton', 'Running', 'Cycling', 'Swimming', 'Chess'], 1],
+  ['ENTERTAINMENT', 'Entertainment', ['Movies', 'Music', 'TV series', 'Theatre', 'Stand-up comedy', 'Podcasts'], 0],
+];
+
+function countryFeedUrl(country, section) {
+  const q = countries.editionQuery(country);
+  return section
+    ? `https://news.google.com/rss/headlines/section/topic/${section}?${q}`
+    : `https://news.google.com/rss?${q}`;
+}
+
+// Add a country's feeds the first time it's needed (once only, so a feed the
+// admin deletes stays deleted).
+function ensureCountryFeeds(country) {
+  if (!countries.isCountry(country)) return;
+  let done;
+  try { done = JSON.parse(getSetting('news_countries_seeded', '[]')); } catch (_e) { done = []; }
+  if (done.includes(country)) return;
+  const ins = db.prepare(
+    `INSERT INTO news_feeds (url, title, interests, family_safe, enabled, country, created_at) VALUES (?, ?, ?, ?, 1, ?, ?)
+     ON CONFLICT(url) DO NOTHING`
+  );
+  const now = Date.now();
+  for (const [section, label, interests, safe] of COUNTRY_SECTIONS) {
+    ins.run(countryFeedUrl(country, section), `Google News ${country} — ${label}`, JSON.stringify(interests), safe, country, now);
+  }
+  setSetting('news_countries_seeded', JSON.stringify([...done, country]));
+}
+
+// Make sure a country has its feeds and fresh headlines (when a member picks
+// it): its feeds not checked recently are fetched in parallel.
+async function prepareCountry(country) {
+  if (!countries.isCountry(country)) return;
+  ensureCountryFeeds(country);
+  const stale = db.prepare(
+    'SELECT id, url FROM news_feeds WHERE country = ? AND enabled = 1 AND (last_fetched_at IS NULL OR last_fetched_at < ?)'
+  ).all(country, Date.now() - FETCH_EVERY_MS);
+  await Promise.all(stale.map(fetchFeed));
+}
 
 function seedStarterFeeds() {
   if (getSetting('news_seeded', null)) return;
@@ -243,14 +309,19 @@ async function fetchFeed(feed) {
     if (!items.length) throw new Error('No items found — is this an RSS or Atom feed?');
 
     const ins = db.prepare(
-      `INSERT INTO news_items (feed_id, guid, title, link, snippet, published_at, fetched_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(feed_id, guid) DO NOTHING`
+      `INSERT INTO news_items (feed_id, guid, title, link, snippet, source, published_at, fetched_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(feed_id, guid) DO NOTHING`
     );
     let added = 0;
     for (const it of items) {
       // Missing or future dates count as "now" so they can't pin themselves on top.
       const pub = it.publishedAt && it.publishedAt <= now ? it.publishedAt : now;
-      added += ins.run(feed.id, it.guid, it.title, it.link, it.snippet, pub, now).changes;
+      // Aggregators end titles with " - Publisher"; the publisher is shown separately.
+      let title = it.title;
+      if (it.sourceName && title.endsWith(' - ' + it.sourceName)) title = title.slice(0, -(it.sourceName.length + 3)).trim() || it.title;
+      // Google News "descriptions" just repeat the headline as a link.
+      const snippet = it.sourceName && it.snippet.startsWith(title) ? '' : it.snippet;
+      added += ins.run(feed.id, it.guid, title, it.link, snippet, it.sourceName || '', pub, now).changes;
     }
     // Keep the newest KEEP_PER_FEED, nothing older than KEEP_DAYS.
     db.prepare(
@@ -272,6 +343,7 @@ async function fetchAll() {
   if (running) return;
   running = true;
   try {
+    countries.inUse().forEach(ensureCountryFeeds);
     const feeds = db.prepare('SELECT id, url FROM news_feeds WHERE enabled = 1').all();
     for (const f of feeds) await fetchFeed(f); // one at a time: gentle on sources and on us
   } finally {
@@ -302,34 +374,44 @@ function sourceName(feed, link) {
   try { return new URL(link).hostname.replace(/^www\./, ''); } catch (_e) { return 'News'; }
 }
 
-// Headlines for a member with these interests (newest first, one per link).
-function itemsForInterests(interests, { familySafeOnly = false, limit = 25 } = {}) {
+// Headlines for a member with these interests (newest first, one per link):
+// international feeds, plus the feeds of `country` (top stories for everyone
+// there, sections by interest). No country = international feeds only.
+function itemsForInterests(interests, { familySafeOnly = false, limit = 25, country = null } = {}) {
   const wanted = new Set(interests || []);
-  if (!wanted.size) return [];
-  const feeds = db.prepare('SELECT id, title, interests, family_safe FROM news_feeds WHERE enabled = 1').all()
-    .map((f) => ({ ...f, interestList: parseInterestList(f.interests).filter((i) => wanted.has(i)) }))
-    .filter((f) => f.interestList.length && (!familySafeOnly || f.family_safe));
+  const feeds = db.prepare(
+    'SELECT id, title, interests, family_safe, country FROM news_feeds WHERE enabled = 1 AND (country IS NULL OR country = ?)'
+  ).all(country || '')
+    .map((f) => {
+      const all = parseInterestList(f.interests);
+      return { ...f, general: !!f.country && !all.length, interestList: all.filter((i) => wanted.has(i)) };
+    })
+    .filter((f) => (f.interestList.length || f.general) && (!familySafeOnly || f.family_safe));
   if (!feeds.length) return [];
   const byId = new Map(feeds.map((f) => [f.id, f]));
   const marks = feeds.map(() => '?').join(',');
   const rows = db.prepare(
-    `SELECT id, feed_id, title, link, snippet, published_at FROM news_items
+    `SELECT id, feed_id, title, link, snippet, source, published_at FROM news_items
       WHERE hidden = 0 AND feed_id IN (${marks}) ORDER BY published_at DESC LIMIT ?`
   ).all(...feeds.map((f) => f.id), limit * 4);
   const seen = new Set();
   const out = [];
   for (const r of rows) {
+    // One per link and per headline (a story can sit in several sections).
     const key = r.link.replace(/[?#].*$/, '');
-    if (seen.has(key)) continue;
+    const tkey = 't:' + r.title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    if (seen.has(key) || seen.has(tkey)) continue;
     seen.add(key);
+    seen.add(tkey);
     const f = byId.get(r.feed_id);
     out.push({
       id: r.id,
       title: r.title,
       link: r.link,
       snippet: r.snippet,
-      source: sourceName(f, r.link),
-      interest: f.interestList[0],
+      source: r.source || sourceName(f, r.link),
+      interest: f.general ? 'Top stories' : f.interestList[0],
+      country: f.country || null,
       at: r.published_at,
     });
     if (out.length >= limit) break;
@@ -347,4 +429,6 @@ module.exports = {
   safeUrl,
   parseInterestList,
   itemsForInterests,
+  ensureCountryFeeds,
+  prepareCountry,
 };

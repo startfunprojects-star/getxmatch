@@ -221,6 +221,9 @@ db.exec(`
     // Who may see the user's GIF "feelings" collection: public | friends | private.
     ['gif_visibility', "TEXT NOT NULL DEFAULT 'public'"],
     ['hidden', 'INTEGER NOT NULL DEFAULT 0'], // 1 = profile excluded from search/browse
+    // Country for alerts & news on Recent Activity (NULL = profile country;
+    // 'Worldwide' = none). See src/newsCountries.js.
+    ['news_country', 'TEXT'],
   ];
   for (const [name, type] of additions) {
     if (!cols.includes(name)) {

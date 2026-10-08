@@ -302,6 +302,7 @@ function feedRow(f) {
     url: f.url,
     title: f.title || '',
     interests: news.parseInterestList(f.interests),
+    country: f.country || null,
     familySafe: !!f.family_safe,
     enabled: !!f.enabled,
     lastFetchedAt: f.last_fetched_at || null,
@@ -352,7 +353,8 @@ router.put('/news/feeds/:id', requireAdmin, (req, res) => {
   if (!f) return res.status(404).json({ error: 'Feed not found.' });
   const b = req.body || {};
   const interests = b.interests !== undefined ? cleanInterests(b.interests) : news.parseInterestList(f.interests);
-  if (!interests.length) return res.status(400).json({ error: 'Pick at least one area of interest.' });
+  // A country feed with no interests is that country's top stories (shown to all there).
+  if (!interests.length && !f.country) return res.status(400).json({ error: 'Pick at least one area of interest.' });
   db.prepare('UPDATE news_feeds SET title = ?, interests = ?, family_safe = ?, enabled = ? WHERE id = ?').run(
     b.title !== undefined ? String(b.title).trim().slice(0, 120) : f.title,
     JSON.stringify(interests),

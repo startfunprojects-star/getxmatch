@@ -9,7 +9,8 @@
 //   • profile updates       (new gallery photos/reels, GIFs and profile edits
 //                            by members the viewer follows or is friends with)
 //   • news                  (headlines from the admin's RSS feeds matching the
-//                            viewer's areas of interest — src/news.js)
+//                            viewer's areas of interest and chosen country —
+//                            src/news.js, src/newsCountries.js)
 // Each activity row carries the viewer's friendship state with the actor so the
 // UI can offer an "Add friend" action inline.
 
@@ -23,6 +24,7 @@ const { requireAuth } = require('../auth');
 const { friendState, canSeePhoto, parseInterests } = require('../profileData');
 const news = require('../news');
 const alerts = require('../alerts');
+const newsCountries = require('../newsCountries');
 const { isMinor } = require('../relations');
 const { imageUpload } = require('../upload');
 const { nsfwGuard } = require('../nsfw');
@@ -263,7 +265,12 @@ function buildFeed(viewerId, opts) {
   if (me) {
     const prof = db.prepare('SELECT interests FROM profiles WHERE user_id = ?').get(me);
     const interests = prof ? parseInterests(prof.interests) : [];
-    news.itemsForInterests(interests, { familySafeOnly: isMinor(me), limit: 25 }).forEach((n) => {
+    const { country } = newsCountries.forUser(me);
+    news.itemsForInterests(interests, {
+      familySafeOnly: isMinor(me),
+      limit: 25,
+      country: country === newsCountries.WORLDWIDE ? null : country,
+    }).forEach((n) => {
       events.push({
         id: 'news-' + n.id,
         type: 'news',
@@ -335,12 +342,38 @@ const NEWS_EVERY = 3;
 
 // GET /api/events/alerts — the latest alerts for the admin's keywords (and
 // websites), shown above the feed on Recent Activity (src/alerts.js).
-router.get('/alerts', requireAuth, (_req, res) => {
+// Alerts are for the member's chosen country (all countries for 'Worldwide').
+function alertsFor(userId) {
   const { keywords } = alerts.getConfig();
-  res.json({
-    alerts: alerts.listAlerts().map(({ hidden: _h, ...a }) => a),
+  const { country, chosen } = newsCountries.forUser(userId);
+  return {
+    alerts: alerts.listAlerts({ country: country === newsCountries.WORLDWIDE ? null : country })
+      .map(({ hidden: _h, ...a }) => a),
     keywords,
-  });
+    country,
+    chosen,
+    countries: newsCountries.COUNTRIES,
+  };
+}
+
+router.get('/alerts', requireAuth, (req, res) => {
+  res.json(alertsFor(req.user.id));
+});
+
+// PUT /api/events/news-country  { country } — the country this member wants
+// alerts and news for: one of the listed countries, 'Worldwide', or '' to
+// follow their profile country. A country not fetched recently is fetched
+// before replying, so the new alerts and news show straight away.
+router.put('/news-country', requireAuth, async (req, res) => {
+  const want = String((req.body && req.body.country) || '');
+  if (want && want !== newsCountries.WORLDWIDE && !newsCountries.isCountry(want)) {
+    return res.status(400).json({ error: 'Choose a country from the list.' });
+  }
+  const { country } = newsCountries.setForUser(req.user.id, want);
+  if (country !== newsCountries.WORLDWIDE) {
+    await Promise.all([alerts.prepareCountry(country), news.prepareCountry(country)]).catch(() => {});
+  }
+  res.json(alertsFor(req.user.id));
 });
 
 // GET /api/events — merged recent activity for the signed-in user.

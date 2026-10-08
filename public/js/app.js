@@ -235,7 +235,7 @@
      Ads are fetched once and rendered into named placement slots. Image ads are
      click-tracked via a redirect; script ads run inside a sandboxed same-origin
      iframe so ad-network code can't touch the page, cookies or user data. */
-  const AD_PLACEMENTS = 'content_header,content_footer,content_sidebar_left,content_sidebar_right,content_inline,highway_header,highway_footer,highway_inline,chat_inline,live_inline';
+  const AD_PLACEMENTS = 'content_header,content_footer,content_sidebar_left,content_sidebar_right,content_inline,highway_header,highway_footer,highway_inline,chat_inline,live_inline,alerts_inline';
   const adState = { slots: null, promise: null, counters: {} };
 
   async function loadAds() {
@@ -1560,23 +1560,53 @@
   }
 
   // Alerts: the latest news about the admin's keywords (from the websites the
-  // admin chose), above the activity feed. Hidden when there's nothing to show.
-  async function renderAlertsInto(box) {
+  // admin chose) for the member's chosen country, above the activity feed. The
+  // country picker here also sets which country's news the feed shows. An ad
+  // from the "alerts_inline" placement sits after the first few alerts.
+  async function renderAlertsInto(box, data) {
     if (!box) return;
-    let data;
-    try { data = await api.get('/api/events/alerts'); } catch (_e) { return; }
-    const items = (data && data.alerts) || [];
-    if (!items.length || !document.body.contains(box)) return;
+    if (!data) {
+      try { data = await api.get('/api/events/alerts'); } catch (_e) { return; }
+    }
+    try { await loadAds(); } catch (_e) { /* ads are optional */ }
+    if (!document.body.contains(box)) return;
+    const items = (data.alerts || []).filter((a) => /^https?:\/\//i.test(a.link));
+    const keywords = data.keywords || [];
     const SHOW = 5;
     const panel = el(`
       <section class="alerts-panel card">
         <div class="alerts-head"><span>🔔 Alerts</span><span class="hint alerts-kw"></span></div>
+        <label class="alerts-country hint">🌍 Alerts &amp; news for <select></select> <span class="alerts-busy"></span></label>
         <div class="alerts-list"></div>
       </section>`);
-    panel.querySelector('.alerts-kw').textContent = (data.keywords || []).join(' · ');
+    panel.querySelector('.alerts-kw').textContent = keywords.join(' · ');
+
+    // Country picker: '' follows the profile country.
+    const sel = panel.querySelector('select');
+    const opts = [{ value: '', label: data.chosen ? 'My profile country' : `My profile country (${data.country})` },
+      { value: 'Worldwide', label: 'Worldwide' }].concat((data.countries || []).map((c) => ({ value: c, label: c })));
+    opts.forEach((o) => sel.appendChild(Object.assign(document.createElement('option'), { value: o.value, textContent: o.label })));
+    sel.value = data.chosen ? data.country : '';
+    sel.addEventListener('change', async () => {
+      const busy = panel.querySelector('.alerts-busy');
+      sel.disabled = true;
+      busy.textContent = 'Loading…';
+      let next;
+      try { next = await api.put('/api/events/news-country', { country: sel.value }); }
+      catch (e) { sel.disabled = false; busy.textContent = e.message; return; }
+      renderAlertsInto(box, next);
+      const feed = document.getElementById('homeFeed');
+      if (feed) renderActivityInto(feed, { compact: false });
+    });
+
     const list = panel.querySelector('.alerts-list');
+    if (keywords.length && !items.length) {
+      list.appendChild(el(`<p class="hint alerts-empty"></p>`)).textContent =
+        data.country === 'Worldwide' ? 'No alerts right now.' : `No alerts for ${data.country} right now.`;
+    }
+    const ad = slotEl('alerts_inline');
+    if (ad) ad.classList.add('ad-stream');
     items.forEach((a, i) => {
-      if (!/^https?:\/\//i.test(a.link)) return;
       const row = el(`<div class="alert-item${i >= SHOW ? ' hidden' : ''}">
           <a class="alert-link" target="_blank" rel="noopener noreferrer nofollow"></a>
           <div class="hint alert-meta"></div>
@@ -1584,9 +1614,12 @@
       const link = row.querySelector('a');
       link.href = a.link;
       link.textContent = a.title;
-      row.querySelector('.alert-meta').textContent = `${a.source} · ${a.keyword} · ${fmtDate(a.at)} ${fmtTime(a.at)}`;
+      const where = data.country === 'Worldwide' && a.country ? ` · ${a.country}` : '';
+      row.querySelector('.alert-meta').textContent = `${a.source} · ${a.keyword}${where} · ${fmtDate(a.at)} ${fmtTime(a.at)}`;
       list.appendChild(row);
+      if (ad && i === 2) list.appendChild(ad);
     });
+    if (ad && !ad.parentNode) list.appendChild(ad);
     if (items.length > SHOW) {
       const more = el(`<button class="ghost small alerts-more" type="button">Show ${items.length - SHOW} more</button>`);
       more.addEventListener('click', () => {

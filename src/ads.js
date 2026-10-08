@@ -24,6 +24,7 @@ const PLACEMENTS = [
   { key: 'highway_inline', label: 'Highway — between posts' },
   { key: 'chat_inline', label: 'Chat — after every 20 messages' },
   { key: 'live_inline', label: 'Live activity — after every 15 items' },
+  { key: 'alerts_inline', label: 'Alerts — in the Alerts panel on Recent Activity' },
 ];
 const PLACEMENT_KEYS = PLACEMENTS.map((p) => p.key);
 const isPlacement = (k) => PLACEMENT_KEYS.includes(k);

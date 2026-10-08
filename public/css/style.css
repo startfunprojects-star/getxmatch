@@ -1743,3 +1743,7 @@ button.primary, .chat-cta { letter-spacing: .01em; }
 .alert-link:hover { color: var(--accent); text-decoration: underline; }
 .alert-meta { font-size: 12px; margin-top: 2px; }
 .alerts-more { margin-top: 6px; }
+.alerts-country { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 13px; }
+.alerts-country select { width: auto; max-width: 100%; padding: 4px 8px; font-size: 13px; }
+.alerts-empty { margin: 4px 0; }
+.alerts-panel .ad-stream { margin: 8px auto; }

@@ -1504,6 +1504,7 @@
     const lf = alertsData.lastFetch;
     if (!lf) return 'Not fetched yet.';
     return `Last checked ${esc(fmtDate(lf.at))} · ${lf.added} new` +
+      (lf.countries && lf.countries.length ? ` · ${esc(lf.countries.join(', '))}` : '') +
       (lf.errors && lf.errors.length ? ` · <span class="news-err">⚠ ${esc(lf.errors.join('; '))}</span>` : '');
   }
 
@@ -1513,6 +1514,7 @@
     box.innerHTML = `
       <h2>Alerts</h2>
       <p class="count">Members see the latest news about these keywords in an <strong>Alerts</strong> panel at the top of Recent Activity. Alerts come from a Google News search for each keyword and from your <strong>News</strong> tab feeds, and are checked every 30 minutes. Only the headline, source and a link are shown.</p>
+      <p class="count">Each member picks the <strong>country</strong> they want alerts and news for (their profile country until they change it); Google News is searched in that country’s edition. Ads for the panel go in the <strong>Alerts</strong> placement on the Ads tab.</p>
       <label>Keywords <span class="count">(comma-separated, up to ${alertsData.maxKeywords})</span>
         <textarea id="alKeywords" rows="2" placeholder="e.g. Dehradun, Uttarakhand weather, board exams, ISRO">${esc(alertsData.keywords.join(', '))}</textarea></label>
       <label>Websites <span class="count">(comma-separated, up to ${alertsData.maxSites}; leave empty to allow any website)</span>
@@ -1563,7 +1565,7 @@
         <div class="admin-item news-item${a.hidden ? ' news-off' : ''}">
           <div class="act-main">
             <a target="_blank" rel="noopener noreferrer nofollow"></a>
-            <div class="count">${esc(a.source)} · <span class="pill">${esc(a.keyword)}</span> · ${esc(fmtDate(a.at))}${a.hidden ? ' · hidden' : ''}</div>
+            <div class="count">${esc(a.source)} · <span class="pill">${esc(a.keyword)}</span>${a.country ? ' · 🌍 ' + esc(a.country) : ''} · ${esc(fmtDate(a.at))}${a.hidden ? ' · hidden' : ''}</div>
           </div>
           <button class="${a.hidden ? 'ghost' : 'danger'} small">${a.hidden ? 'Show' : 'Hide'}</button>
         </div>`);
@@ -1784,9 +1786,9 @@
         <div class="admin-item news-feed${f.enabled ? '' : ' news-off'}">
           <div><strong>${esc(f.title || f.url)}</strong>
             ${f.familySafe ? '<span class="pill">family-safe</span>' : '<span class="pill">18+ only</span>'}
-            ${f.enabled ? '' : '<span class="pill">paused</span>'}</div>
+            ${f.enabled ? '' : '<span class="pill">paused</span>'}${f.country ? `<span class="pill">🌍 ${esc(f.country)}</span>` : ''}</div>
           <div class="count news-url">${esc(f.url)}</div>
-          <div class="count">For: ${f.interests.map(esc).join(', ')}</div>
+          <div class="count">For: ${f.interests.length ? f.interests.map(esc).join(', ') : 'everyone in ' + esc(f.country) + ' (top stories)'}${f.country ? ' · members who chose ' + esc(f.country) : ''}</div>
           <div class="count">${f.items} headline${f.items === 1 ? '' : 's'} · ${f.lastFetchedAt ? 'checked ' + esc(fmtDate(f.lastFetchedAt)) : 'not checked yet'}
             ${f.lastError ? `<span class="news-err">· ⚠ ${esc(f.lastError)}</span>` : ''}</div>
           <div class="admin-item-actions">
