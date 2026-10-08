@@ -382,7 +382,7 @@
       { group: "Sports & outdoors", items: ['Sports', 'Nature', 'Hiking', 'Cycling', 'Running', 'Swimming', 'Cricket', 'Football', 'Badminton', 'Chess', 'Camping', 'Wildlife'] },
       { group: "Entertainment", items: ['Gaming', 'Podcasts', 'Stand-up comedy', 'Anime', 'TV series', 'Board games', 'Puzzles', 'Quizzes'] },
     ],
-    maxInterests: 10,
+    maxInterests: 20,
   };
   const MAX_REEL_SECONDS = 60; // gallery photos and reels: no limit on how many
   const MAX_REEL_MB = 50;

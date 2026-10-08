@@ -63,7 +63,7 @@ const INTEREST_GROUPS = [
   { group: "Entertainment", items: ['Gaming', 'Podcasts', 'Stand-up comedy', 'Anime', 'TV series', 'Board games', 'Puzzles', 'Quizzes'] },
 ];
 const INTERESTS = INTEREST_GROUPS.flatMap((g) => g.items);
-const MAX_INTERESTS = 10;
+const MAX_INTERESTS = 20;
 
 // Gallery: no limit on how many photos or reels. A reel is at most 1 minute.
 const MAX_REEL_SECONDS = 60;
