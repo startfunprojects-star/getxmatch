@@ -3419,12 +3419,26 @@
     if (state.tab !== 'chats') renderList();
   }
 
-  async function rememberPeer(id) {
-    if (state.chatPeers[id]) return;
+  // Track a chat peer by id. Someone not in the people list (it's capped and
+  // leaves out hidden profiles) is looked up on the server, so they always show
+  // with their real name and a working profile link.
+  const peerLookups = {};
+  function rememberPeer(id) {
+    if (state.chatPeers[id]) return Promise.resolve(state.chatPeers[id]);
     const found = state.peopleCache.find((u) => u.id === id);
-    if (found) { state.chatPeers[id] = found; return; }
-    // Fall back to a minimal record; refine on next people load.
-    state.chatPeers[id] = { id, username: 'user' + id, displayName: 'User ' + id, avatar: null };
+    if (found) { state.chatPeers[id] = found; return Promise.resolve(found); }
+    if (!peerLookups[id]) {
+      peerLookups[id] = api.get('/api/users/' + id + '/summary')
+        .then(({ user }) => {
+          state.chatPeers[id] = user;
+          if (state.tab === 'chats') renderList();
+          renderChatTabs();
+          return user;
+        })
+        .catch(() => null)
+        .finally(() => { delete peerLookups[id]; });
+    }
+    return peerLookups[id];
   }
 
   let typingTimer;

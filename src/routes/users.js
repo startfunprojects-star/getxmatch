@@ -56,6 +56,29 @@ router.get('/', requireAuth, (req, res) => {
   });
 });
 
+// GET /api/users/:id/summary — name and picture for one member, by id. Used when
+// a chat message arrives from someone not in the client's people list (that
+// list is capped and leaves out hidden profiles), so they never show up as a
+// made-up "User 45" with a profile link that goes nowhere.
+router.get('/:id/summary', requireAuth, (req, res) => {
+  const uid = parseInt(req.params.id, 10);
+  if (!uid) return res.status(400).json({ error: 'Invalid user id.' });
+  const r = db.prepare(
+    `SELECT u.id, u.username, p.display_name, p.avatar
+       FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?`
+  ).get(uid);
+  if (!r) return res.status(404).json({ error: 'User not found.' });
+  res.json({
+    user: {
+      id: r.id,
+      username: r.username,
+      displayName: r.display_name || r.username,
+      avatar: r.avatar ? `/uploads/${r.avatar}` : null,
+      isFriend: areFriends(req.user.id, r.id),
+    },
+  });
+});
+
 // GET /api/users/:id/avatars — the pictures to cycle through for this user in
 // chat: their profile picture buffer, or just their single display picture if
 // the buffer is empty. Returns absolute /uploads URLs.
