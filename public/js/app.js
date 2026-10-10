@@ -3617,24 +3617,29 @@
 
   function callTile(name, isLocal) {
     const initial = esc((String(name || '?').trim()[0] || '?').toUpperCase());
-    return el(`
+    const tile = el(`
       <div class="call-tile${isLocal ? ' local' : ''}">
         <video autoplay playsinline${isLocal ? ' muted' : ''}></video>
+        <button class="call-tile-zoom" type="button" title="Enlarge (double-click works too)">⛶</button>
         <div class="call-tile-off"><span class="call-initial">${initial}</span><span class="call-off-note">Camera off</span></div>
         <div class="call-tile-name"><span class="call-mic-off" title="Microphone muted">🔇</span><span class="call-name-text">${esc(name)}</span></div>
         <div class="call-quality"></div>
       </div>`);
+    tile.querySelector('.call-tile-zoom').addEventListener('click', () => toggleTileZoom(tile));
+    tile.addEventListener('dblclick', () => toggleTileZoom(tile));
+    return tile;
   }
 
-  // Grid shape follows the number of tiles; a remote screen share gets the
-  // big spot ("presenting") with everyone else in a strip underneath.
+  // Grid shape follows the number of tiles; every tile is the same size (CSS).
   function layoutCallGrid() {
     const grid = document.getElementById('callGrid');
-    if (!grid) return;
-    grid.dataset.count = String(grid.children.length);
-    const featured = grid.querySelector('.call-tile.screen:not(.local)');
-    grid.querySelectorAll('.call-tile').forEach((t) => t.classList.toggle('featured', t === featured));
-    grid.classList.toggle('presenting', !!featured && grid.children.length > 2);
+    if (grid) grid.dataset.count = String(grid.children.length);
+  }
+
+  // Show one tile full screen (e.g. to read a shared tab), or go back.
+  function toggleTileZoom(tile) {
+    if (document.fullscreenElement === tile) document.exitFullscreen().catch(() => {});
+    else if (tile.requestFullscreen) tile.requestFullscreen().catch(() => {});
   }
 
   function setCallStatus(text) {
