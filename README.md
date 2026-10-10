@@ -296,6 +296,8 @@ sudo systemctl restart getxmatch
 | `SMTP_USER`       | SMTP mailbox login. **If blank, OTPs/links are printed to the server log instead of emailed.** |
 | `SMTP_PASS`       | SMTP mailbox password                               |
 | `MAIL_FROM`       | `From:` header, e.g. `getxmatch <contact@getxmatch.com>` |
+| `TURN_URLS`       | Optional TURN server(s) for video calls, comma-separated (e.g. `turn:turn.example.com:3478`). Without one, calls use public STUN only and may fail behind strict NATs. |
+| `TURN_USERNAME` / `TURN_CREDENTIAL` | Credentials for the TURN server |
 
 ### Email & the admin account
 

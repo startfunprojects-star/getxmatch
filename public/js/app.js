@@ -1473,6 +1473,7 @@
             <div class="name">${esc(group.name)}</div>
             <div class="status">${joined.length}/${group.max} member${joined.length === 1 ? '' : 's'}${pending.length ? ` · ${pending.length} invited` : ''}</div>
           </div>
+          <button class="ghost small" id="groupCallBtn" title="Start or join the group's video call">📹 Call</button>
           <button class="ghost small" id="groupAddBtn" title="Add someone">＋ Add</button>
           ${isOwner ? '<button class="ghost small" id="groupRenameBtn" title="Rename this group">✎ Rename</button>' : ''}
           ${isOwner
@@ -1503,6 +1504,8 @@
       state.group = null;
     });
     view.querySelector('#groupAddBtn').addEventListener('click', () => openGroupAdder(state.group));
+    view.querySelector('#groupCallBtn').addEventListener('click', () =>
+      startCall({ kind: 'group', groupId: gid, name: group.name }));
     const leaveBtn = view.querySelector('#groupLeaveBtn');
     if (leaveBtn) leaveBtn.addEventListener('click', async () => {
       if (!confirm('Leave this group chat?')) return;
@@ -1892,6 +1895,7 @@
             <div class="name" id="peerName" style="cursor:pointer">${esc(peer.displayName || peer.username)}</div>
             <div class="status">@${esc(peer.username)}</div>
           </div>
+          <button class="ghost small" id="callBtn" title="Start a video call">📹 Call</button>
           <button class="ghost small" id="screenShareBtn" title="Share a browser tab with this person">🖥️ Share screen</button>
           <button class="ghost small" id="makeGroupBtn" title="Start a group chat with this person and others">👥 Group</button>
         </div>
@@ -1941,6 +1945,8 @@
     view.querySelector('#peerName').addEventListener('click', openPeerProfile);
     view.querySelector('#makeGroupBtn').addEventListener('click', () => openGroupCreator(peer));
     view.querySelector('#screenShareBtn').addEventListener('click', () => toggleScreenShare(peer));
+    view.querySelector('#callBtn').addEventListener('click', () =>
+      startCall({ kind: 'dm', to: peer.id, name: peer.displayName || peer.username }));
     reflectScreenShare(peer.id);
 
 
@@ -2027,7 +2033,7 @@
   // Replace a conversation's composer (and its share / group / activity
   // controls) with a "friends only" notice and a way to their profile.
   function lockChatComposer(view, peer) {
-    ['.composer', '#activityBar', '#screenShareBtn', '#makeGroupBtn', '#giftPicker'].forEach((sel) => {
+    ['.composer', '#activityBar', '#callBtn', '#screenShareBtn', '#makeGroupBtn', '#giftPicker'].forEach((sel) => {
       const n = view.querySelector(sel);
       if (n) n.remove();
     });
@@ -3316,6 +3322,355 @@
     reflectScreenShare(s.peerId);
   }
 
+  /* ---------- video calls (1:1 and group) ----------
+     Full-mesh WebRTC: each participant holds one RTCPeerConnection per other
+     participant (groups are capped at 4, so at most 3 links). The server
+     (socket.js) tracks the room and relays signaling; whoever joins later
+     sends the offers, so two sides never offer to each other at once.
+     Quality: HD 720p/30fps camera capture with echo cancellation and noise
+     suppression, a generous video bitrate ceiling (lower per link in group
+     calls, where we upload one stream per peer), and a live per-tile quality
+     badge read from getStats(). */
+  const CALL_VIDEO = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 }, facingMode: 'user' };
+  const CALL_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  const RING_TIMEOUT_MS = 45000;
+  state.call = null; // { room, target, title, local, peers: Map(id -> peer), iceServers, … }
+  state.incomingCall = null; // { ring, close, stopTone }
+
+  async function getCallMedia() {
+    try { return await navigator.mediaDevices.getUserMedia({ video: CALL_VIDEO, audio: CALL_AUDIO }); }
+    catch (_e) {}
+    try { return await navigator.mediaDevices.getUserMedia({ audio: CALL_AUDIO }); } // no camera → voice only
+    catch (_e) { return null; }
+  }
+
+  // Start (or join) a call. target: { kind:'dm', to, name } | { kind:'group', groupId, name }.
+  async function startCall(target) {
+    if (!state.socket) return;
+    if (state.call) return notifyToast('You are already in a call.');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.RTCPeerConnection) {
+      return notifyToast('Video calls are not supported in this browser.');
+    }
+    const local = await getCallMedia();
+    if (!local) return notifyToast('Allow camera/microphone access to start a call.');
+    local.getAudioTracks().forEach((t) => { try { t.contentHint = 'speech'; } catch (_e) {} });
+
+    const call = {
+      room: null, target, title: target.name || 'Call', local,
+      peers: new Map(), iceServers: ICE_CONFIG.iceServers,
+      micOn: true, camOn: local.getVideoTracks().length > 0, everConnected: false,
+    };
+    state.call = call;
+    renderCallPanel();
+    setCallStatus(target.kind === 'dm' ? 'Ringing…' : 'Waiting for others to join…');
+
+    const payload = target.kind === 'dm' ? { kind: 'dm', to: target.to } : { kind: 'group', groupId: target.groupId };
+    state.socket.emit('call:join', payload, (res) => {
+      if (state.call !== call) return; // hung up while joining
+      if (!res || res.error) { endCall(true); return notifyToast((res && res.error) || 'Could not start the call.'); }
+      call.room = res.room;
+      if (Array.isArray(res.iceServers) && res.iceServers.length) call.iceServers = res.iceServers;
+      (res.peers || []).forEach((p) => addCallPeer(p.id, p.name, true));
+      if (res.peers && res.peers.length) setCallStatus('');
+      // Nobody picked up a 1:1 call in time → give up.
+      if (target.kind === 'dm' && !(res.peers && res.peers.length)) {
+        call.ringTimer = setTimeout(() => {
+          if (state.call === call && !call.everConnected) { endCall(); notifyToast('No answer.'); }
+        }, RING_TIMEOUT_MS);
+      }
+    });
+    call.statsTimer = setInterval(updateCallQuality, 2000);
+  }
+
+  // Create the link to one other participant. `offerer` = we send the offer.
+  function addCallPeer(id, name, offerer) {
+    const call = state.call;
+    if (!call) return null;
+    if (call.peers.has(id)) return call.peers.get(id);
+    const pc = new RTCPeerConnection({ iceServers: call.iceServers });
+    const peer = { id, name: name || 'Someone', pc, pendingIce: [], stream: null };
+    call.peers.set(id, peer);
+    call.local.getTracks().forEach((t) => pc.addTrack(t, call.local));
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate && state.socket && call.room) {
+        state.socket.emit('call:signal', { room: call.room, to: id, candidate: e.candidate });
+      }
+    };
+    pc.ontrack = (e) => {
+      peer.stream = e.streams[0] || new MediaStream([e.track]);
+      const v = peer.tile && peer.tile.querySelector('video');
+      if (v && v.srcObject !== peer.stream) v.srcObject = peer.stream;
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'connected') {
+        call.everConnected = true;
+        clearTimeout(call.ringTimer);
+        setCallStatus('');
+        tuneCallSenders();
+      } else if (pc.connectionState === 'failed') {
+        // Try to recover the path (e.g. a network switch) before giving up.
+        if (offerer) { try { pc.restartIce(); } catch (_e) {} renegotiate(peer); }
+      }
+    };
+
+    peer.tile = callTile(peer.name, false);
+    document.getElementById('callGrid').appendChild(peer.tile);
+    layoutCallGrid();
+    if (offerer) renegotiate(peer);
+    return peer;
+  }
+
+  async function renegotiate(peer) {
+    const call = state.call;
+    if (!call) return;
+    try {
+      const offer = await peer.pc.createOffer();
+      await peer.pc.setLocalDescription(offer);
+      state.socket.emit('call:signal', { room: call.room, to: peer.id, sdp: peer.pc.localDescription });
+    } catch (_e) { /* the next ICE restart retries */ }
+  }
+
+  function removeCallPeer(id) {
+    const call = state.call;
+    const peer = call && call.peers.get(id);
+    if (!peer) return;
+    call.peers.delete(id);
+    try { peer.pc.close(); } catch (_e) {}
+    if (peer.tile) peer.tile.remove();
+    layoutCallGrid();
+  }
+
+  async function handleCallSignal(msg) {
+    const call = state.call;
+    if (!call || msg.room !== call.room) return;
+    let peer = call.peers.get(msg.from);
+    if (!peer) {
+      const known = state.chatPeers[msg.from];
+      peer = addCallPeer(msg.from, known ? (known.displayName || known.username) : null, false);
+      if (!peer) return;
+    }
+    const pc = peer.pc;
+    try {
+      if (msg.sdp) {
+        await pc.setRemoteDescription(msg.sdp);
+        if (msg.sdp.type === 'offer') {
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          state.socket.emit('call:signal', { room: call.room, to: peer.id, sdp: pc.localDescription });
+        }
+        // Candidates that arrived before the description can be applied now.
+        const queued = peer.pendingIce.splice(0);
+        for (const c of queued) { try { await pc.addIceCandidate(c); } catch (_e) {} }
+      } else if (msg.candidate) {
+        if (pc.remoteDescription) await pc.addIceCandidate(msg.candidate);
+        else peer.pendingIce.push(msg.candidate);
+      }
+    } catch (_e) { /* stale or duplicate signal */ }
+  }
+
+  // Bitrate ceilings: a 1:1 call gets HD headroom; in a group each link is
+  // capped lower, since we upload a separate copy of our video to every peer.
+  function tuneCallSenders() {
+    const call = state.call;
+    if (!call) return;
+    const maxBitrate = call.peers.size <= 1 ? 2500000 : 1200000;
+    call.peers.forEach((peer) => {
+      peer.pc.getSenders().forEach((s) => {
+        if (!s.track) return;
+        try {
+          const p = s.getParameters();
+          if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+          if (s.track.kind === 'video') {
+            p.encodings[0].maxBitrate = maxBitrate;
+            p.encodings[0].maxFramerate = 30;
+            p.degradationPreference = 'balanced';
+          } else {
+            p.encodings[0].maxBitrate = 64000; // clear Opus voice
+          }
+          s.setParameters(p).catch(() => {});
+        } catch (_e) {}
+      });
+    });
+  }
+
+  // Read each link's stats and badge the tile: resolution/fps when healthy,
+  // a warning when packets are being lost or the round trip is long.
+  async function updateCallQuality() {
+    const call = state.call;
+    if (!call) return;
+    for (const peer of call.peers.values()) {
+      if (!peer.tile || peer.pc.connectionState !== 'connected') continue;
+      let height = 0, fps = 0, lost = 0, recv = 0, rtt = 0;
+      try {
+        const stats = await peer.pc.getStats();
+        stats.forEach((r) => {
+          if (r.type === 'inbound-rtp' && r.kind === 'video') {
+            height = r.frameHeight || 0; fps = Math.round(r.framesPerSecond || 0);
+            lost = r.packetsLost || 0; recv = r.packetsReceived || 0;
+          }
+          if (r.type === 'candidate-pair' && r.nominated && r.currentRoundTripTime) rtt = r.currentRoundTripTime;
+        });
+      } catch (_e) { continue; }
+      const dLost = lost - (peer.lastLost || 0), dRecv = recv - (peer.lastRecv || 0);
+      peer.lastLost = lost; peer.lastRecv = recv;
+      const lossPct = dRecv + dLost > 0 ? (dLost / (dRecv + dLost)) * 100 : 0;
+      const weak = lossPct > 5 || rtt > 0.4;
+      const badge = peer.tile.querySelector('.call-quality');
+      badge.classList.toggle('weak', weak);
+      badge.textContent = weak ? 'Weak connection'
+        : height ? `${height >= 720 ? 'HD ' : ''}${height}p · ${fps}fps` : '';
+    }
+  }
+
+  function callTile(name, isLocal) {
+    const tile = el(`
+      <div class="call-tile${isLocal ? ' local' : ''}">
+        <video autoplay playsinline${isLocal ? ' muted' : ''}></video>
+        <div class="call-tile-name">${esc(name)}</div>
+        <div class="call-quality"></div>
+      </div>`);
+    return tile;
+  }
+
+  function layoutCallGrid() {
+    const grid = document.getElementById('callGrid');
+    if (grid) grid.dataset.count = String(grid.children.length);
+  }
+
+  function setCallStatus(text) {
+    const s = document.getElementById('callStatus');
+    if (s) { s.textContent = text; s.classList.toggle('hidden', !text); }
+  }
+
+  function renderCallPanel() {
+    const call = state.call;
+    let panel = document.getElementById('callPanel');
+    if (panel) panel.remove();
+    panel = el(`
+      <div id="callPanel" class="call-panel">
+        <div class="call-head">
+          <span class="screen-dot"></span>
+          <span class="call-title">${esc(call.title)}</span>
+          <button class="icon-btn small" id="callMinBtn" title="Minimize / expand">▭</button>
+          <button class="icon-btn small" id="callFsBtn" title="Fullscreen">⛶</button>
+        </div>
+        <div class="call-stage">
+          <div class="call-grid" id="callGrid"></div>
+          <div class="call-status" id="callStatus"></div>
+        </div>
+        <div class="call-controls">
+          <button class="call-btn" id="callMicBtn" title="Mute microphone">🎤</button>
+          <button class="call-btn" id="callCamBtn" title="Turn camera off">📷</button>
+          <button class="call-btn end" id="callEndBtn" title="Hang up">📞</button>
+        </div>
+      </div>`);
+    document.body.appendChild(panel);
+
+    const me = callTile('You', true);
+    me.querySelector('video').srcObject = call.local;
+    panel.querySelector('#callGrid').appendChild(me);
+    layoutCallGrid();
+    if (!call.camOn) panel.querySelector('#callCamBtn').disabled = true;
+
+    panel.querySelector('#callEndBtn').addEventListener('click', () => endCall());
+    panel.querySelector('#callMicBtn').addEventListener('click', (e) => {
+      call.micOn = !call.micOn;
+      call.local.getAudioTracks().forEach((t) => { t.enabled = call.micOn; });
+      e.currentTarget.classList.toggle('off', !call.micOn);
+      e.currentTarget.title = call.micOn ? 'Mute microphone' : 'Unmute microphone';
+    });
+    panel.querySelector('#callCamBtn').addEventListener('click', (e) => {
+      call.camOn = !call.camOn;
+      call.local.getVideoTracks().forEach((t) => { t.enabled = call.camOn; });
+      e.currentTarget.classList.toggle('off', !call.camOn);
+      e.currentTarget.title = call.camOn ? 'Turn camera off' : 'Turn camera on';
+    });
+    panel.querySelector('#callMinBtn').addEventListener('click', () => panel.classList.toggle('min'));
+    panel.querySelector('#callFsBtn').addEventListener('click', () => {
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      else if (panel.requestFullscreen) panel.requestFullscreen().catch(() => {});
+    });
+  }
+
+  // Hang up. `silent` skips telling the server (it already knows / never joined).
+  function endCall(silent) {
+    const call = state.call;
+    if (!call) return;
+    state.call = null;
+    clearTimeout(call.ringTimer);
+    clearInterval(call.statsTimer);
+    if (!silent && call.room && state.socket) state.socket.emit('call:leave', { room: call.room });
+    call.peers.forEach((p) => { try { p.pc.close(); } catch (_e) {} });
+    try { call.local.getTracks().forEach((t) => t.stop()); } catch (_e) {}
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    const panel = document.getElementById('callPanel');
+    if (panel) panel.remove();
+  }
+
+  // A soft two-tone ring while an incoming call waits. Returns a stopper.
+  function startRingTone() {
+    let ctx, timer;
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const beep = () => {
+        [0, 0.25].forEach((delay, i) => {
+          const o = ctx.createOscillator(), g = ctx.createGain();
+          o.frequency.value = i ? 660 : 880;
+          g.gain.setValueAtTime(0.0001, ctx.currentTime + delay);
+          g.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + delay + 0.02);
+          g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + delay + 0.22);
+          o.connect(g).connect(ctx.destination);
+          o.start(ctx.currentTime + delay); o.stop(ctx.currentTime + delay + 0.24);
+        });
+      };
+      beep();
+      timer = setInterval(beep, 2000);
+    } catch (_e) {}
+    return () => { clearInterval(timer); try { if (ctx) ctx.close(); } catch (_e) {} };
+  }
+
+  function dismissIncomingCall() {
+    const inc = state.incomingCall;
+    if (!inc) return;
+    state.incomingCall = null;
+    clearTimeout(inc.timer);
+    inc.stopTone();
+    inc.close();
+  }
+
+  function handleIncomingCall(ring) {
+    // Busy in another call (or already being rung): leave it unanswered.
+    if (state.call || state.incomingCall) return;
+    const isGroup = ring.kind === 'group';
+    const who = esc(ring.fromName || 'Someone');
+    const { card, close } = openModal(isGroup ? 'Group video call' : 'Incoming video call', `
+      <p class="incoming-call">${isGroup ? `${who} started a call in <b>${esc(ring.groupName || 'a group')}</b>` : `<b>${who}</b> is calling you`}</p>
+      <div class="row-actions">
+        <button class="ghost" id="callDecline">Decline</button>
+        <button class="primary" id="callAccept">📹 Join</button>
+      </div>`);
+    const inc = { ring, close, stopTone: startRingTone() };
+    state.incomingCall = inc;
+    inc.timer = setTimeout(dismissIncomingCall, RING_TIMEOUT_MS);
+    // Closing the dialog any way (✕ or clicking outside) declines the call.
+    const declineOnClose = () => {
+      if (state.incomingCall === inc) { state.socket.emit('call:decline', { room: ring.room }); dismissIncomingCall(); }
+    };
+    card.querySelector('.modal-x').addEventListener('click', declineOnClose);
+    card.parentNode.addEventListener('click', (e) => { if (e.target === card.parentNode) declineOnClose(); });
+    card.querySelector('#callDecline').addEventListener('click', () => {
+      state.socket.emit('call:decline', { room: ring.room });
+      dismissIncomingCall();
+    });
+    card.querySelector('#callAccept').addEventListener('click', () => {
+      dismissIncomingCall();
+      startCall(isGroup
+        ? { kind: 'group', groupId: ring.groupId, name: ring.groupName || 'Group call' }
+        : { kind: 'dm', to: ring.from, name: ring.fromName });
+    });
+  }
+
   /* ---------- socket ---------- */
   function connectSocket() {
     if (state.socket) state.socket.disconnect();
@@ -3399,6 +3754,29 @@
         if (state.tab !== 'chats') markNav('chats', true);
       }
     });
+
+    // Video calls.
+    s.on('call:ring', (ring) => handleIncomingCall(ring));
+    s.on('call:ring-stop', ({ room }) => {
+      if (state.incomingCall && state.incomingCall.ring.room === room) dismissIncomingCall();
+    });
+    s.on('call:peer-joined', ({ room, peer }) => {
+      if (state.call && state.call.room === room && peer) { addCallPeer(peer.id, peer.name, false); setCallStatus(''); }
+    });
+    s.on('call:peer-left', ({ room, userId }) => {
+      const call = state.call;
+      if (!call || call.room !== room) return;
+      if (call.target.kind === 'dm') { endCall(); return notifyToast('Call ended.'); }
+      removeCallPeer(userId);
+      if (!call.peers.size) setCallStatus('Everyone else left — waiting…');
+    });
+    s.on('call:declined', ({ room, name }) => {
+      if (state.call && state.call.room === room && !state.call.everConnected) {
+        endCall();
+        notifyToast(`${name || 'They'} declined the call.`);
+      }
+    });
+    s.on('call:signal', (msg) => handleCallSignal(msg));
 
     // A poll's tallies changed (someone voted) — repaint the card in place.
     s.on('poll:update', (e) => { if (e && e.poll) updatePollCard(e.poll); });

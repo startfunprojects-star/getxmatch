@@ -220,6 +220,57 @@ function broadcastLeaderboardChange() {
   if (ioRef) ioRef.emit('leaderboard:changed', { at: Date.now() });
 }
 
+/* --------------------------------------------------------------------------
+   Video calls (1:1 and group) — signaling state.
+
+   Media flows peer-to-peer over WebRTC (a full mesh: every participant
+   connects to every other, fine for groups of at most 4). The server only
+   tracks who is in which call and relays offers/answers/ICE between them.
+   A room is "dm:<lowId>-<highId>" or "group:<groupId>"; each participant is
+   pinned to the one socket (tab) that joined.
+-------------------------------------------------------------------------- */
+const MAX_CALL_PEOPLE = 4;
+const calls = new Map(); // room -> { kind, groupId, members: Map(userId -> socketId) }
+
+// Resolve and authorize the call room `me` asks for. Returns { room, kind,
+// groupId, audience } (audience = who to ring) or { error }.
+function resolveCallRoom(meId, payload) {
+  const kind = payload && payload.kind;
+  if (kind === 'dm') {
+    const to = parseInt(payload.to, 10);
+    if (!to || to === meId) return { error: 'Invalid call.' };
+    const denied = dmDenied(meId, to, 'You cannot call this user.');
+    if (denied) return { error: denied.replace('chat', 'call') };
+    return { room: `dm:${Math.min(meId, to)}-${Math.max(meId, to)}`, kind, groupId: null, audience: [to] };
+  }
+  if (kind === 'group') {
+    const groupId = parseInt(payload.groupId, 10);
+    if (!groupId) return { error: 'Invalid call.' };
+    const joined = groupJoinedIds(groupId);
+    if (!joined.includes(meId)) return { error: 'You are not a member of this group.' };
+    if (groupWalled(groupId, meId)) return { error: 'You cannot call this group.' };
+    return { room: `group:${groupId}`, kind, groupId, audience: joined.filter((id) => id !== meId) };
+  }
+  return { error: 'Invalid call.' };
+}
+
+// Remove `userId` from a call (only if pinned to `socketId`, when given) and
+// tell whoever is left. An emptied room is dropped and stops any ringing.
+function leaveCall(io, room, userId, socketId) {
+  const c = calls.get(room);
+  if (!c || !c.members.has(userId)) return;
+  if (socketId && c.members.get(userId) !== socketId) return;
+  c.members.delete(userId);
+  c.members.forEach((sid) => io.to(sid).emit('call:peer-left', { room, userId }));
+  if (c.members.size === 0) {
+    calls.delete(room);
+    const audience = c.kind === 'group'
+      ? groupJoinedIds(c.groupId)
+      : room.slice(3).split('-').map(Number);
+    audience.forEach((uid) => io.to(`user:${uid}`).emit('call:ring-stop', { room }));
+  }
+}
+
 // Display name (or @username) for a user id.
 function nameOf(uid) {
   const r = db
@@ -629,6 +680,73 @@ function initSocket(io) {
     socket.on('screen:ice', (payload) => relayScreen(payload, 'screen:ice'));
     socket.on('screen:stop', (payload) => relayScreen(payload, 'screen:stop'));
 
+    /* ---------------- Video calls (see the calls map above) ---------------- */
+
+    // Join (or start) a call. The ack lists who is already in it — the joiner
+    // sends each of them an offer. Starting a call rings everyone else.
+    socket.on('call:join', (payload, ack) => {
+      try {
+        const r = resolveCallRoom(me.id, payload);
+        if (r.error) return ack && ack({ error: r.error });
+        // One call at a time per user: drop out of any other room first.
+        calls.forEach((c, room) => { if (room !== r.room && c.members.has(me.id)) leaveCall(io, room, me.id); });
+
+        let c = calls.get(r.room);
+        if (!c) { c = { kind: r.kind, groupId: r.groupId, members: new Map() }; calls.set(r.room, c); }
+        const others = [...c.members.keys()].filter((id) => id !== me.id);
+        if (others.length + 1 > MAX_CALL_PEOPLE) return ack && ack({ error: 'This call is full.' });
+        c.members.set(me.id, socket.id);
+
+        const myName = nameOf(me.id);
+        others.forEach((uid) => io.to(c.members.get(uid)).emit('call:peer-joined', { room: r.room, peer: { id: me.id, name: myName } }));
+        // Stop the ring on my other tabs (the joining tab ignores it).
+        io.to(`user:${me.id}`).emit('call:ring-stop', { room: r.room });
+        if (!others.length) {
+          const groupName = r.kind === 'group'
+            ? ((db.prepare('SELECT name FROM chat_groups WHERE id = ?').get(r.groupId) || {}).name || 'Group chat')
+            : null;
+          r.audience.forEach((uid) => io.to(`user:${uid}`).emit('call:ring', {
+            room: r.room, kind: r.kind, groupId: r.groupId, groupName, from: me.id, fromName: myName,
+          }));
+        }
+        ack && ack({
+          ok: true,
+          room: r.room,
+          peers: others.map((id) => ({ id, name: nameOf(id) })),
+          iceServers: config.iceServers,
+        });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // Relay an offer/answer/ICE candidate to one other participant of my call.
+    socket.on('call:signal', (payload) => {
+      const room = String((payload && payload.room) || '');
+      const to = parseInt(payload && payload.to, 10);
+      const c = calls.get(room);
+      if (!c || c.members.get(me.id) !== socket.id || !c.members.has(to)) return;
+      const out = { room, from: me.id };
+      if (payload.sdp) out.sdp = payload.sdp;
+      if (payload.candidate) out.candidate = payload.candidate;
+      io.to(c.members.get(to)).emit('call:signal', out);
+    });
+
+    socket.on('call:leave', (payload) => {
+      leaveCall(io, String((payload && payload.room) || ''), me.id, socket.id);
+    });
+
+    // Turn down an incoming call: silence my other tabs, and for a 1:1 call
+    // tell the caller so they aren't left ringing.
+    socket.on('call:decline', (payload) => {
+      const room = String((payload && payload.room) || '');
+      io.to(`user:${me.id}`).emit('call:ring-stop', { room });
+      const c = calls.get(room);
+      if (c && c.kind === 'dm') {
+        c.members.forEach((sid) => io.to(sid).emit('call:declined', { room, userId: me.id, name: nameOf(me.id) }));
+      }
+    });
+
     // Group chat message → stored, then delivered live to every joined member.
     socket.on('group:message', (payload, ack) => {
       try {
@@ -690,6 +808,8 @@ function initSocket(io) {
 
     socket.on('disconnect', () => {
       removeSocket(me.id, socket.id);
+      // A closed tab hangs up whatever call it was in.
+      [...calls.keys()].forEach((room) => leaveCall(io, room, me.id, socket.id));
       // When the user's last tab disconnects they're fully offline: stamp the
       // time so the daily digest knows which later messages went unseen.
       if (!isOnline(me.id)) {

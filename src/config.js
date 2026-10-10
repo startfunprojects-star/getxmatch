@@ -40,6 +40,21 @@ const config = {
   digestEnabled: process.env.DIGEST_ENABLED !== 'false',
   digestHour: Math.min(23, Math.max(0, parseInt(process.env.DIGEST_HOUR, 10) || 12)),
 
+  // WebRTC ICE servers for video calls. Public STUN works for most networks;
+  // set TURN_URLS (comma-separated, e.g. "turn:turn.example.com:3478,turns:turn.example.com:5349")
+  // plus TURN_USERNAME / TURN_CREDENTIAL so calls also connect from strict
+  // corporate/mobile NATs, where a direct peer-to-peer path is impossible.
+  iceServers: [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+    ...(process.env.TURN_URLS
+      ? [{
+          urls: process.env.TURN_URLS.split(',').map((s) => s.trim()).filter(Boolean),
+          username: process.env.TURN_USERNAME || '',
+          credential: process.env.TURN_CREDENTIAL || '',
+        }]
+      : []),
+  ],
+
   // Outgoing mail (Hostinger SMTP by default). If user/pass are blank the
   // mailer falls back to logging messages to the server console.
   smtp: {
