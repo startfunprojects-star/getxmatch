@@ -3,6 +3,7 @@
 const express = require('express');
 
 const db = require('../db');
+const { requireSafeLinks } = require('../linkSafety');
 const { requireAuth } = require('../auth');
 const { friendState, ratingSummary, RATING_DIMS, photoReactionState, photoComments, commentReactionState, canSeePhoto } = require('../profileData');
 const { areBlocked } = require('../relations');
@@ -114,7 +115,7 @@ router.delete('/rate/:username', requireAuth, (req, res) => {
 --------------------------------------------------------------------------- */
 
 // POST /api/social/comment/:username  { body }  — leave a comment on a profile
-router.post('/comment/:username', requireAuth, (req, res) => {
+router.post('/comment/:username', requireAuth, requireSafeLinks('body'), (req, res) => {
   const target = resolveTarget(req, res);
   if (!target) return;
   if (target.id !== req.user.id && areBlocked(req.user.id, target.id)) {
@@ -235,7 +236,7 @@ router.post('/photo/:photoId/react', requireAuth, (req, res) => {
 });
 
 // POST /api/social/photo/:photoId/comment  { body }  — comment on a photo
-router.post('/photo/:photoId/comment', requireAuth, (req, res) => {
+router.post('/photo/:photoId/comment', requireAuth, requireSafeLinks('body'), (req, res) => {
   const photo = resolvePhoto(req, res);
   if (!photo) return;
   if (areBlocked(req.user.id, photo.user_id)) {

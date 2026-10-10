@@ -16,6 +16,7 @@ const config = require('../config');
 const { requireAuth } = require('../auth');
 const { mediaUpload } = require('../upload');
 const nsfw = require('../nsfw');
+const { requireSafeLinks } = require('../linkSafety');
 const { friendState } = require('../profileData');
 const { areBlocked, ignoredIds } = require('../relations');
 const { broadcastHighway, notifyHighwayEvent, broadcastLeaderboardChange } = require('../socket');
@@ -160,7 +161,7 @@ async function vetMedia(req, res, next) {
 // POST /api/highway — create a post (text and/or photos/videos), then prune to
 // 100. An optional `originPeer` links a picture shared straight from a chat back
 // to that conversation, so later likes/comments surface there.
-router.post('/', requireAuth, postLimiter, takeMedia, vetMedia, (req, res) => {
+router.post('/', requireAuth, postLimiter, takeMedia, requireSafeLinks('body'), vetMedia, (req, res) => {
   const body = String((req.body && req.body.body) || '').trim().slice(0, BODY_MAX);
   const media = req.mediaFiles.map((f) => ({ filename: f.filename, kind: f.mimetype.startsWith('video/') ? 'video' : 'image' }));
   const image = (media.find((m) => m.kind === 'image') || {}).filename || null;
@@ -281,7 +282,7 @@ router.post('/:id/like', requireAuth, (req, res) => {
 });
 
 // POST /api/highway/:id/comment  { body } — add a comment to a post.
-router.post('/:id/comment', requireAuth, (req, res) => {
+router.post('/:id/comment', requireAuth, requireSafeLinks('body'), (req, res) => {
   const post = resolvePost(req, res);
   if (!post) return;
   if (areBlocked(req.user.id, post.user_id)) {

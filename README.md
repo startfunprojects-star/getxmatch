@@ -298,6 +298,8 @@ sudo systemctl restart getxmatch
 | `MAIL_FROM`       | `From:` header, e.g. `getxmatch <contact@getxmatch.com>` |
 | `TURN_URLS`       | Optional TURN server(s) for video calls, comma-separated (e.g. `turn:turn.example.com:3478`). Without one, calls use public STUN only and may fail behind strict NATs. |
 | `TURN_USERNAME` / `TURN_CREDENTIAL` | Credentials for the TURN server |
+| `GOOGLE_SAFE_BROWSING_KEY` | Optional. Links in posts, messages, comments and profiles are always screened for phishing tricks; with this key they're also checked against Google Safe Browsing's live phishing/malware lists. |
+| `BLOCKED_LINK_DOMAINS` | Optional comma-separated domains that may never be posted (e.g. `scam-site.com,bad.xyz`) |
 
 ### Email & the admin account
 

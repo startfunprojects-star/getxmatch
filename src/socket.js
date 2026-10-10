@@ -11,6 +11,7 @@ const chatQuiz = require('./chatQuiz');
 const { isCompatibility } = require('./quizTypes');
 const { isValidActivity } = require('./activities');
 const nsfw = require('./nsfw');
+const linkSafety = require('./linkSafety');
 
 // Emoji reactions a user may place on a message/gift. Server-side allow-list so
 // clients can't store arbitrary strings.
@@ -429,6 +430,9 @@ function initSocket(io) {
     // announce presence once, not on every extra tab they open.
     const wasOffline = !isOnline(me.id);
     addSocket(me.id, socket.id);
+    // Messages, group messages, in-call chat and polls carrying a phishing or
+    // otherwise dangerous link are refused before any handler sees them.
+    socket.use(linkSafety.socketGuard);
     // Personal room makes it easy to target all of a user's sockets.
     socket.join(`user:${me.id}`);
     if (wasOffline) broadcastPresence(io, me.id, true);

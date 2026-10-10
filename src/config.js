@@ -55,6 +55,10 @@ const config = {
       : []),
   ],
 
+  // Optional Google Safe Browsing API key: links in posts and messages are then
+  // also checked against Google's live phishing/malware lists (see linkSafety.js).
+  safeBrowsingKey: process.env.GOOGLE_SAFE_BROWSING_KEY || '',
+
   // Outgoing mail (Hostinger SMTP by default). If user/pass are blank the
   // mailer falls back to logging messages to the server console.
   smtp: {
