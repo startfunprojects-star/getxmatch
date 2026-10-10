@@ -283,6 +283,16 @@ const calls = new Map();
 // Resolve and authorize the call room `me` asks for. Returns { room, kind,
 // groupId, audience } (audience = who to ring) or { error }.
 function resolveCallRoom(meId, payload) {
+  // Joining a call you were invited into (someone pressed "Add" during it).
+  if (payload && payload.room) {
+    const room = String(payload.room);
+    const c = calls.get(room);
+    if (!c || !c.members.size) return { error: 'This call has already ended.' };
+    if (!(c.invited && c.invited.has(meId)) && !callAudience(room, c).includes(meId)) {
+      return { error: 'You were not invited to this call.' };
+    }
+    return { room, kind: c.kind, groupId: c.groupId, audience: [] };
+  }
   const kind = payload && payload.kind;
   if (kind === 'dm') {
     const to = parseInt(payload.to, 10);
@@ -302,6 +312,13 @@ function resolveCallRoom(meId, payload) {
   return { error: 'Invalid call.' };
 }
 
+// Everyone a call concerns: the group's members, or the 1:1 pair — plus anyone
+// invited into it.
+function callAudience(room, c) {
+  const base = c.kind === 'group' ? groupJoinedIds(c.groupId) : room.slice(3).split('-').map(Number);
+  return [...new Set([...base, ...(c.invited ? c.invited : [])])];
+}
+
 // Remove `userId` from a call (only if pinned to `socketId`, when given) and
 // tell whoever is left. An emptied room is dropped and stops any ringing.
 function leaveCall(io, room, userId, socketId) {
@@ -313,10 +330,7 @@ function leaveCall(io, room, userId, socketId) {
   broadcastGroupCall(io, c);
   if (c.members.size === 0) {
     calls.delete(room);
-    const audience = c.kind === 'group'
-      ? groupJoinedIds(c.groupId)
-      : room.slice(3).split('-').map(Number);
-    audience.forEach((uid) => io.to(`user:${uid}`).emit('call:ring-stop', { room }));
+    callAudience(room, c).forEach((uid) => io.to(`user:${uid}`).emit('call:ring-stop', { room }));
   }
 }
 
@@ -392,10 +406,13 @@ function ongoingRing(room, c, userId) {
     groupName = (db.prepare('SELECT name FROM chat_groups WHERE id = ?').get(c.groupId) || {}).name || 'Group chat';
   } else {
     const pair = room.slice(3).split('-').map(Number);
-    if (!pair.includes(userId)) return null;
+    if (!pair.includes(userId) && !(c.invited && c.invited.has(userId))) return null;
   }
   const from = c.members.has(c.startedBy) ? c.startedBy : c.members.keys().next().value;
-  return { room, kind: c.kind, groupId: c.groupId, groupName, from, fromName: nameOf(from), ongoing: true, count: c.members.size };
+  return {
+    room, kind: c.kind, groupId: c.groupId, groupName, from, fromName: nameOf(from), ongoing: true, count: c.members.size,
+    invited: !!(c.invited && c.invited.has(userId)),
+  };
 }
 
 /* --------------------------------------------------------------------------
@@ -849,13 +866,11 @@ function initSocket(io) {
     });
 
     /* ----------------------------------------------------------------
-       Screen sharing (browser-tab only) — WebRTC signaling relay.
+       Screen sharing — WebRTC signaling relay.
 
        The media itself is peer-to-peer (RTCPeerConnection); the server
        only shuttles the offer/answer/ICE between the two chat partners
-       and never sees the stream. The sharer's client enforces that only
-       a browser TAB can be captured (it rejects any window/monitor
-       surface), so nothing else is shareable. Each relay is a thin
+       and never sees the stream. Each relay is a thin
        forward to the recipient's room, gated by the same block check as
        chat so a blocked user can't push a connection request.
     ---------------------------------------------------------------- */
@@ -886,7 +901,7 @@ function initSocket(io) {
 
         let c = calls.get(r.room);
         if (!c) {
-          c = { kind: r.kind, groupId: r.groupId, startedBy: me.id, members: new Map(), declined: new Set() };
+          c = { kind: r.kind, groupId: r.groupId, startedBy: me.id, members: new Map(), declined: new Set(), invited: new Set() };
           calls.set(r.room, c);
         }
         const others = [...c.members.keys()].filter((id) => id !== me.id);
@@ -928,6 +943,40 @@ function initSocket(io) {
       if (payload.sdp) out.sdp = payload.sdp;
       if (payload.candidate) out.candidate = payload.candidate;
       io.to(c.members.get(to)).emit('call:signal', out);
+    });
+
+    // Add someone to the call I'm in: a group member (group call) or one of my
+    // friends (any call). They're rung and may join with call:join { room }.
+    socket.on('call:invite', (payload, ack) => {
+      try {
+        const room = String((payload && payload.room) || '');
+        const userId = parseInt(payload && payload.userId, 10);
+        const c = calls.get(room);
+        if (!c || c.members.get(me.id) !== socket.id) return ack && ack({ error: 'You are not in this call.' });
+        if (!userId || c.members.has(userId)) return ack && ack({ error: 'They are already in the call.' });
+        if (c.members.size >= MAX_CALL_PEOPLE) return ack && ack({ error: `A call can have at most ${MAX_CALL_PEOPLE} people.` });
+        const inGroup = c.kind === 'group' && groupJoinedIds(c.groupId).includes(userId);
+        if (!inGroup) {
+          const denied = dmDenied(me.id, userId, 'You cannot call this user.');
+          if (denied) return ack && ack({ error: denied.replace('chat', 'call') });
+        }
+        if ([...c.members.keys()].some((uid) => areBlocked(uid, userId))) {
+          return ack && ack({ error: 'They cannot join this call.' });
+        }
+        if (!isOnline(userId)) return ack && ack({ error: `${nameOf(userId)} is offline right now.` });
+        c.invited.add(userId);
+        c.declined.delete(userId);
+        const groupName = c.kind === 'group'
+          ? ((db.prepare('SELECT name FROM chat_groups WHERE id = ?').get(c.groupId) || {}).name || 'Group chat')
+          : null;
+        io.to(`user:${userId}`).emit('call:ring', {
+          room, kind: c.kind, groupId: c.groupId, groupName, from: me.id, fromName: nameOf(me.id),
+          invited: true, ongoing: true, count: c.members.size,
+        });
+        ack && ack({ ok: true, name: nameOf(userId) });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
     });
 
     // My mic / camera / screen-share state → everyone else in my call.

@@ -2124,7 +2124,7 @@
             <div class="status">@${esc(peer.username)}</div>
           </div>
           <button class="ghost small" id="callBtn" title="Start a video call">📹 Call</button>
-          <button class="ghost small" id="screenShareBtn" title="Share a browser tab with this person">🖥️ Share screen</button>
+          <button class="ghost small" id="screenShareBtn" title="Share your screen, a window or a browser tab with this person">🖥️ Share screen</button>
           <button class="ghost small" id="makeGroupBtn" title="Start a group chat with this person and others">👥 Group</button>
         </div>
         <div class="chat-activity-bar hidden" id="activityBar">
@@ -3730,12 +3730,11 @@
     setTimeout(() => { if (t.parentNode) t.parentNode.removeChild(t); }, 2200);
   }
 
-  /* ---------- screen sharing (browser-tab only) ----------
-     One-directional WebRTC: the sharer captures a single browser TAB and
-     streams it peer-to-peer to the chat partner. The server only relays the
-     offer/answer/ICE (see socket.js). The tab-only rule is enforced on the
-     sharer's side: any non-tab surface the user picks is stopped and refused,
-     so a window or a whole screen can never be shared. */
+  /* ---------- screen sharing ----------
+     One-directional WebRTC: the sharer picks a browser tab, an app window or
+     the whole screen in the browser's own picker and streams it peer-to-peer
+     to the chat partner. The server only relays the offer/answer/ICE (see
+     socket.js). */
   const ICE_CONFIG = {
     iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }],
   };
@@ -3860,31 +3859,32 @@
     startScreenShare(peer);
   }
 
+  // Screen-share picker: a browser tab, an app window or the entire screen.
+  const DISPLAY_MEDIA_OPTS = {
+    video: { frameRate: { ideal: 15, max: 30 } },
+    audio: false,
+    selfBrowserSurface: 'exclude', // don't offer the getxmatch tab itself (mirror effect)
+    surfaceSwitching: 'include',
+  };
+  function surfaceName(track) {
+    const s = track && track.getSettings ? track.getSettings().displaySurface : '';
+    return s === 'monitor' ? 'screen' : s === 'window' ? 'window' : s === 'browser' ? 'tab' : 'screen';
+  }
+
   async function startScreenShare(peer) {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       return notifyToast('Screen sharing is not supported in this browser.');
     }
     let stream;
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { displaySurface: 'browser' },
-        audio: false,
-        // Steer the picker toward a single browser tab.
-        monitorTypeSurfaces: 'exclude',
-        selfBrowserSurface: 'exclude',
-        surfaceSwitching: 'include',
-      });
+      // Any browser tab, an app window or the whole screen — the browser's own
+      // picker lets the person choose.
+      stream = await navigator.mediaDevices.getDisplayMedia(DISPLAY_MEDIA_OPTS);
     } catch (e) {
       return; // user cancelled the picker or denied permission
     }
     const track = stream.getVideoTracks()[0];
-    const surface = track && track.getSettings ? track.getSettings().displaySurface : null;
-    // Hard rule: only a browser tab may be shared. A window, a whole screen,
-    // or a browser that can't report the surface type is refused outright.
-    if (surface !== 'browser') {
-      stream.getTracks().forEach((t) => t.stop());
-      return notifyToast('You can only share a browser tab — pick a tab, not a window or a screen.');
-    }
+    try { track.contentHint = 'detail'; } catch (_e) {} // keep text sharp
 
     const pc = newScreenPc(peer.id);
     state.screen = { pc, stream, role: 'sharer', peerId: peer.id };
@@ -3892,7 +3892,7 @@
     // Ending the share from the browser's own "Stop sharing" bar tears down too.
     track.addEventListener('ended', () => stopScreenShare());
 
-    const panel = showScreenPanel('You are sharing a tab with ' + esc(peer.displayName || peer.username));
+    const panel = showScreenPanel(`You are sharing your ${surfaceName(track)} with ` + (peer.displayName || peer.username));
     const v = panel.querySelector('#screenVideo');
     v.srcObject = stream; v.muted = true; // never echo your own audio (none here anyway)
 
@@ -3915,7 +3915,7 @@
     const pc = newScreenPc(fromId);
     state.screen = { pc, stream: null, role: 'viewer', peerId: fromId };
     pc.ontrack = (e) => {
-      const panel = showScreenPanel(esc(name) + ' is sharing a tab');
+      const panel = showScreenPanel(name + ' is sharing their screen');
       const v = panel.querySelector('#screenVideo');
       v.srcObject = e.streams[0]; v.muted = false;
       state.screen.stream = e.streams[0];
@@ -4014,7 +4014,8 @@
   // when it disconnected), so rebuild every link from scratch.
   function joinCallRoom(call, rejoin) {
     const target = call.target;
-    const payload = target.kind === 'dm' ? { kind: 'dm', to: target.to } : { kind: 'group', groupId: target.groupId };
+    const payload = target.kind === 'room' ? { room: target.room }
+      : target.kind === 'dm' ? { kind: 'dm', to: target.to } : { kind: 'group', groupId: target.groupId };
     state.socket.emit('call:join', payload, (res) => {
       if (state.call !== call) return; // hung up while joining
       if (!res || res.error) { endCall(true); return notifyToast((res && res.error) || 'Could not start the call.'); }
@@ -4306,8 +4307,14 @@
     const share = panel.querySelector('#callShareBtn');
     share.classList.toggle('active', !!call.screen);
     share.querySelector('.call-btn-label').textContent = call.screen ? 'Stop sharing' : 'Share screen';
-    share.title = call.screen ? 'Stop sharing your screen' : 'Show a browser tab to everyone in the call';
+    share.title = call.screen ? 'Stop sharing your screen' : 'Show your screen, a window or a tab to everyone in the call';
   }
+
+  // Header icons (plain line icons read better than emoji at small sizes).
+  const svgIcon = (body) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const ICON_MINIMIZE = svgIcon('<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>');
+  const ICON_EXPAND = svgIcon('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>');
+  const ICON_FULLSCREEN = svgIcon('<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>');
 
   function renderCallPanel() {
     const call = state.call;
@@ -4323,8 +4330,8 @@
             <span class="call-title">${esc(call.title)}</span>
             <span class="call-sub" id="callSub"></span>
           </div>
-          <button class="icon-btn small" id="callMinBtn" title="Shrink to a small window (keep chatting)">▭</button>
-          <button class="icon-btn small" id="callFsBtn" title="Fullscreen">⛶</button>
+          <button class="call-head-btn" id="callMinBtn" type="button" title="Minimize to a small window (keep chatting)">${ICON_MINIMIZE}<span>Minimize</span></button>
+          <button class="call-head-btn" id="callFsBtn" type="button" title="Fullscreen">${ICON_FULLSCREEN}<span>Fullscreen</span></button>
         </div>
         <div class="call-body">
           <div class="call-stage">
@@ -4348,6 +4355,7 @@
           ${btn('callCamBtn', '📷', 'Stop video')}
           ${btn('callShareBtn', '🖥️', 'Share screen')}
           ${btn('callChatBtn', '💬', 'Chat')}
+          ${btn('callAddBtn', '➕', 'Add')}
           ${btn('callEndBtn', '📞', 'Leave', ' end')}
         </div>
       </div>`);
@@ -4386,6 +4394,8 @@
     });
     panel.querySelector('#callMinBtn').addEventListener('click', () => setCallMinimized(!panel.classList.contains('min')));
     makeCallPanelDraggable(panel, call);
+    makeCallPanelResizable(panel, call);
+    panel.querySelector('#callAddBtn').addEventListener('click', () => openCallAdder());
     panel.querySelector('#callFsBtn').addEventListener('click', () => {
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       else if (panel.requestFullscreen) panel.requestFullscreen().catch(() => {});
@@ -4472,8 +4482,49 @@
     const panel = document.getElementById('callPanel');
     if (!call || !panel) return;
     panel.classList.toggle('min', on);
-    if (on && call.minPos) placeFloating(panel, call.minPos.x, call.minPos.y);
-    else clearFloatingPos(panel);
+    const minBtn = panel.querySelector('#callMinBtn');
+    minBtn.innerHTML = (on ? ICON_EXPAND : ICON_MINIMIZE) + `<span>${on ? 'Expand' : 'Minimize'}</span>`;
+    minBtn.title = on ? 'Back to the full call screen' : 'Minimize to a small window (keep chatting)';
+    if (on) {
+      if (call.minSize) { panel.style.width = call.minSize.w + 'px'; panel.style.height = call.minSize.h + 'px'; }
+      if (call.minPos) placeFloating(panel, call.minPos.x, call.minPos.y);
+    } else {
+      clearFloatingPos(panel);
+      panel.style.height = '';
+    }
+  }
+
+  // Resize the minimized call window from its corner grip (any size from a
+  // small thumbnail up to almost the whole screen); remembered for the call.
+  function makeCallPanelResizable(panel, call) {
+    const grip = el('<div class="call-resize" title="Drag to resize"></div>');
+    panel.appendChild(grip);
+    let rs = null;
+    grip.addEventListener('pointerdown', (e) => {
+      if (!panel.classList.contains('min')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const r = panel.getBoundingClientRect();
+      placeFloating(panel, r.left, r.top); // anchor the top-left corner
+      rs = { id: e.pointerId, x: e.clientX, y: e.clientY, w: r.width, h: r.height, left: r.left, top: r.top };
+      try { grip.setPointerCapture(e.pointerId); } catch (_e) {}
+      panel.classList.add('resizing');
+    });
+    grip.addEventListener('pointermove', (e) => {
+      if (!rs || e.pointerId !== rs.id) return;
+      const w = Math.max(260, Math.min(window.innerWidth - rs.left - 8, rs.w + (e.clientX - rs.x)));
+      const h = Math.max(220, Math.min(window.innerHeight - rs.top - 8, rs.h + (e.clientY - rs.y)));
+      panel.style.width = w + 'px';
+      panel.style.height = h + 'px';
+      call.minSize = { w, h };
+    });
+    const end = (e) => {
+      if (!rs || e.pointerId !== rs.id) return;
+      rs = null;
+      panel.classList.remove('resizing');
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
   }
 
   function makeCallPanelDraggable(panel, call) {
@@ -4484,9 +4535,8 @@
   }
 
   /* ----- screen sharing inside a call -----
-     Same tab-only rule as the 1:1 "Share screen" button (see startScreenShare):
-     only a single browser tab can be shown, never a window or a whole screen.
-     The screen replaces our camera on every link (replaceTrack — no
+     Any tab, window or the whole screen (same picker as the 1:1 "Share
+     screen" button). The screen replaces our camera on every link (replaceTrack — no
      renegotiation); with no camera there is no video sender yet, so one is
      added and that link renegotiated. */
   async function startCallScreenShare() {
@@ -4497,20 +4547,9 @@
     }
     let stream;
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { displaySurface: 'browser', frameRate: { ideal: 15, max: 30 } },
-        audio: false,
-        monitorTypeSurfaces: 'exclude',
-        selfBrowserSurface: 'exclude',
-        surfaceSwitching: 'include',
-      });
+      stream = await navigator.mediaDevices.getDisplayMedia(DISPLAY_MEDIA_OPTS);
     } catch (_e) { return; } // picker cancelled
     const track = stream.getVideoTracks()[0];
-    const surface = track && track.getSettings ? track.getSettings().displaySurface : null;
-    if (surface !== 'browser') {
-      stream.getTracks().forEach((t) => t.stop());
-      return notifyToast('You can only share a browser tab — pick a tab, not a window or a screen.');
-    }
     if (state.call !== call) { stream.getTracks().forEach((t) => t.stop()); return; }
     try { track.contentHint = 'detail'; } catch (_e) {} // keep text sharp
     call.screen = stream;
@@ -4520,7 +4559,7 @@
     reflectLocalCallState();
     layoutCallGrid();
     sendCallState();
-    callToast('You are sharing a tab with everyone in the call');
+    callToast(`You are sharing your ${surfaceName(track)} with everyone in the call`);
   }
 
   function stopCallScreenShare() {
@@ -4611,6 +4650,45 @@
     });
   }
 
+  // "Add" during a call: ring one more person (up to 4 in the call). In a group
+  // call it lists the group's members; otherwise your friends.
+  async function openCallAdder() {
+    const call = state.call;
+    if (!call || !call.room) return notifyToast('Wait until the call has connected.');
+    if (call.peers.size + 1 >= 4) return notifyToast('A call can have at most 4 people.');
+    // Already in the call, or the person this 1:1 call is ringing.
+    const inCall = new Set([...call.peers.keys(), state.me && state.me.id, call.target.to].filter(Boolean));
+    let people = [];
+    try {
+      if (call.target.kind === 'group') {
+        const { group } = await api.get('/api/groups/' + call.target.groupId);
+        people = (group.members || []).filter((m) => m.status === 'joined')
+          .map((m) => ({ id: m.id, username: m.username, displayName: m.displayName, avatar: m.avatar }));
+      } else {
+        people = (await api.get('/api/social/friends')).friends || [];
+      }
+    } catch (e) { return notifyToast(e.message); }
+    people = people.filter((p) => !inCall.has(p.id));
+    const { card, close } = openModal('Add to call', `
+      <p class="hint">They’ll get a ring and can join this call. Up to 4 people in a call.</p>
+      <div class="pick-list call-add-list">${people.length ? '' : '<div class="hint">Nobody else to add.</div>'}</div>`);
+    const list = card.querySelector('.call-add-list');
+    people.forEach((p) => {
+      const row = el(`<button type="button" class="pick-row call-add-row">${avatarWithPresence(p.id, p.avatar, 'sm')}<span class="call-add-name"></span><span class="call-add-state hint">Add</span></button>`);
+      row.querySelector('.call-add-name').textContent = p.displayName || p.username;
+      row.addEventListener('click', () => {
+        row.disabled = true;
+        row.querySelector('.call-add-state').textContent = 'Ringing…';
+        state.socket.emit('call:invite', { room: call.room, userId: p.id }, (res) => {
+          if (res && res.error) { row.disabled = false; row.querySelector('.call-add-state').textContent = 'Add'; return notifyToast(res.error); }
+          callToast(`Ringing ${res.name || p.displayName}…`);
+          close();
+        });
+      });
+      list.appendChild(row);
+    });
+  }
+
   // Hang up. `silent` skips telling the server (it already knows / never joined).
   function endCall(silent) {
     const call = state.call;
@@ -4687,7 +4765,8 @@
     const isGroup = ring.kind === 'group';
     const who = esc(ring.fromName || 'Someone');
     const groupName = esc(ring.groupName || 'a group');
-    const line = !isGroup ? `<b>${who}</b> is calling you`
+    const line = !isGroup && ring.invited ? `<b>${who}</b> is adding you to a video call (${Number(ring.count) || 1} in the call)`
+      : !isGroup ? `<b>${who}</b> is calling you`
       : ring.ongoing ? `A video call is in progress in <b>${groupName}</b> (${Number(ring.count) || 1} in the call)`
       : `${who} started a call in <b>${groupName}</b>`;
     const { card, close } = openModal(isGroup ? 'Group video call' : 'Incoming video call', `
@@ -4716,7 +4795,9 @@
       dismissIncomingCall();
       startCall(isGroup
         ? { kind: 'group', groupId: ring.groupId, name: ring.groupName || 'Group call' }
-        : { kind: 'dm', to: ring.from, name: ring.fromName });
+        : ring.invited
+          ? { kind: 'room', room: ring.room, name: `${ring.fromName || 'Call'}’s call` }
+          : { kind: 'dm', to: ring.from, name: ring.fromName });
     });
   }
 
@@ -4835,8 +4916,8 @@
     s.on('call:peer-left', ({ room, userId }) => {
       const call = state.call;
       if (!call || call.room !== room) return;
-      if (call.target.kind === 'dm') { endCall(); return notifyToast('Call ended.'); }
       const gone = call.peers.get(userId);
+      if (call.target.kind !== 'group' && call.peers.size <= 1) { endCall(); return notifyToast('Call ended.'); }
       if (gone) callToast(`${gone.name} left`);
       removeCallPeer(userId);
       if (!call.peers.size) setCallStatus('Everyone else left — waiting…');
