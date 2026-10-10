@@ -158,8 +158,8 @@ router.get('/:id/messages', requireAuth, (req, res) => {
   if (myStatus(gid, req.user.id) !== 'joined') return res.status(403).json({ error: 'You are not in this group.' });
   const rows = db
     .prepare(
-      `SELECT gm.id, gm.sender_id, gm.body, gm.kind, gm.created_at, gm.reply_to, u.username, p.display_name, p.avatar,
-              r.id AS r_id, r.sender_id AS r_sender, r.body AS r_body, r.kind AS r_kind,
+      `SELECT gm.id, gm.sender_id, gm.body, gm.kind, gm.created_at, gm.reply_to, gm.deleted_at, u.username, p.display_name, p.avatar,
+              r.id AS r_id, r.sender_id AS r_sender, r.body AS r_body, r.kind AS r_kind, r.deleted_at AS r_deleted,
               COALESCE(rp.display_name, ru.username) AS r_name
        FROM group_messages gm
        JOIN users u ON u.id = gm.sender_id
@@ -168,10 +168,13 @@ router.get('/:id/messages', requireAuth, (req, res) => {
        LEFT JOIN users ru ON ru.id = r.sender_id
        LEFT JOIN profiles rp ON rp.user_id = r.sender_id
        WHERE gm.group_id = ?
-       ORDER BY gm.created_at ASC
-       LIMIT 200`
+         AND gm.created_at > COALESCE((SELECT cleared_at FROM group_clears WHERE user_id = ? AND group_id = ?), 0)
+         AND gm.id NOT IN (SELECT message_id FROM group_message_hides WHERE user_id = ?)
+       ORDER BY gm.created_at DESC
+       LIMIT 300`
     )
-    .all(gid);
+    .all(gid, req.user.id, gid, req.user.id)
+    .reverse(); // the newest 300, oldest first
   res.json({
     messages: rows.map((r) => ({
       id: r.id,
@@ -179,14 +182,14 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       from: r.sender_id,
       fromName: r.display_name || r.username,
       fromAvatar: r.avatar ? `/uploads/${r.avatar}` : null,
-      body: r.body,
-      kind: r.kind || 'text',
+      body: r.deleted_at ? '' : r.body,
+      kind: r.deleted_at ? 'deleted' : (r.kind || 'text'),
       at: r.created_at,
       mine: r.sender_id === req.user.id,
-      poll: r.kind === 'poll' ? polls.pollPayload(polls.pollIdFromBody(r.body), req.user.id) : undefined,
-      quiz: r.kind === 'quiz' ? chatQuiz.sessionPayload(chatQuiz.chatQuizIdFromBody(r.body), req.user.id) : undefined,
+      poll: !r.deleted_at && r.kind === 'poll' ? polls.pollPayload(polls.pollIdFromBody(r.body), req.user.id) : undefined,
+      quiz: !r.deleted_at && r.kind === 'quiz' ? chatQuiz.sessionPayload(chatQuiz.chatQuizIdFromBody(r.body), req.user.id) : undefined,
       replyTo: r.reply_to || null,
-      reply: r.r_id ? { id: r.r_id, from: r.r_sender, fromName: r.r_name, kind: r.r_kind, text: quoteText(r.r_kind, r.r_body) } : null,
+      reply: r.r_id ? { id: r.r_id, from: r.r_sender, fromName: r.r_name, kind: r.r_deleted ? 'deleted' : r.r_kind, text: r.r_deleted ? '🚫 This message was deleted' : quoteText(r.r_kind, r.r_body) } : null,
     })),
   });
 });
@@ -200,6 +203,43 @@ function quoteText(kind, body) {
   else if (kind === 'voice') text = voiceNotes.label(body);
   return String(text || '').slice(0, 140);
 }
+
+// DELETE /api/groups/:id/messages — delete this group's chat for me.
+router.delete('/:id/messages', requireAuth, (req, res) => {
+  const gid = parseInt(req.params.id, 10);
+  if (myStatus(gid, req.user.id) !== 'joined') return res.status(403).json({ error: 'You are not in this group.' });
+  db.prepare(
+    `INSERT INTO group_clears (user_id, group_id, cleared_at) VALUES (?, ?, ?)
+     ON CONFLICT(user_id, group_id) DO UPDATE SET cleared_at = excluded.cleared_at`
+  ).run(req.user.id, gid, Date.now());
+  res.json({ ok: true });
+});
+
+// POST /api/groups/:id/messages/:mid/hide — delete one group message for me.
+router.post('/:id/messages/:mid/hide', requireAuth, (req, res) => {
+  const gid = parseInt(req.params.id, 10);
+  if (myStatus(gid, req.user.id) !== 'joined') return res.status(403).json({ error: 'You are not in this group.' });
+  const m = db.prepare('SELECT id FROM group_messages WHERE id = ? AND group_id = ?').get(parseInt(req.params.mid, 10), gid);
+  if (!m) return res.status(404).json({ error: 'Message not found.' });
+  db.prepare('INSERT OR IGNORE INTO group_message_hides (user_id, message_id) VALUES (?, ?)').run(req.user.id, m.id);
+  res.json({ ok: true });
+});
+
+// POST /api/groups/:id/messages/:mid/unsend — the sender deletes it for everyone.
+router.post('/:id/messages/:mid/unsend', requireAuth, (req, res) => {
+  const gid = parseInt(req.params.id, 10);
+  const m = db.prepare('SELECT id, sender_id, kind, body, deleted_at FROM group_messages WHERE id = ? AND group_id = ?')
+    .get(parseInt(req.params.mid, 10), gid);
+  if (!m) return res.status(404).json({ error: 'Message not found.' });
+  if (m.sender_id !== req.user.id) return res.status(403).json({ error: 'You can only unsend your own messages.' });
+  if (!m.deleted_at) {
+    if (m.kind === 'voice') voiceNotes.removeByBody(m.body);
+    db.prepare("UPDATE group_messages SET body = '', deleted_at = ? WHERE id = ?").run(Date.now(), m.id);
+  }
+  const { notifyUser } = require('../socket');
+  memberIds(gid).forEach((uid) => notifyUser(uid, 'group:unsent', { groupId: gid, id: m.id }));
+  res.json({ ok: true });
+});
 
 // POST /api/groups/:id/invite  { username } — invite one more connection.
 router.post('/:id/invite', requireAuth, (req, res) => {

@@ -261,6 +261,20 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .bubble.me { align-self: flex-end; background: var(--grad); color: #fff; border-bottom-right-radius: 4px; box-shadow: var(--glow); }
 .bubble .time { display: block; font-size: 11px; opacity: .65; margin-top: 4px; }
 
+/* ---------- Deleted messages & the message menu ---------- */
+.bubble.deleted .deleted-text { font-style: italic; color: rgba(20, 23, 31, .55); }
+.msg-menu {
+  position: fixed; z-index: 1250; display: flex; flex-direction: column; min-width: 190px; padding: 6px;
+  background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: var(--shadow-lg);
+}
+.msg-menu button {
+  border: 0; background: none; text-align: left; padding: 9px 10px; border-radius: 8px;
+  font: inherit; font-size: 14px; color: var(--text); cursor: pointer;
+}
+.msg-menu button:hover { background: var(--shade); }
+.msg-menu button.danger { color: var(--danger); }
+.chat-cleared { text-align: center; margin: 24px auto; }
+
 /* ---------- Voice notes ---------- */
 .voice-recorder {
   --vr-wave: #1f4e8c;

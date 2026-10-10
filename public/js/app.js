@@ -1657,6 +1657,7 @@
           </div>
           <button class="ghost small" id="groupCallBtn" title="Start or join the group's video call">📹 Call</button>
           <button class="ghost small" id="groupAddBtn" title="Add someone">＋ Add</button>
+          <button class="ghost small" id="groupClearBtn" title="Delete this group's chat (for you)">🗑 Clear</button>
           ${isOwner ? '<button class="ghost small" id="groupRenameBtn" title="Rename this group">✎ Rename</button>' : ''}
           ${isOwner
             ? '<button class="ghost small" id="groupDeleteBtn" title="Delete this group for everyone">Delete</button>'
@@ -1690,6 +1691,7 @@
     joined.forEach((mem) => ensureAvatars(mem.id, mem.avatar));
 
     view.querySelector('#groupAddBtn').addEventListener('click', () => openGroupAdder(state.group));
+    view.querySelector('#groupClearBtn').addEventListener('click', () => clearConversation('group', gid));
     view.querySelector('#groupCallBtn').addEventListener('click', () =>
       startCall({ kind: 'group', groupId: gid, name: group.name }));
     reflectGroupCall(group.callCount || 0);
@@ -1775,6 +1777,7 @@
   function appendGroupMessage(m) {
     const b = chatBody();
     if (!b) return;
+    if (m.kind === 'deleted') return appendDeletedBubble(m);
     if (m.kind === 'poll') return appendPollBubble(m);
     if (m.kind === 'quiz') return appendQuizBubble(m);
     if (m.kind === 'gift') return appendGiftBubble(m);
@@ -2126,6 +2129,7 @@
           <button class="ghost small" id="callBtn" title="Start a video call">📹 Call</button>
           <button class="ghost small" id="screenShareBtn" title="Share your screen, a window or a browser tab with this person">🖥️ Share screen</button>
           <button class="ghost small" id="makeGroupBtn" title="Start a group chat with this person and others">👥 Group</button>
+          <button class="ghost small" id="clearChatBtn" title="Delete this whole chat (for you)">🗑 Delete chat</button>
         </div>
         <div class="chat-activity-bar hidden" id="activityBar">
           <div class="activity-status" id="activityStatus"></div>
@@ -2169,6 +2173,7 @@
     view.querySelector('#peerAvatar').addEventListener('click', openPeerProfile);
     view.querySelector('#peerName').addEventListener('click', openPeerProfile);
     view.querySelector('#makeGroupBtn').addEventListener('click', () => openGroupCreator(peer));
+    view.querySelector('#clearChatBtn').addEventListener('click', () => clearConversation('dm', peer.id));
     view.querySelector('#screenShareBtn').addEventListener('click', () => toggleScreenShare(peer));
     view.querySelector('#callBtn').addEventListener('click', () =>
       startCall({ kind: 'dm', to: peer.id, name: peer.displayName || peer.username }));
@@ -2719,6 +2724,7 @@
 
   // Route a message object (from history or live) to the right bubble.
   function appendMessage(m) {
+    if (m.kind === 'deleted') return appendDeletedBubble(m);
     if (m.kind === 'gift') appendGiftBubble(m);
     else if (m.kind === 'poll') appendPollBubble(m);
     else if (m.kind === 'quiz') appendQuizBubble(m);
@@ -3384,8 +3390,11 @@
     const reply = el('<button class="act-btn" title="Reply">↩</button>');
     reply.addEventListener('click', (e) => { e.stopPropagation(); startReply(m); });
     actions.appendChild(reply);
+    const more = el('<button class="act-btn" title="More: delete / unsend">⋯</button>');
+    more.addEventListener('click', (e) => { e.stopPropagation(); openMessageMenu(more, m, bubble); });
+    actions.appendChild(more);
     bubble.appendChild(actions);
-    if (m.groupId != null) return; // group messages: reply only
+    if (m.groupId != null) return; // group messages: no emoji reactions
     const react = el('<button class="act-btn" title="React">🙂</button>');
     react.addEventListener('click', (e) => { e.stopPropagation(); openReactionPalette(react, m.id); });
     actions.appendChild(react);
@@ -3395,6 +3404,96 @@
     bubble.appendChild(rc);
     bubble._reactionsEl = rc;
     renderReactions(bubble);
+  }
+
+  /* ---------- deleting messages ----------
+     "Delete for me" hides one message for you; "Unsend" (your own messages)
+     removes it for everyone, leaving "This message was deleted". */
+  function appendDeletedBubble(m) {
+    const b = chatBody();
+    if (!b) return;
+    const bubble = el(`<div class="bubble deleted ${m.mine ? 'me' : 'them'}"></div>`);
+    if (m.id) bubble.dataset.id = m.id;
+    if (m.groupId != null && !m.mine && m.fromName) bubble.appendChild(el(`<div class="bubble-author">${esc(m.fromName)}</div>`));
+    bubble.appendChild(el(`<span class="deleted-text">🚫 ${m.mine ? 'You deleted this message' : 'This message was deleted'}</span>`));
+    bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
+    // Even a deleted message can be removed from your own view.
+    const actions = el('<div class="bubble-actions"></div>');
+    const more = el('<button class="act-btn" title="Delete for me">⋯</button>');
+    more.addEventListener('click', (e) => { e.stopPropagation(); openMessageMenu(more, { ...m, kind: 'deleted' }, bubble); });
+    actions.appendChild(more);
+    bubble.appendChild(actions);
+    mountBubble(bubble, { ...m, status: undefined, id: null }); // no read ticks on a deleted message
+    scrollBody();
+  }
+
+  // Turn an existing bubble into the "deleted" placeholder (after an unsend).
+  function markBubbleDeleted(id, groupId) {
+    const b = chatBody();
+    const bubble = b && b.querySelector(`.bubble[data-id="${Number(id)}"], .poll-card[data-message-id="${Number(id)}"]`);
+    if (!bubble) return;
+    const row = bubble.closest('.msg-row') || bubble;
+    const mine = bubble.classList.contains('me');
+    const author = bubble.querySelector('.bubble-author');
+    const at = bubble.querySelector('.time');
+    const audio = bubble.querySelector('.voice-note');
+    if (audio && audio._audio) audio._audio.pause();
+    const replacement = el(`<div class="bubble deleted ${mine ? 'me' : 'them'}" data-id="${Number(id)}"></div>`);
+    if (author) replacement.appendChild(author);
+    replacement.appendChild(el(`<span class="deleted-text">🚫 ${mine ? 'You deleted this message' : 'This message was deleted'}</span>`));
+    if (at) { const t = at.cloneNode(true); const tk = t.querySelector('.ticks'); if (tk) tk.remove(); replacement.appendChild(t); }
+    const actions = el('<div class="bubble-actions"></div>');
+    const more = el('<button class="act-btn" title="Delete for me">⋯</button>');
+    const m = { id: Number(id), mine, kind: 'deleted', groupId };
+    more.addEventListener('click', (e) => { e.stopPropagation(); openMessageMenu(more, m, replacement); });
+    actions.appendChild(more);
+    replacement.appendChild(actions);
+    bubble.replaceWith(replacement);
+    void row;
+  }
+
+  function openMessageMenu(anchor, m, bubble) {
+    closeReactionPalette();
+    const menu = el('<div class="msg-menu"></div>');
+    const item = (label, fn, danger) => {
+      const b = el(`<button type="button" class="${danger ? 'danger' : ''}">${label}</button>`);
+      b.addEventListener('click', (e) => { e.stopPropagation(); closeReactionPalette(); fn(); });
+      menu.appendChild(b);
+    };
+    const inGroup = m.groupId != null;
+    const base = inGroup ? `/api/groups/${m.groupId}/messages/${m.id}` : `/api/users/messages/${m.id}`;
+    item('🗑 Delete for me', async () => {
+      try { await api.post(base + '/hide', {}); (bubble.closest('.msg-row') || bubble).remove(); }
+      catch (e) { alert(e.message); }
+    });
+    if (m.mine && m.kind !== 'deleted') {
+      item('↩️ Unsend for everyone', async () => {
+        if (!(await confirmBox('Unsend this message? It will be removed for everyone in this chat.', 'Unsend'))) return;
+        try { await api.post(base + '/unsend', {}); markBubbleDeleted(m.id, m.groupId); }
+        catch (e) { alert(e.message); }
+      }, true);
+    }
+    document.body.appendChild(menu);
+    const r = anchor.getBoundingClientRect();
+    menu.style.top = Math.max(8, Math.min(window.innerHeight - menu.offsetHeight - 8, r.bottom + 4)) + 'px';
+    menu.style.left = Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, r.left - 80)) + 'px';
+    state._reactPalette = menu; // shares the palette's close-on-outside-click handling
+    setTimeout(() => document.addEventListener('click', closeReactionPaletteOnce), 0);
+  }
+
+  // "Delete chat": remove the whole conversation from your view.
+  async function clearConversation(kind, id) {
+    const msg = kind === 'group'
+      ? 'Delete this group chat for you? All its messages will be removed from your view. Other members keep theirs.'
+      : 'Delete this whole chat? All messages will be removed for you. The other person keeps their copy.';
+    if (!(await confirmBox(msg, 'Delete chat'))) return;
+    try {
+      await api.del(kind === 'group' ? `/api/groups/${id}/messages` : `/api/users/${id}/messages`);
+      await idbClearPeer(kind === 'group' ? 'g' + id : id);
+      const b = chatBody();
+      if (b) b.innerHTML = '<div class="hint chat-cleared">Chat deleted. New messages will appear here.</div>';
+      notifyToast('Chat deleted.');
+    } catch (e) { alert(e.message); }
   }
 
   /* ---------- emoji reactions ---------- */
@@ -3642,6 +3741,7 @@
         tx.objectStore('files').put({
           key: idbKey(peerId, entry.id), peerId, fid: entry.id, from: entry.from,
           mine: entry.mine, name: entry.name, mime: entry.mime, size: entry.size, at: entry.at, blob,
+          groupId: entry.groupId, fromName: entry.fromName,
         });
         tx.oncomplete = res; tx.onerror = () => rej(tx.error);
       });
@@ -3657,6 +3757,13 @@
       });
     } catch (_e) {}
   }
+  // Forget every file kept for one conversation (after "Delete chat").
+  async function idbClearPeer(peerId) {
+    const rows = await idbLoadFiles(peerId);
+    (rows || []).forEach((r) => { idbDeleteFile(peerId, r.id); try { URL.revokeObjectURL(r.url); } catch (_e) {} });
+    if (state.sharedFiles) delete state.sharedFiles[peerId];
+  }
+
   async function idbLoadFiles(peerId) {
     try {
       const db = await idb();
@@ -3675,6 +3782,7 @@
       }
       return rows.map((r) => ({
         id: r.fid, from: r.from, mine: r.mine, name: r.name, mime: r.mime, size: r.size, at: r.at,
+        groupId: r.groupId, fromName: r.fromName,
         url: URL.createObjectURL(r.blob),
       }));
     } catch (_e) { return null; } // signal "IDB unavailable" so caller can fall back
@@ -5024,6 +5132,13 @@
     s.on('highway:new', (p) => { if (p && p.id) pushHighwayPost(p); });
 
     s.on('chat:receipt', (r) => applyReceipt(r));
+    s.on('chat:unsent', (e) => {
+      const other = e.from === state.me.id ? e.to : e.from;
+      if (state.peer && state.peer.id === other) markBubbleDeleted(e.id);
+    });
+    s.on('group:unsent', (e) => {
+      if (state.group && state.group.gid === e.groupId) markBubbleDeleted(e.id, e.groupId);
+    });
 
     s.on('chat:reaction', (e) => {
       if (e && e.messageId != null) updateReaction(e.messageId, e.userId, e.emoji);

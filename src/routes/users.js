@@ -13,6 +13,7 @@ const { areBlocked } = require('../relations');
 // replyPreview() in src/socket.js so live and historical replies render alike.
 function buildReplyPreview(row) {
   if (!row || !row.reply_to || row.reply_id == null) return null;
+  if (row.reply_deleted) return { id: row.reply_id, from: row.reply_sender, kind: 'deleted', text: '🚫 This message was deleted' };
   let text = row.reply_body;
   if (row.reply_kind === 'gift') {
     const g = getGift(row.reply_body);
@@ -94,6 +95,44 @@ router.get('/:id/avatars', requireAuth, (req, res) => {
   res.json({ avatars: avatar });
 });
 
+// DELETE /api/users/:id/messages — delete this whole chat for me (the other
+// person keeps their copy). Files kept in the browser are cleared client-side.
+router.delete('/:id/messages', requireAuth, (req, res) => {
+  const otherId = parseInt(req.params.id, 10);
+  if (!otherId || otherId === req.user.id) return res.status(400).json({ error: 'Invalid user id.' });
+  db.prepare(
+    `INSERT INTO chat_clears (user_id, peer_id, cleared_at) VALUES (?, ?, ?)
+     ON CONFLICT(user_id, peer_id) DO UPDATE SET cleared_at = excluded.cleared_at`
+  ).run(req.user.id, otherId, Date.now());
+  res.json({ ok: true });
+});
+
+// POST /api/users/messages/:mid/hide — delete one message for me.
+router.post('/messages/:mid/hide', requireAuth, (req, res) => {
+  const mid = parseInt(req.params.mid, 10);
+  const m = db.prepare('SELECT id FROM messages WHERE id = ? AND (sender_id = ? OR recipient_id = ?)').get(mid, req.user.id, req.user.id);
+  if (!m) return res.status(404).json({ error: 'Message not found.' });
+  db.prepare('INSERT OR IGNORE INTO message_hides (user_id, message_id) VALUES (?, ?)').run(req.user.id, m.id);
+  res.json({ ok: true });
+});
+
+// POST /api/users/messages/:mid/unsend — the sender deletes a message for
+// everyone: its content is wiped and both sides see "This message was deleted".
+router.post('/messages/:mid/unsend', requireAuth, (req, res) => {
+  const mid = parseInt(req.params.mid, 10);
+  const m = db.prepare('SELECT id, sender_id, recipient_id, kind, body, deleted_at FROM messages WHERE id = ?').get(mid);
+  if (!m) return res.status(404).json({ error: 'Message not found.' });
+  if (m.sender_id !== req.user.id) return res.status(403).json({ error: 'You can only unsend your own messages.' });
+  if (!m.deleted_at) {
+    if (m.kind === 'voice') require('../voiceNotes').removeByBody(m.body);
+    db.prepare("UPDATE messages SET body = '', deleted_at = ? WHERE id = ?").run(Date.now(), m.id);
+    db.prepare('DELETE FROM message_reactions WHERE message_id = ?').run(m.id);
+  }
+  const { notifyUser } = require('../socket');
+  [m.sender_id, m.recipient_id].forEach((uid) => notifyUser(uid, 'chat:unsent', { id: m.id, from: m.sender_id, to: m.recipient_id }));
+  res.json({ ok: true });
+});
+
 // GET /api/users/:id/messages — text chat history with a given user
 router.get('/:id/messages', requireAuth, (req, res) => {
   const otherId = parseInt(req.params.id, 10);
@@ -102,15 +141,19 @@ router.get('/:id/messages', requireAuth, (req, res) => {
   const rows = db
     .prepare(
       `SELECT m.id, m.sender_id, m.recipient_id, m.body, m.kind, m.created_at, m.reply_to, m.delivered_at, m.read_at,
-              r.id AS reply_id, r.sender_id AS reply_sender, r.body AS reply_body, r.kind AS reply_kind
+              m.deleted_at, r.id AS reply_id, r.sender_id AS reply_sender, r.body AS reply_body, r.kind AS reply_kind,
+              r.deleted_at AS reply_deleted
        FROM messages m
        LEFT JOIN messages r ON r.id = m.reply_to
        WHERE ((m.sender_id = ? AND m.recipient_id = ?)
           OR (m.sender_id = ? AND m.recipient_id = ?))
-       ORDER BY m.created_at ASC
+         AND m.created_at > COALESCE((SELECT cleared_at FROM chat_clears WHERE user_id = ? AND peer_id = ?), 0)
+         AND m.id NOT IN (SELECT message_id FROM message_hides WHERE user_id = ?)
+       ORDER BY m.created_at DESC
        LIMIT 500`
     )
-    .all(req.user.id, otherId, otherId, req.user.id);
+    .all(req.user.id, otherId, otherId, req.user.id, req.user.id, otherId, req.user.id)
+    .reverse(); // the newest 500, oldest first
 
   // Reactions across this whole conversation, grouped by message.
   const reactionRows = db
@@ -135,8 +178,8 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       id: m.id,
       from: m.sender_id,
       to: m.recipient_id,
-      body: m.body,
-      kind: m.kind || 'text',
+      body: m.deleted_at ? '' : m.body,
+      kind: m.deleted_at ? 'deleted' : (m.kind || 'text'),
       at: m.created_at,
       mine: m.sender_id === req.user.id,
       // Tick state of my own messages: sent → delivered → read.

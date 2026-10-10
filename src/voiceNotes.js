@@ -117,6 +117,16 @@ function removeForGroup(groupId) {
   db.prepare('DELETE FROM voice_notes WHERE group_id = ?').run(groupId);
 }
 
+// A note was unsent: delete its file and row. `body` is the message body.
+function removeByBody(body) {
+  let id = null;
+  try { id = (JSON.parse(body) || {}).voiceId; } catch (_e) { return; }
+  const row = id && db.prepare('SELECT id, file FROM voice_notes WHERE id = ?').get(id);
+  if (!row) return;
+  fs.unlink(path.join(VOICE_DIR, path.basename(row.file)), () => {});
+  db.prepare('DELETE FROM voice_notes WHERE id = ?').run(row.id);
+}
+
 // The message body that carries a note: {"voiceId":N,"dur":12.3}.
 function bodyFor(id, duration) {
   return JSON.stringify({ voiceId: id, dur: Math.round(duration * 10) / 10 });
@@ -135,5 +145,5 @@ function label(body) {
 }
 
 module.exports = {
-  MAX_SECONDS, MIN_SECONDS, available, transcode, saveNote, noteFor, filePath, removeForGroup, bodyFor, label,
+  MAX_SECONDS, MIN_SECONDS, available, transcode, saveNote, noteFor, filePath, removeForGroup, removeByBody, bodyFor, label,
 };

@@ -143,8 +143,9 @@ function resolveGroupReplyTo(raw, groupId) {
 // Snapshot of a quoted group message: who wrote it and a short text.
 function groupReplyPreview(id) {
   if (!id) return null;
-  const row = db.prepare('SELECT id, sender_id, body, kind FROM group_messages WHERE id = ?').get(id);
+  const row = db.prepare('SELECT id, sender_id, body, kind, deleted_at FROM group_messages WHERE id = ?').get(id);
   if (!row) return null;
+  if (row.deleted_at) return { id: row.id, from: row.sender_id, fromName: nameOf(row.sender_id), kind: 'deleted', text: '🚫 This message was deleted' };
   let text = row.body;
   if (row.kind === 'gift') {
     const g = getGift(row.body);
@@ -178,8 +179,9 @@ function resolveReplyTo(raw, a, b) {
 // a second lookup. gift bodies hold a gift id (resolved to a label here).
 function replyPreview(replyToId) {
   if (!replyToId) return null;
-  const row = db.prepare('SELECT id, sender_id, body, kind FROM messages WHERE id = ?').get(replyToId);
+  const row = db.prepare('SELECT id, sender_id, body, kind, deleted_at FROM messages WHERE id = ?').get(replyToId);
   if (!row) return null;
+  if (row.deleted_at) return { id: row.id, from: row.sender_id, kind: 'deleted', text: '🚫 This message was deleted' };
   let text = row.body;
   if (row.kind === 'gift') {
     const g = getGift(row.body);

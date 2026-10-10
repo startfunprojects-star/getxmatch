@@ -1101,4 +1101,39 @@ db.exec(`
   );
 `);
 
+// --- Deleting messages. "Unsend" (sender, for everyone) blanks the message and
+// stamps deleted_at — everyone then sees "This message was deleted". "Delete for
+// me" hides one message for one member; "Delete chat" hides a whole
+// conversation for one member up to the moment they cleared it.
+(function migrateMessageDeletion() {
+  const m = db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
+  if (!m.includes('deleted_at')) db.exec('ALTER TABLE messages ADD COLUMN deleted_at INTEGER;');
+  const g = db.prepare('PRAGMA table_info(group_messages)').all().map((c) => c.name);
+  if (!g.includes('deleted_at')) db.exec('ALTER TABLE group_messages ADD COLUMN deleted_at INTEGER;');
+})();
+db.exec(`
+  CREATE TABLE IF NOT EXISTS message_hides (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, message_id)
+  );
+  CREATE TABLE IF NOT EXISTS group_message_hides (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    message_id INTEGER NOT NULL REFERENCES group_messages(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, message_id)
+  );
+  CREATE TABLE IF NOT EXISTS chat_clears (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    peer_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    cleared_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, peer_id)
+  );
+  CREATE TABLE IF NOT EXISTS group_clears (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    group_id   INTEGER NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
+    cleared_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, group_id)
+  );
+`);
+
 module.exports = db;
