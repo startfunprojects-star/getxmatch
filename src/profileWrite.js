@@ -114,10 +114,7 @@ function saveProfile(userId, body, file) {
       }
     }
     interests = arr.map((s) => String(s).trim()).filter((s) => F.INTERESTS.includes(s));
-    interests = [...new Set(interests)]; // de-dupe, keep order
-    if (interests.length > F.MAX_INTERESTS) {
-      return fail(`You can pick up to ${F.MAX_INTERESTS} areas of interest.`);
-    }
+    interests = [...new Set(interests)]; // de-dupe, keep order (no cap on how many)
   }
 
   const now = Date.now();

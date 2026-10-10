@@ -108,7 +108,7 @@
       'Vocational (Polytechnic)', 'Other (Other)',
     ],
     workStatus: ['Student', 'Working', 'Working Student'],
-    // Mirrors INTEREST_GROUPS / MAX_INTERESTS in src/profileFields.js.
+    // Mirrors INTEREST_GROUPS in src/profileFields.js.
     interestGroups: [
       { group: "Arts & culture", items: ['Art', 'Music', 'Movies', 'Photography', 'Dancing', 'Theatre', 'Poetry', 'Painting', 'Design', 'Architecture', 'Museums', 'Classical music'] },
       { group: "Reading & ideas", items: ['Reading', 'Writing', 'Literature', 'Philosophy', 'History', 'Languages', 'Journalism', 'Blogging', 'Debating', 'Mythology'] },
@@ -118,7 +118,6 @@
       { group: "Sports & outdoors", items: ['Sports', 'Nature', 'Hiking', 'Cycling', 'Running', 'Swimming', 'Cricket', 'Football', 'Badminton', 'Chess', 'Camping', 'Wildlife'] },
       { group: "Entertainment", items: ['Gaming', 'Podcasts', 'Stand-up comedy', 'Anime', 'TV series', 'Board games', 'Puzzles', 'Quizzes'] },
     ],
-    maxInterests: 20,
   };
   const COUNTRIES = ['Afghanistan', 'Albania', 'Algeria', 'Argentina', 'Australia', 'Austria',
     'Bangladesh', 'Belgium', 'Brazil', 'Bulgaria', 'Canada', 'Chile', 'China', 'Colombia',

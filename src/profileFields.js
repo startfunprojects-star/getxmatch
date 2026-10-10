@@ -51,8 +51,8 @@ const FRIENDS_VISIBILITY = ['public', 'friends', 'hidden'];
 //   private — only the owner
 const GIF_VISIBILITY = ['public', 'friends', 'private'];
 
-// Areas of interest, grouped for the profile editor. A member may pick up to
-// MAX_INTERESTS of them. The frontend mirrors this list (OPT.interestGroups).
+// Areas of interest, grouped for the profile editor. A member may pick as many
+// as they like. The frontend mirrors this list (OPT.interestGroups).
 const INTEREST_GROUPS = [
   { group: "Arts & culture", items: ['Art', 'Music', 'Movies', 'Photography', 'Dancing', 'Theatre', 'Poetry', 'Painting', 'Design', 'Architecture', 'Museums', 'Classical music'] },
   { group: "Reading & ideas", items: ['Reading', 'Writing', 'Literature', 'Philosophy', 'History', 'Languages', 'Journalism', 'Blogging', 'Debating', 'Mythology'] },
@@ -63,7 +63,6 @@ const INTEREST_GROUPS = [
   { group: "Entertainment", items: ['Gaming', 'Podcasts', 'Stand-up comedy', 'Anime', 'TV series', 'Board games', 'Puzzles', 'Quizzes'] },
 ];
 const INTERESTS = INTEREST_GROUPS.flatMap((g) => g.items);
-const MAX_INTERESTS = 20;
 
 // Gallery: no limit on how many photos or reels. A reel is at most 1 minute.
 const MAX_REEL_SECONDS = 60;
@@ -101,7 +100,6 @@ module.exports = {
   GIF_VISIBILITY,
   INTEREST_GROUPS,
   INTERESTS,
-  MAX_INTERESTS,
   MAX_REEL_SECONDS,
   MAX_CAPTION,
   MAX_LOCATION,

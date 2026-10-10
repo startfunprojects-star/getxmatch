@@ -372,7 +372,7 @@
       'Vocational (Polytechnic)', 'Other (Other)',
     ],
     workStatus: ['Student', 'Working', 'Working Student'],
-    // Mirrors INTEREST_GROUPS / MAX_INTERESTS in src/profileFields.js.
+    // Mirrors INTEREST_GROUPS in src/profileFields.js.
     interestGroups: [
       { group: "Arts & culture", items: ['Art', 'Music', 'Movies', 'Photography', 'Dancing', 'Theatre', 'Poetry', 'Painting', 'Design', 'Architecture', 'Museums', 'Classical music'] },
       { group: "Reading & ideas", items: ['Reading', 'Writing', 'Literature', 'Philosophy', 'History', 'Languages', 'Journalism', 'Blogging', 'Debating', 'Mythology'] },
@@ -382,7 +382,6 @@
       { group: "Sports & outdoors", items: ['Sports', 'Nature', 'Hiking', 'Cycling', 'Running', 'Swimming', 'Cricket', 'Football', 'Badminton', 'Chess', 'Camping', 'Wildlife'] },
       { group: "Entertainment", items: ['Gaming', 'Podcasts', 'Stand-up comedy', 'Anime', 'TV series', 'Board games', 'Puzzles', 'Quizzes'] },
     ],
-    maxInterests: 20,
   };
   const MAX_REEL_SECONDS = 60; // gallery photos and reels: no limit on how many
   const MAX_REEL_MB = 50;
@@ -890,17 +889,11 @@
       wrap.querySelector('#avPreview').src = URL.createObjectURL(avatarFile);
     });
 
-    // Toggle chip highlight with its checkbox, allowing at most
-    // OPT.maxInterests picks: once full, the unpicked chips are disabled.
+    // Toggle chip highlight with its checkbox. Any number may be picked.
     const interestBoxes = Array.from(wrap.querySelectorAll('#interestPicker input'));
     const syncInterests = () => {
       const n = interestBoxes.filter((c) => c.checked).length;
-      const full = n >= OPT.maxInterests;
-      interestBoxes.forEach((c) => {
-        c.disabled = full && !c.checked;
-        c.closest('.chip').classList.toggle('disabled', c.disabled);
-      });
-      wrap.querySelector('#interestCount').textContent = `${n} / ${OPT.maxInterests} selected`;
+      wrap.querySelector('#interestCount').textContent = `${n} selected`;
     };
     interestBoxes.forEach((cb) => {
       cb.addEventListener('change', () => {
