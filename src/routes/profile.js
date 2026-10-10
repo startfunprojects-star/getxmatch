@@ -262,4 +262,22 @@ router.delete('/buffer/:id', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// PUT /api/profile/cover — set the background picture behind your name.
+router.put('/cover', requireAuth, imageUpload.single('cover'), nsfwGuard, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No picture uploaded.' });
+  const row = db.prepare('SELECT cover FROM profiles WHERE user_id = ?').get(req.user.id);
+  if (!row) { removeUpload(req.file.filename); return res.status(404).json({ error: 'Create your profile first.' }); }
+  if (row.cover) removeUpload(row.cover);
+  db.prepare('UPDATE profiles SET cover = ?, updated_at = ? WHERE user_id = ?').run(req.file.filename, Date.now(), req.user.id);
+  res.json({ cover: `/uploads/${req.file.filename}` });
+});
+
+// DELETE /api/profile/cover — back to the default background.
+router.delete('/cover', requireAuth, (req, res) => {
+  const row = db.prepare('SELECT cover FROM profiles WHERE user_id = ?').get(req.user.id);
+  if (row && row.cover) removeUpload(row.cover);
+  db.prepare('UPDATE profiles SET cover = NULL, updated_at = ? WHERE user_id = ?').run(Date.now(), req.user.id);
+  res.json({ cover: null });
+});
+
 module.exports = router;

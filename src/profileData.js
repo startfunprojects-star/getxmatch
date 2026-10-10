@@ -327,6 +327,14 @@ function parseInterests(raw) {
 
 // Build the full profile object for `userId`, tailored to `viewerId` (the
 // authenticated requester). Returns null if the user has no profile.
+// A member's overall points and leaderboard rank (see src/points.js).
+function myPoints(userId) {
+  const { rankedUsers } = require('./points'); // lazy: points pulls in the leaderboard queries
+  const rows = rankedUsers();
+  const me = rows.find((r) => r.id === userId);
+  return me ? { total: me.totalPoints, rank: me.rank, of: rows.length } : { total: 0, rank: null, of: rows.length };
+}
+
 function buildProfile(userId, viewerId) {
   const row = db
     .prepare(
@@ -334,7 +342,7 @@ function buildProfile(userId, viewerId) {
               p.display_name, p.bio, p.avatar, p.updated_at,
               p.gender, p.date_of_birth, p.country, p.state, p.city, p.interests,
               u.education, u.education_stream, u.work_status, p.friends_visibility,
-              p.gif_visibility, p.hidden
+              p.gif_visibility, p.hidden, p.cover
        FROM users u JOIN profiles p ON p.user_id = u.id
        WHERE u.id = ?`
     )
@@ -444,6 +452,10 @@ function buildProfile(userId, viewerId) {
     hidden: isMe ? !!row.hidden : undefined,
     // The owner's fixed referral code (only they see it).
     referralCode: isMe && referrals.enabled() ? referrals.ensureCode(row.id) : undefined,
+    // Background picture behind the name (anyone who can see the profile).
+    cover: row.cover ? `/uploads/${row.cover}` : null,
+    // Your own total leaderboard points and rank (shown only to you).
+    points: isMe ? myPoints(row.id) : undefined,
     updatedAt: row.updated_at,
   };
 }

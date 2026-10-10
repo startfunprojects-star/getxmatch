@@ -556,8 +556,6 @@
   };
   const MAX_REEL_SECONDS = 60; // gallery photos and reels: no limit on how many
   const MAX_REEL_MB = 50;
-  const MAX_BUFFER = 10;
-  const MAX_GIFS = 100;
 
   // Labels for the GIF collection's visibility settings. Mirrors GIF_VISIBILITY
   // in src/profileFields.js.
@@ -570,7 +568,7 @@
   // Emoji "likes" a user can leave on a gallery photo. Mirrors the server-side
   // allow-list in src/galleryReactions.js — keep the two in sync.
   const GALLERY_REACTIONS = [
-    { emoji: '❤️', label: 'Love' },
+    { emoji: '❤️', label: 'Like' },
     { emoji: '😄', label: 'Smile' },
     { emoji: '😮', label: 'Wow' },
     { emoji: '👏', label: 'Applause' },
@@ -970,6 +968,7 @@
           <img class="avatar lg" id="avPreview" src="${avatarUrl(e.avatar)}" alt="avatar" />
           <div>
             <button class="ghost small" id="pickAvatar" type="button">Choose display picture</button>
+            ${e.avatar ? '<button class="ghost small" id="removeAvatar" type="button">Remove picture</button>' : ''}
             <div class="hint">JPG, PNG, WEBP or GIF</div>
           </div>
         </div>
@@ -1053,6 +1052,15 @@
     let avatarFile = null;
     const avInput = wrap.querySelector('#avatarInput');
     wrap.querySelector('#pickAvatar').addEventListener('click', () => avInput.click());
+    let removeAvatar = false;
+    const rmAv = wrap.querySelector('#removeAvatar');
+    if (rmAv) rmAv.addEventListener('click', () => {
+      removeAvatar = true;
+      avatarFile = null;
+      wrap.querySelector('#avPreview').src = avatarUrl(null);
+      rmAv.remove();
+      notifyToast('Picture will be removed when you save.');
+    });
     avInput.addEventListener('change', async () => {
       const picked = avInput.files[0] || null;
       avInput.value = '';
@@ -1156,6 +1164,7 @@
       fd.append('interests', JSON.stringify(interests));
       fd.append('hidden', wrap.querySelector('#hidden').checked ? '1' : '0');
       if (avatarFile) fd.append('avatar', avatarFile);
+      else if (removeAvatar) fd.append('removeAvatar', '1');
 
       try {
         await api.putForm('/api/profile', fd);
@@ -5717,12 +5726,7 @@
              <span class="pv-react-emoji">${r.emoji}</span>${n ? `<span class="pv-react-count">${n}</span>` : ''}
            </button>`
         );
-        if (isOwner) {
-          btn.disabled = true;
-          btn.title = `${r.label} — ${n}`;
-        } else {
-          btn.addEventListener('click', () => react(r.emoji));
-        }
+        btn.addEventListener('click', () => react(r.emoji));
         reactBar.appendChild(btn);
       });
       onUpdate({ reactionCount: totalReactions(), commentCount: commentsBox.querySelectorAll('.comment').length, myReaction }, photo);
@@ -5839,10 +5843,10 @@
       return item;
     };
 
-    if (!isOwner) {
+    {
       const form = el(`
         <div class="comment-form">
-          <input id="pcInput" maxlength="500" placeholder="Say something about this photo…" />
+          <input id="pcInput" maxlength="500" placeholder="${isOwner ? 'Add a comment…' : 'Say something about this…'}" />
           <button class="primary small" id="pcSend">Post</button>
         </div>
       `);
@@ -6033,133 +6037,6 @@
     }
   }
 
-  function renderGifSection(view, profile, isMe) {
-    const gifBox = view.querySelector('#pvGifs');
-    const gifCount = view.querySelector('#gifCount');
-    const gifSlideBtn = view.querySelector('#gifSlideshow');
-    const visBox = view.querySelector('#pvGifVisibility');
-    if (!gifBox) return;
-
-    const gifItems = () =>
-      Array.from(gifBox.querySelectorAll('.cell img')).map((im) => ({ url: im.src, caption: im.dataset.caption || '' }));
-    const updateGifCount = () => {
-      const n = gifBox.querySelectorAll('.cell').length;
-      gifCount.textContent = isMe ? `(${n}/${MAX_GIFS})` : (n ? `(${n})` : '');
-    };
-    const syncGifSlideBtn = () => {
-      if (gifSlideBtn) gifSlideBtn.style.display = gifBox.querySelector('.cell') ? '' : 'none';
-    };
-
-    const makeGifCell = (g) => {
-      const cell = el(`<div class="cell gif-cell">
-        <img src="${esc(g.url)}" loading="lazy" data-caption="${esc(g.caption || '')}" />
-        <span class="cell-zoom">⤢</span>
-        ${g.caption ? `<span class="gif-cap"></span>` : ''}
-      </div>`);
-      if (g.caption) cell.querySelector('.gif-cap').textContent = g.caption;
-      const open = () => {
-        const cells = Array.from(gifBox.querySelectorAll('.cell'));
-        openSlideshow(gifItems(), cells.indexOf(cell), { autoplay: false });
-      };
-      cell.querySelector('img').addEventListener('click', open);
-      cell.querySelector('.cell-zoom').addEventListener('click', open);
-      if (isMe) {
-        const del = el('<button class="del" title="Delete GIF">✕</button>');
-        del.addEventListener('click', async (ev) => {
-          ev.stopPropagation();
-          if (!(await confirmBox('Delete this GIF?', 'Delete'))) return;
-          try {
-            await api.del('/api/profile/gifs/' + g.id);
-            cell.remove();
-            updateGifCount();
-            refreshGifAddBtn();
-            syncGifSlideBtn();
-            if (!gifBox.querySelector('.cell')) gifBox.appendChild(el('<div class="hint">No GIFs yet.</div>'));
-          } catch (e) { alert(e.message); }
-        });
-        cell.appendChild(del);
-      }
-      return cell;
-    };
-
-    // Populate the grid (or an appropriate empty/locked hint).
-    const gifs = profile.gifs || [];
-    if (gifs.length) {
-      gifs.forEach((g) => gifBox.appendChild(makeGifCell(g)));
-    } else if (profile.gifsLocked) {
-      const why = profile.gifVisibility === 'friends'
-        ? 'Only their connections can see these GIFs.'
-        : 'These GIFs are private.';
-      gifBox.appendChild(el(`<div class="hint">🔒 ${why}</div>`));
-    } else {
-      gifBox.appendChild(el('<div class="hint">No GIFs yet.</div>'));
-    }
-    updateGifCount();
-    syncGifSlideBtn();
-
-    if (gifSlideBtn) {
-      gifSlideBtn.addEventListener('click', () => openSlideshow(gifItems(), 0, { autoplay: true }));
-    }
-
-    // Owner-only: visibility selector + uploader.
-    let gifAddBtn = null;
-    function refreshGifAddBtn() {
-      if (!gifAddBtn) return;
-      const full = gifBox.querySelectorAll('.cell').length >= MAX_GIFS;
-      gifAddBtn.disabled = full;
-      gifAddBtn.textContent = full ? `Collection full (${MAX_GIFS})` : '＋ Add GIF';
-    }
-    if (!isMe) return;
-
-    // Visibility selector.
-    const sel = el('<select class="gif-vis-select" title="Who can see your GIFs"></select>');
-    GIF_VISIBILITY.forEach((o) => {
-      const opt = el(`<option value="${o.value}">${o.label}</option>`);
-      if ((profile.gifVisibility || 'public') === o.value) opt.selected = true;
-      sel.appendChild(opt);
-    });
-    const visWrap = el('<div class="gif-vis"><span class="hint">Who can see these:</span></div>');
-    visWrap.appendChild(sel);
-    visBox.appendChild(visWrap);
-    sel.addEventListener('change', async () => {
-      const prev = sel.dataset.prev || profile.gifVisibility || 'public';
-      try {
-        await api.put('/api/profile/gifs/visibility', { visibility: sel.value });
-        sel.dataset.prev = sel.value;
-        notifyToast('GIF visibility updated.');
-      } catch (e) { alert(e.message); sel.value = prev; }
-    });
-    sel.dataset.prev = profile.gifVisibility || 'public';
-
-    // Uploader — GIF files only; no cropping, so animation is preserved.
-    gifAddBtn = el('<button class="ghost small" style="margin-top:12px">＋ Add GIF</button>');
-    const gifIn = el('<input type="file" accept="image/gif" class="hidden" />');
-    gifAddBtn.addEventListener('click', () => gifIn.click());
-    gifIn.addEventListener('change', async () => {
-      const picked = gifIn.files[0];
-      gifIn.value = '';
-      if (!picked) return;
-      if (!/image\/gif/i.test(picked.type)) { alert('Please choose a GIF file.'); return; }
-      if (!(await fitImageToLimit(picked))) return; // over 5 MB: explained, not added
-      const caption = ((await promptBox('Add a caption', 'A short caption for this GIF (optional):', '')) || '').trim().slice(0, 80);
-      const fd = new FormData();
-      fd.append('gif', picked);
-      if (caption) fd.append('caption', caption);
-      try {
-        const { gif } = await api.postForm('/api/profile/gifs', fd);
-        const hint = gifBox.querySelector('.hint');
-        if (hint) hint.remove();
-        gifBox.prepend(makeGifCell(gif));
-        updateGifCount();
-        refreshGifAddBtn();
-        syncGifSlideBtn();
-      } catch (e) { alert(e.message); }
-    });
-    view.appendChild(gifIn);
-    gifBox.after(gifAddBtn);
-    refreshGifAddBtn();
-  }
-
   async function showProfile(username) {
     document.getElementById('shell').classList.add('viewing-main');
     const main = document.getElementById('main');
@@ -6195,7 +6072,12 @@
         <button class="ghost small pv-back" id="pvBack">← Back</button>
 
         <div class="pro-hero card">
-          <div class="pro-cover"></div>
+          <div class="pro-cover${profile.cover ? ' has-photo' : ''}"${profile.cover ? ` style="background-image:url('${esc(profile.cover)}')"` : ''}>
+            ${isMe ? `<div class="cover-actions">
+              <button class="ghost small cover-btn" id="pvCoverBtn" type="button">🖼️ ${profile.cover ? 'Change cover' : 'Add cover photo'}</button>
+              ${profile.cover ? '<button class="ghost small cover-btn" id="pvCoverRemove" type="button">✕ Remove</button>' : ''}
+            </div>` : ''}
+          </div>
           <div class="pro-hero-body">
             <div class="pro-avatar-wrap">
               <img class="pro-avatar" src="${avatarUrl(profile.avatar)}" alt="${esc(profile.displayName)}" />
@@ -6212,6 +6094,7 @@
               <div class="stars">${starsHtml(profile.rating.average, false)}</div>
               <div class="pro-rcount">${profile.rating.count} rating${profile.rating.count === 1 ? '' : 's'}</div>
               <div class="pro-likes" title="Likes received on the Highway (counts toward leaderboard rank)">❤️ ${profile.likes || 0} like${(profile.likes || 0) === 1 ? '' : 's'}</div>
+              ${isMe && profile.points ? `<div class="pro-points" title="Your total points — they decide your leaderboard rank">🏆 <b>${profile.points.total}</b> point${profile.points.total === 1 ? '' : 's'}${profile.points.rank ? ` · rank #${profile.points.rank}` : ''}</div>` : ''}
             </div>
           </div>
           <div class="pro-actions pv-actions">
@@ -6241,24 +6124,6 @@
               </h3>
               <div class="gallery" id="pvGallery"></div>
             </section>
-            ${profile.access === 'full' ? `<section class="card">
-              <h3 class="card-title">🎞️ GIF feelings <span class="hint" id="gifCount"></span>
-                <button class="ghost small gal-slideshow" id="gifSlideshow" title="Play as slideshow" style="float:right">▶ Slideshow</button>
-              </h3>
-              <p class="hint" style="margin:-4px 0 10px">GIFs that capture a mood. ${isMe ? `Up to ${MAX_GIFS}. Choose who can see them below.` : 'Open one to slide through them.'}</p>
-              <div id="pvGifVisibility"></div>
-              <div class="gallery gif-gallery" id="pvGifs"></div>
-            </section>` : ''}
-            ${isMe ? `<section class="card">
-              <h3 class="card-title">🎞️ Profile picture buffer <span class="hint" id="bufCount"></span></h3>
-              <p class="hint" style="margin:-4px 0 10px">Up to ${MAX_BUFFER} pictures. In chat, your picture is picked at random from these and changes every 20 seconds.</p>
-              <div class="gallery" id="pvBuffer"></div>
-            </section>` : ''}
-            ${profile.access === 'full' ? `<section class="card">
-              <h3 class="card-title">💬 Comments</h3>
-              <div id="pvCommentForm"></div>
-              <div class="comments" id="pvComments"></div>
-            </section>` : ''}
           </div>
           <div class="pro-col-side">
             <section class="card pro-qr-card">
@@ -6452,66 +6317,6 @@
     const camTop = view.querySelector('#pvCameraTop');
     if (camTop) camTop.addEventListener('click', () => openCamera(addPosted));
 
-    /* ----- GIF "feelings" collection (complete profile only) ----- */
-    if (profile.access === 'full') renderGifSection(view, profile, isMe);
-
-    /* ----- profile picture buffer (own profile only) ----- */
-    if (isMe) {
-      const buf = view.querySelector('#pvBuffer');
-      const bufCount = view.querySelector('#bufCount');
-      const updateBufCount = () => {
-        bufCount.textContent = `(${buf.querySelectorAll('.cell').length}/${MAX_BUFFER})`;
-      };
-      const makeBufCell = (ph) => {
-        const cell = el(`<div class="cell"><img src="${ph.url}" loading="lazy" /><span class="cell-zoom">⤢</span></div>`);
-        cell.querySelector('img').addEventListener('click', () => openLightbox(ph.url));
-        cell.querySelector('.cell-zoom').addEventListener('click', () => openLightbox(ph.url));
-        const del = el('<button class="del" title="Remove picture">✕</button>');
-        del.addEventListener('click', async (ev) => {
-          ev.stopPropagation();
-          if (!(await confirmBox('Remove this picture from your buffer?', 'Remove'))) return;
-          try { await api.del('/api/profile/buffer/' + ph.id); cell.remove(); updateBufCount(); refreshBufBtn(); }
-          catch (e) { alert(e.message); }
-        });
-        cell.appendChild(del);
-        return cell;
-      };
-      const bufList = profile.buffer || [];
-      if (!bufList.length) buf.appendChild(el('<div class="hint">No pictures yet.</div>'));
-      else bufList.forEach((ph) => buf.appendChild(makeBufCell(ph)));
-      updateBufCount();
-
-      const bufBtn = el('<button class="ghost small" style="margin-top:12px">＋ Add picture</button>');
-      function refreshBufBtn() {
-        const full = buf.querySelectorAll('.cell').length >= MAX_BUFFER;
-        bufBtn.disabled = full;
-        bufBtn.textContent = full ? `Buffer full (${MAX_BUFFER})` : '＋ Add picture';
-      }
-      const bufIn = el('<input type="file" accept="image/*" class="hidden" />');
-      bufBtn.addEventListener('click', () => bufIn.click());
-      bufIn.addEventListener('change', async () => {
-        const picked = bufIn.files[0];
-        bufIn.value = '';
-        if (!picked) return;
-        const cropped = await fitImageToLimit(await cropImage(picked));
-        if (!cropped) return;
-        const fd = new FormData();
-        fd.append('photo', cropped);
-        try {
-          const { photo } = await api.postForm('/api/profile/buffer', fd);
-          const hint = buf.querySelector('.hint');
-          if (hint) hint.remove();
-          buf.prepend(makeBufCell(photo));
-          updateBufCount();
-          refreshBufBtn();
-        } catch (e) { alert(e.message); }
-        bufIn.value = '';
-      });
-      view.appendChild(bufIn);
-      buf.after(bufBtn);
-      refreshBufBtn();
-    }
-
     /* ----- connections, grouped into a block per relationship kind ----- */
     const friendsBox = view.querySelector('#pvFriends');
     if (profile.access !== 'full' && profile.friends.count) {
@@ -6551,62 +6356,36 @@
       });
     }
 
-    /* ----- comments ----- */
-    const commentsBox = view.querySelector('#pvComments');
-    if (commentsBox) {
-    const renderComment = (c) => {
-      const item = el(`
-        <div class="comment">
-          <img class="avatar sm" src="${avatarUrl(c.author.avatar)}" />
-          <div class="c-body">
-            <div class="c-head"><b class="c-author" data-u="${esc(c.author.username)}">${esc(c.author.displayName)}</b> <span class="hint">${fmtDate(c.at)}</span></div>
-            <div class="c-text"></div>
-          </div>
-        </div>
-      `);
-      item.querySelector('.c-text').textContent = c.body;
-      item.querySelector('.c-author').addEventListener('click', () => showProfile(c.author.username));
-      if (c.canDelete) {
-        const del = el('<button class="ghost small">Delete</button>');
-        del.addEventListener('click', async () => {
-          try { await api.del('/api/social/comment/' + c.id); item.remove(); } catch (e) { alert(e.message); }
-        });
-        item.querySelector('.c-head').appendChild(del);
-      }
-      return item;
-    };
-    if (!profile.comments.length) commentsBox.appendChild(el('<div class="hint">No comments yet.</div>'));
-    else profile.comments.forEach((c) => commentsBox.appendChild(renderComment(c)));
-
-    if (!isMe) {
-      const form = el(`
-        <div class="comment-form">
-          <input id="cInput" maxlength="500" placeholder="Leave a comment…" />
-          <button class="primary small" id="cSend">Post</button>
-        </div>
-      `);
-      view.querySelector('#pvCommentForm').appendChild(form);
-      const input = form.querySelector('#cInput');
-      const send = async () => {
-        const body = input.value.trim();
-        if (!body) return;
-        try {
-          const { comment } = await api.post('/api/social/comment/' + encodeURIComponent(profile.username), { body });
-          input.value = '';
-          const hint = commentsBox.querySelector('.hint');
-          if (hint) hint.remove();
-          commentsBox.prepend(renderComment(comment));
-        } catch (e) { alert(e.message); }
-      };
-      form.querySelector('#cSend').addEventListener('click', send);
-      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
-    }
-    }
-
     /* ----- follows ----- */
     renderFollow(view, profile, isMe);
 
     /* ----- misc wiring ----- */
+
+    // Own profile: add / change / remove the cover picture behind the name.
+    const coverBtn = view.querySelector('#pvCoverBtn');
+    if (coverBtn) {
+      const coverIn = el('<input type="file" accept="image/*" class="hidden" />');
+      view.appendChild(coverIn);
+      coverBtn.addEventListener('click', () => coverIn.click());
+      coverIn.addEventListener('change', async () => {
+        const picked = coverIn.files[0];
+        coverIn.value = '';
+        if (!picked) return;
+        const file = await fitImageToLimit(await cropImage(picked));
+        if (!file) return;
+        const fd = new FormData();
+        fd.append('cover', file);
+        coverBtn.disabled = true;
+        coverBtn.textContent = 'Uploading…';
+        try { await api.putForm('/api/profile/cover', fd); showProfile(username); }
+        catch (e) { coverBtn.disabled = false; coverBtn.textContent = '🖼️ Change cover'; alert(e.message); }
+      });
+    }
+    const coverRemove = view.querySelector('#pvCoverRemove');
+    if (coverRemove) coverRemove.addEventListener('click', async () => {
+      if (!(await confirmBox('Remove your cover photo?', 'Remove'))) return;
+      try { await api.del('/api/profile/cover'); showProfile(username); } catch (e) { alert(e.message); }
+    });
 
     // Tap the profile picture to see it full size (zoomable).
     if (profile.avatar) {

@@ -1077,4 +1077,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_highway_media_post ON highway_media (post_id, position);
 `);
 
+// --- Profiles can carry a cover (background) picture behind the name.
+(function migrateProfileCover() {
+  const cols = db.prepare('PRAGMA table_info(profiles)').all().map((c) => c.name);
+  if (!cols.includes('cover')) db.exec('ALTER TABLE profiles ADD COLUMN cover TEXT;');
+})();
+
 module.exports = db;

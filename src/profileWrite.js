@@ -121,6 +121,11 @@ function saveProfile(userId, body, file) {
   const existing = db.prepare('SELECT avatar FROM profiles WHERE user_id = ?').get(userId);
 
   let avatar = existing ? existing.avatar : null;
+  // "Remove picture" in the editor (only when no new picture was chosen).
+  if (!file && String(b.removeAvatar || '') === '1' && avatar) {
+    removeUpload(avatar);
+    avatar = null;
+  }
   if (file) {
     if (avatar) removeUpload(avatar); // replace old avatar
     avatar = file.filename;

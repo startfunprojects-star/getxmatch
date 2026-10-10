@@ -88,15 +88,7 @@ router.get('/:id/avatars', requireAuth, (req, res) => {
   const uid = parseInt(req.params.id, 10);
   if (!uid) return res.status(400).json({ error: 'Invalid user id.' });
 
-  // The picture buffer is part of the complete profile: friends (and the
-  // member themself) only. Everyone else gets the single display picture.
-  const buffer = uid !== req.user.id && !areFriends(req.user.id, uid) ? [] : db
-    .prepare('SELECT filename FROM profile_buffer_photos WHERE user_id = ? ORDER BY created_at DESC')
-    .all(uid)
-    .map((r) => `/uploads/${r.filename}`);
-
-  if (buffer.length) return res.json({ avatars: buffer });
-
+  // The picture buffer has been retired: chat shows the display picture.
   const prof = db.prepare('SELECT avatar FROM profiles WHERE user_id = ?').get(uid);
   const avatar = prof && prof.avatar ? [`/uploads/${prof.avatar}`] : [];
   res.json({ avatars: avatar });
