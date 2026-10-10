@@ -1463,7 +1463,6 @@
       <div class="chat-wrap">
         <div class="chat-tabs" id="chatTabs"></div>
         <div class="chat-head">
-          <button class="icon-btn small" id="backToList" title="Back">←</button>
           <div class="group-avatars">${joined.map((m) => `<img class="avatar sm" src="${avatarUrl(m.avatar)}" title="${esc(m.displayName)}"/>`).join('')}</div>
           <div style="min-width:0;flex:1">
             <div class="name">${esc(group.name)}</div>
@@ -1495,10 +1494,6 @@
     ensureAvatars(state.me && state.me.id, state.myAvatar);
     joined.forEach((mem) => ensureAvatars(mem.id, mem.avatar));
 
-    view.querySelector('#backToList').addEventListener('click', () => {
-      document.getElementById('shell').classList.remove('viewing-main');
-      state.group = null;
-    });
     view.querySelector('#groupAddBtn').addEventListener('click', () => openGroupAdder(state.group));
     view.querySelector('#groupCallBtn').addEventListener('click', () =>
       startCall({ kind: 'group', groupId: gid, name: group.name }));
@@ -1895,7 +1890,6 @@
       <div class="chat-wrap">
         <div class="chat-tabs" id="chatTabs"></div>
         <div class="chat-head">
-          <button class="icon-btn small" id="backToList" title="Back">←</button>
           <img class="avatar sm" id="peerAvatar" src="${avatarUrl(peer.avatar)}" style="cursor:pointer" />
           <div style="min-width:0;flex:1">
             <div class="name" id="peerName" style="cursor:pointer">${esc(peer.displayName || peer.username)}</div>
@@ -1941,11 +1935,6 @@
     ensureAvatars(state.me && state.me.id, state.myAvatar);
     ensureAvatars(peer.id, peer.avatar);
 
-    view.querySelector('#backToList').addEventListener('click', () => {
-      document.getElementById('shell').classList.remove('viewing-main');
-      closeReactionPalette();
-      state.peer = null;
-    });
     const openPeerProfile = () => showProfile(peer.username);
     view.querySelector('#peerAvatar').addEventListener('click', openPeerProfile);
     view.querySelector('#peerName').addEventListener('click', openPeerProfile);
