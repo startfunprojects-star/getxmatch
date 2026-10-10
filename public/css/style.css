@@ -1620,69 +1620,182 @@ a.share-link:hover { text-decoration: underline; }
 }
 .call-panel:fullscreen { inset: 0; border-radius: 0; border: 0; }
 .call-head {
-  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px;
   background: rgba(255, 255, 255, .06);
 }
 .call-head .icon-btn { color: #fff; background: transparent; border-color: rgba(255, 255, 255, .25); }
 .call-head .icon-btn:hover { background: rgba(255, 255, 255, .14); }
+.call-head-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
 .call-title {
-  flex: 1; min-width: 0; font-weight: 600; font-size: 14px;
+  font-weight: 700; font-size: 15px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.call-stage { position: relative; flex: 1; min-height: 0; padding: 10px; }
+.call-sub { font-size: 12px; color: rgba(255, 255, 255, .7); font-variant-numeric: tabular-nums; }
+
+/* Video stage + optional chat drawer side by side. */
+.call-body { flex: 1; min-height: 0; display: flex; }
+.call-stage { position: relative; flex: 1; min-width: 0; padding: 10px; }
 .call-grid {
   display: grid; gap: 10px; height: 100%;
-  grid-template-columns: 1fr; grid-auto-rows: 1fr;
+  grid-template-columns: 1fr; grid-auto-rows: minmax(0, 1fr);
 }
-.call-grid[data-count="2"] { grid-template-columns: 1fr 1fr; }
 .call-grid[data-count="3"], .call-grid[data-count="4"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
 .call-grid[data-count="3"] .call-tile:first-child { grid-column: span 2; }
+
 .call-tile {
   position: relative; min-height: 0; border-radius: 12px; overflow: hidden; background: #1b2030;
 }
 .call-tile video { width: 100%; height: 100%; object-fit: cover; display: block; background: #1b2030; }
 .call-tile.local video { transform: scaleX(-1); } /* mirror yourself, like a camera app */
+.call-tile.local.screen video { transform: none; }  /* …but never a shared tab */
+.call-tile.screen video { object-fit: contain; background: #000; }
+
+/* Camera off / no camera: a big initial instead of a frozen or black frame. */
+.call-tile-off {
+  position: absolute; inset: 0; display: none;
+  flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  background: #1b2030;
+}
+.call-tile.cam-off .call-tile-off { display: flex; }
+.call-initial {
+  width: 76px; height: 76px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--grad); font-size: 34px; font-weight: 700;
+}
+.call-off-note { font-size: 12px; color: rgba(255, 255, 255, .65); }
+
 /* 1:1: the other person fills the stage, you sit in a small corner tile. */
-.call-grid[data-count="2"] { grid-template-columns: 1fr; }
 .call-grid[data-count="2"] .call-tile.local {
   position: absolute; right: 22px; bottom: 22px; width: min(220px, 30%); aspect-ratio: 4 / 3;
   z-index: 2; border: 2px solid rgba(255, 255, 255, .7); box-shadow: 0 6px 20px rgba(0, 0, 0, .5);
 }
+.call-grid[data-count="2"] .call-tile.local .call-initial { width: 44px; height: 44px; font-size: 20px; }
 .call-grid[data-count="2"] .call-tile:not(.local) video { object-fit: contain; background: #000; }
-.call-tile-name, .call-quality {
-  position: absolute; left: 10px; bottom: 10px; padding: 3px 8px; border-radius: 999px;
-  background: rgba(0, 0, 0, .55); font-size: 12px; font-weight: 600;
+
+/* Group + someone sharing: their screen takes the top, everyone else a strip below. */
+.call-grid.presenting {
+  grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr) 130px;
 }
+.call-grid.presenting .call-tile { grid-column: auto; }
+.call-grid.presenting .call-tile.featured { grid-column: 1 / -1; order: -1; }
+/* The small strip tiles stay uncluttered: just the person and their name. */
+.call-grid.presenting .call-tile:not(.featured) .call-quality,
+.call-grid.presenting .call-tile:not(.featured) .call-off-note { display: none; }
+.call-grid.presenting .call-tile:not(.featured) .call-initial { width: 44px; height: 44px; font-size: 20px; }
+.call-grid.presenting .call-tile:not(.featured) .call-tile-name { left: 6px; bottom: 6px; padding: 2px 7px; font-size: 11px; }
+
+.call-tile-name, .call-quality {
+  position: absolute; left: 10px; bottom: 10px; padding: 3px 9px; border-radius: 999px;
+  background: rgba(0, 0, 0, .6); font-size: 12px; font-weight: 600;
+  display: flex; align-items: center; gap: 5px; max-width: calc(100% - 20px);
+}
+.call-name-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.call-mic-off { display: none; }
+.call-tile.mic-off .call-mic-off { display: inline; }
+.call-tile.mic-off .call-tile-name { background: rgba(179, 38, 30, .85); }
 .call-quality { left: auto; right: 10px; top: 10px; bottom: auto; font-weight: 500; }
 .call-quality:empty { display: none; }
 .call-quality.weak { background: #b3261e; }
+
 .call-status {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  padding: 8px 16px; border-radius: 999px; background: rgba(0, 0, 0, .6);
-  font-size: 14px; pointer-events: none; z-index: 3;
+  padding: 10px 18px; border-radius: 999px; background: rgba(0, 0, 0, .65);
+  font-size: 15px; pointer-events: none; z-index: 3; text-align: center;
 }
 .call-status.hidden { display: none; }
-.call-controls { display: flex; justify-content: center; gap: 14px; padding: 12px; }
-.call-btn {
-  width: 52px; height: 52px; border-radius: 50%; border: 0; cursor: pointer;
-  background: rgba(255, 255, 255, .14); color: #fff; font-size: 22px;
+.call-toast {
+  position: absolute; left: 50%; top: 16px; transform: translateX(-50%); z-index: 4;
+  padding: 7px 14px; border-radius: 999px; background: rgba(0, 0, 0, .75);
+  font-size: 13px; max-width: 90%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  animation: callToast 3.2s ease forwards; pointer-events: none;
 }
-.call-btn:hover { background: rgba(255, 255, 255, .24); }
+.call-toast + .call-toast { top: 52px; }
+@keyframes callToast {
+  0% { opacity: 0; transform: translate(-50%, -6px); }
+  8%, 85% { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; }
+}
+
+/* Controls: round icon with a plain-words label underneath. */
+.call-controls { display: flex; justify-content: center; gap: 10px; padding: 10px 12px 12px; flex-wrap: wrap; }
+.call-btn {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  min-width: 72px; padding: 0; border: 0; background: none; color: #fff; cursor: pointer;
+}
+.call-btn-icon {
+  width: 50px; height: 50px; border-radius: 50%; display: grid; place-items: center;
+  background: rgba(255, 255, 255, .14); font-size: 21px; transition: background .15s;
+}
+.call-btn-label { font-size: 12px; color: rgba(255, 255, 255, .85); white-space: nowrap; }
+.call-btn:hover .call-btn-icon { background: rgba(255, 255, 255, .26); }
 .call-btn:disabled { opacity: .4; cursor: not-allowed; }
-.call-btn.off { background: #fff; color: #0d1016; text-decoration: line-through; }
-.call-btn.end { background: #d93025; transform: rotate(135deg); }
-.call-btn.end:hover { background: #b3261e; }
-/* Minimized: a small floating window so you can keep chatting. */
-.call-panel.min { inset: auto 20px 20px auto; width: min(340px, 92vw); height: 260px; }
-.call-panel.min .call-controls { padding: 6px; gap: 8px; }
-.call-panel.min .call-btn { width: 38px; height: 38px; font-size: 16px; }
+.call-btn.off .call-btn-icon { background: #fff; color: #0d1016; position: relative; }
+.call-btn.off .call-btn-icon::after { /* a slash through a muted mic / stopped camera */
+  content: ''; position: absolute; width: 30px; height: 3px; border-radius: 2px;
+  background: #d93025; transform: rotate(-45deg);
+}
+.call-btn.active .call-btn-icon { background: #1a8cff; }
+.call-btn.end .call-btn-icon { background: #d93025; }
+.call-btn.end .call-btn-icon { transform: rotate(135deg); }
+.call-btn.end:hover .call-btn-icon { background: #b3261e; }
+.call-badge {
+  position: absolute; top: -2px; right: 12px; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 9px; background: #d93025; font-size: 11px; font-weight: 700; line-height: 18px;
+}
+.call-badge.hidden { display: none; }
+
+/* In-call chat drawer. */
+.call-chat {
+  display: none; width: 320px; flex: none; flex-direction: column;
+  background: #151a24; border-left: 1px solid rgba(255, 255, 255, .1);
+}
+.call-panel.chat-open .call-chat { display: flex; }
+.call-chat-head {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, .1);
+}
+.call-chat-head .hint { flex: 1; font-size: 11px; color: rgba(255, 255, 255, .55); }
+.call-chat-head .icon-btn { color: #fff; background: transparent; border-color: rgba(255, 255, 255, .25); }
+.call-chat-list { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.call-chat-empty { margin: auto 0; text-align: center; font-size: 13px; color: rgba(255, 255, 255, .5); }
+.call-chat-msg { max-width: 92%; align-self: flex-start; }
+.call-chat-msg.mine { align-self: flex-end; text-align: right; }
+.call-chat-meta { font-size: 11px; color: rgba(255, 255, 255, .55); margin-bottom: 2px; }
+.call-chat-meta b { color: rgba(255, 255, 255, .9); }
+.call-chat-text {
+  display: inline-block; padding: 7px 11px; border-radius: 12px; background: rgba(255, 255, 255, .1);
+  font-size: 14px; line-height: 1.35; text-align: left; overflow-wrap: anywhere; unicode-bidi: plaintext;
+}
+.call-chat-msg.mine .call-chat-text { background: #1f4e8c; }
+.call-chat-form { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid rgba(255, 255, 255, .1); }
+.call-chat-form input {
+  flex: 1; min-width: 0; background: rgba(255, 255, 255, .08); color: #fff;
+  border: 1px solid rgba(255, 255, 255, .2); border-radius: 999px; padding: 8px 12px;
+}
+
+/* Minimized: a small floating window so you can keep using the app. */
+.call-panel.min { inset: auto 20px 20px auto; width: min(340px, 92vw); height: 280px; }
+.call-panel.min .call-chat { display: none; }
+.call-panel.min .call-controls { padding: 6px; gap: 4px; }
+.call-panel.min .call-btn { min-width: 50px; }
+.call-panel.min .call-btn-icon { width: 36px; height: 36px; font-size: 15px; }
+.call-panel.min .call-btn-label { display: none; }
+.call-panel.min .call-sub { display: none; }
 .call-panel.min .call-grid[data-count="2"] .call-tile.local { width: 30%; right: 14px; bottom: 14px; }
 .incoming-call { font-size: 16px; margin: 4px 0 14px; }
-@media (max-width: 560px) {
+/* Group header while its call is running: a pulsing green "Join call (n)". */
+#groupCallBtn.live { background: var(--ok); border-color: var(--ok); color: #fff; font-weight: 700; animation: screenPulse 1.6s infinite; }
+@media (max-width: 720px) {
   .call-panel { inset: 0; border-radius: 0; border: 0; }
-  .call-panel.min { inset: auto 8px 8px 8px; width: auto; }
+  .call-panel.min { inset: auto 8px 8px 8px; width: auto; border-radius: 14px; }
   .call-grid[data-count="3"], .call-grid[data-count="4"] { grid-template-columns: 1fr; grid-template-rows: none; }
   .call-grid[data-count="3"] .call-tile:first-child { grid-column: auto; }
+  .call-grid.presenting { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr) 90px; }
+  /* Chat covers the video on a phone instead of squeezing it. */
+  .call-body { position: relative; }
+  .call-chat { position: absolute; inset: 0; width: auto; z-index: 5; border-left: 0; }
+  .call-btn { min-width: 58px; }
+  .call-btn-icon { width: 44px; height: 44px; font-size: 18px; }
+  .call-btn-label { font-size: 11px; }
 }
 
 

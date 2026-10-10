@@ -1506,6 +1506,7 @@
     view.querySelector('#groupAddBtn').addEventListener('click', () => openGroupAdder(state.group));
     view.querySelector('#groupCallBtn').addEventListener('click', () =>
       startCall({ kind: 'group', groupId: gid, name: group.name }));
+    reflectGroupCall(group.callCount || 0);
     const leaveBtn = view.querySelector('#groupLeaveBtn');
     if (leaveBtn) leaveBtn.addEventListener('click', async () => {
       if (!confirm('Leave this group chat?')) return;
@@ -1540,6 +1541,15 @@
 
     messages.forEach(appendGroupMessage);
     scrollBody();
+  }
+
+  // Show whether the open group has a call running ("Join call (2)").
+  function reflectGroupCall(count) {
+    const btn = document.getElementById('groupCallBtn');
+    if (!btn) return;
+    btn.classList.toggle('live', count > 0);
+    btn.textContent = count > 0 ? `📹 Join call (${count})` : '📹 Call';
+    btn.title = count > 0 ? 'A video call is in progress — join it' : "Start the group's video call";
   }
 
   function sendGroupMessage(input) {
@@ -3406,27 +3416,49 @@
       room: null, target, title: target.name || 'Call', local,
       peers: new Map(), iceServers: ICE_CONFIG.iceServers,
       micOn: true, camOn: local.getVideoTracks().length > 0, everConnected: false,
+      camTrack: local.getVideoTracks()[0] || null, // our camera (null = voice only)
+      screen: null,       // MediaStream while we share our screen
+      startedAt: 0,       // first moment someone connected (call timer)
+      chatUnread: 0,
     };
     state.call = call;
     renderCallPanel();
     setCallStatus(target.kind === 'dm' ? 'Ringing…' : 'Waiting for others to join…');
+    askNotificationPermission();
+    joinCallRoom(call, false);
+    call.statsTimer = setInterval(updateCallQuality, 2000);
+  }
 
+  // Ask the server to put us in the call room, then offer to everyone already
+  // there. `rejoin` = our socket reconnected mid-call (the server dropped us
+  // when it disconnected), so rebuild every link from scratch.
+  function joinCallRoom(call, rejoin) {
+    const target = call.target;
     const payload = target.kind === 'dm' ? { kind: 'dm', to: target.to } : { kind: 'group', groupId: target.groupId };
     state.socket.emit('call:join', payload, (res) => {
       if (state.call !== call) return; // hung up while joining
       if (!res || res.error) { endCall(true); return notifyToast((res && res.error) || 'Could not start the call.'); }
       call.room = res.room;
       if (Array.isArray(res.iceServers) && res.iceServers.length) call.iceServers = res.iceServers;
+      if (rejoin) [...call.peers.keys()].forEach(removeCallPeer);
       (res.peers || []).forEach((p) => addCallPeer(p.id, p.name, true));
       if (res.peers && res.peers.length) setCallStatus('');
+      else if (rejoin && target.kind === 'group') setCallStatus('Waiting for others to join…');
       // Nobody picked up a 1:1 call in time → give up.
-      if (target.kind === 'dm' && !(res.peers && res.peers.length)) {
+      if (!rejoin && target.kind === 'dm' && !(res.peers && res.peers.length)) {
         call.ringTimer = setTimeout(() => {
           if (state.call === call && !call.everConnected) { endCall(); notifyToast('No answer.'); }
         }, RING_TIMEOUT_MS);
       }
     });
-    call.statsTimer = setInterval(updateCallQuality, 2000);
+  }
+
+  // Ask once (on a click, as browsers require) so later calls can raise a
+  // system notification even when this tab is in the background.
+  function askNotificationPermission() {
+    try {
+      if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+    } catch (_e) {}
   }
 
   // Create the link to one other participant. `offerer` = we send the offer.
@@ -3435,9 +3467,11 @@
     if (!call) return null;
     if (call.peers.has(id)) return call.peers.get(id);
     const pc = new RTCPeerConnection({ iceServers: call.iceServers });
-    const peer = { id, name: name || 'Someone', pc, pendingIce: [], stream: null };
+    const peer = { id, name: name || 'Someone', pc, pendingIce: [], stream: null, state: {} };
     call.peers.set(id, peer);
-    call.local.getTracks().forEach((t) => pc.addTrack(t, call.local));
+    call.local.getAudioTracks().forEach((t) => pc.addTrack(t, call.local));
+    const video = outgoingVideoTrack(call);
+    peer.videoSender = video ? pc.addTrack(video, call.local) : null;
 
     pc.onicecandidate = (e) => {
       if (e.candidate && state.socket && call.room) {
@@ -3451,10 +3485,13 @@
     };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') {
+        if (!peer.connected) { peer.connected = true; callToast(`${peer.name} joined`); }
         call.everConnected = true;
+        if (!call.startedAt) call.startedAt = Date.now();
         clearTimeout(call.ringTimer);
         setCallStatus('');
         tuneCallSenders();
+        sendCallState(); // so they see our mute / camera / screen state
       } else if (pc.connectionState === 'failed') {
         // Try to recover the path (e.g. a network switch) before giving up.
         if (offerer) { try { pc.restartIce(); } catch (_e) {} renegotiate(peer); }
@@ -3464,6 +3501,7 @@
     peer.tile = callTile(peer.name, false);
     document.getElementById('callGrid').appendChild(peer.tile);
     layoutCallGrid();
+    updateCallHeader();
     if (offerer) renegotiate(peer);
     return peer;
   }
@@ -3486,6 +3524,7 @@
     try { peer.pc.close(); } catch (_e) {}
     if (peer.tile) peer.tile.remove();
     layoutCallGrid();
+    updateCallHeader();
   }
 
   async function handleCallSignal(msg) {
@@ -3570,19 +3609,32 @@
     }
   }
 
-  function callTile(name, isLocal) {
-    const tile = el(`
-      <div class="call-tile${isLocal ? ' local' : ''}">
-        <video autoplay playsinline${isLocal ? ' muted' : ''}></video>
-        <div class="call-tile-name">${esc(name)}</div>
-        <div class="call-quality"></div>
-      </div>`);
-    return tile;
+  // The video we send: our screen while sharing, else the camera (or none).
+  function outgoingVideoTrack(call) {
+    if (call.screen) return call.screen.getVideoTracks()[0] || null;
+    return call.camTrack;
   }
 
+  function callTile(name, isLocal) {
+    const initial = esc((String(name || '?').trim()[0] || '?').toUpperCase());
+    return el(`
+      <div class="call-tile${isLocal ? ' local' : ''}">
+        <video autoplay playsinline${isLocal ? ' muted' : ''}></video>
+        <div class="call-tile-off"><span class="call-initial">${initial}</span><span class="call-off-note">Camera off</span></div>
+        <div class="call-tile-name"><span class="call-mic-off" title="Microphone muted">🔇</span><span class="call-name-text">${esc(name)}</span></div>
+        <div class="call-quality"></div>
+      </div>`);
+  }
+
+  // Grid shape follows the number of tiles; a remote screen share gets the
+  // big spot ("presenting") with everyone else in a strip underneath.
   function layoutCallGrid() {
     const grid = document.getElementById('callGrid');
-    if (grid) grid.dataset.count = String(grid.children.length);
+    if (!grid) return;
+    grid.dataset.count = String(grid.children.length);
+    const featured = grid.querySelector('.call-tile.screen:not(.local)');
+    grid.querySelectorAll('.call-tile').forEach((t) => t.classList.toggle('featured', t === featured));
+    grid.classList.toggle('presenting', !!featured && grid.children.length > 2);
   }
 
   function setCallStatus(text) {
@@ -3590,26 +3642,128 @@
     if (s) { s.textContent = text; s.classList.toggle('hidden', !text); }
   }
 
+  // A short-lived note over the video ("Asha joined", "Ravi is sharing…").
+  function callToast(text) {
+    const stage = document.querySelector('#callPanel .call-stage');
+    if (!stage) return;
+    const t = el(`<div class="call-toast">${esc(text)}</div>`);
+    stage.appendChild(t);
+    setTimeout(() => t.remove(), 3200);
+  }
+
+  // Header subtitle: who's here and for how long.
+  function updateCallHeader() {
+    const call = state.call;
+    const sub = document.getElementById('callSub');
+    if (!call || !sub) return;
+    const people = call.peers.size + 1;
+    let text;
+    if (!call.startedAt) {
+      text = call.target.kind === 'dm' ? `Calling ${call.title}…` : 'Waiting for others to join…';
+    } else {
+      const secs = Math.floor((Date.now() - call.startedAt) / 1000);
+      const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+      const ss = String(secs % 60).padStart(2, '0');
+      text = `${people} ${people === 1 ? 'person' : 'people'} · ${mm}:${ss}`;
+    }
+    sub.textContent = text;
+  }
+
+  // Our mic / camera / screen state → everyone else in the call (they show a
+  // muted icon, a "camera off" card, or feature our screen).
+  function sendCallState() {
+    const call = state.call;
+    if (!call || !call.room || !state.socket) return;
+    state.socket.emit('call:state', {
+      room: call.room,
+      mic: call.micOn,
+      cam: !!(call.camTrack && call.camOn) || !!call.screen,
+      screen: !!call.screen,
+    });
+  }
+
+  function applyPeerState(msg) {
+    const call = state.call;
+    if (!call || msg.room !== call.room) return;
+    const peer = call.peers.get(msg.from);
+    if (!peer || !peer.tile) return;
+    const wasSharing = !!peer.state.screen;
+    peer.state = { mic: msg.mic !== false, cam: msg.cam !== false, screen: !!msg.screen };
+    peer.tile.classList.toggle('mic-off', !peer.state.mic);
+    peer.tile.classList.toggle('cam-off', !peer.state.cam);
+    peer.tile.classList.toggle('screen', peer.state.screen);
+    if (peer.state.screen && !wasSharing) callToast(`${peer.name} is sharing their screen`);
+    if (!peer.state.screen && wasSharing) callToast(`${peer.name} stopped sharing`);
+    layoutCallGrid();
+  }
+
+  // Reflect our own state on our tile and the control buttons.
+  function reflectLocalCallState() {
+    const call = state.call;
+    const panel = document.getElementById('callPanel');
+    if (!call || !panel) return;
+    const me = panel.querySelector('.call-tile.local');
+    const camShown = !!(call.camTrack && call.camOn) || !!call.screen;
+    me.classList.toggle('mic-off', !call.micOn);
+    me.classList.toggle('cam-off', !camShown);
+    me.classList.toggle('screen', !!call.screen);
+    me.querySelector('.call-name-text').textContent = call.screen ? 'You (sharing screen)' : 'You';
+    me.querySelector('.call-off-note').textContent = call.camTrack ? 'Camera off' : 'No camera';
+    const setBtn = (id, on, labelOn, labelOff, tipOn, tipOff) => {
+      const b = panel.querySelector(id);
+      b.classList.toggle('off', !on);
+      b.querySelector('.call-btn-label').textContent = on ? labelOn : labelOff;
+      b.title = on ? tipOn : tipOff;
+    };
+    setBtn('#callMicBtn', call.micOn, 'Mute', 'Unmute', 'Mute your microphone', 'Unmute your microphone');
+    setBtn('#callCamBtn', !!(call.camTrack && call.camOn), 'Stop video', 'Start video', 'Turn your camera off', 'Turn your camera on');
+    panel.querySelector('#callCamBtn').disabled = !call.camTrack;
+    const share = panel.querySelector('#callShareBtn');
+    share.classList.toggle('active', !!call.screen);
+    share.querySelector('.call-btn-label').textContent = call.screen ? 'Stop sharing' : 'Share screen';
+    share.title = call.screen ? 'Stop sharing your screen' : 'Show a browser tab to everyone in the call';
+  }
+
   function renderCallPanel() {
     const call = state.call;
     let panel = document.getElementById('callPanel');
     if (panel) panel.remove();
+    const btn = (id, icon, label, extra) =>
+      `<button class="call-btn${extra || ''}" id="${id}"><span class="call-btn-icon">${icon}</span><span class="call-btn-label">${label}</span><span class="call-badge hidden"></span></button>`;
     panel = el(`
       <div id="callPanel" class="call-panel">
         <div class="call-head">
           <span class="screen-dot"></span>
-          <span class="call-title">${esc(call.title)}</span>
-          <button class="icon-btn small" id="callMinBtn" title="Minimize / expand">▭</button>
+          <div class="call-head-text">
+            <span class="call-title">${esc(call.title)}</span>
+            <span class="call-sub" id="callSub"></span>
+          </div>
+          <button class="icon-btn small" id="callMinBtn" title="Shrink to a small window (keep chatting)">▭</button>
           <button class="icon-btn small" id="callFsBtn" title="Fullscreen">⛶</button>
         </div>
-        <div class="call-stage">
-          <div class="call-grid" id="callGrid"></div>
-          <div class="call-status" id="callStatus"></div>
+        <div class="call-body">
+          <div class="call-stage">
+            <div class="call-grid" id="callGrid"></div>
+            <div class="call-status" id="callStatus"></div>
+          </div>
+          <aside class="call-chat" id="callChat">
+            <div class="call-chat-head">
+              <b>Chat</b><span class="hint">Saved in your ${call.target.kind === 'dm' ? 'chat' : 'group chat'} too</span>
+              <button class="icon-btn small" id="callChatClose" title="Close chat">✕</button>
+            </div>
+            <div class="call-chat-list" id="callChatList"><div class="call-chat-empty">Messages you send here go to everyone in the call.</div></div>
+            <form class="call-chat-form" id="callChatForm">
+              <input type="text" id="callChatInput" placeholder="Type a message…" autocomplete="off" dir="auto" maxlength="4000" />
+              <button class="primary small" type="submit">Send</button>
+            </form>
+          </aside>
         </div>
         <div class="call-controls">
-          <button class="call-btn" id="callMicBtn" title="Mute microphone">🎤</button>
-          <button class="call-btn" id="callCamBtn" title="Turn camera off">📷</button>
-          <button class="call-btn end" id="callEndBtn" title="Hang up">📞</button>
+          ${btn('callMicBtn', '🎤', 'Mute')}
+          ${btn('callCamBtn', '📷', 'Stop video')}
+          ${btn('callShareBtn', '🖥️', 'Share screen')}
+          ${btn('callChatBtn', '💬', 'Chat')}
+          ${btn('callEndBtn', '📞', 'Leave', ' end')}
         </div>
       </div>`);
     document.body.appendChild(panel);
@@ -3618,26 +3772,178 @@
     me.querySelector('video').srcObject = call.local;
     panel.querySelector('#callGrid').appendChild(me);
     layoutCallGrid();
-    if (!call.camOn) panel.querySelector('#callCamBtn').disabled = true;
+    reflectLocalCallState();
+    updateCallHeader();
+    call.headerTimer = setInterval(updateCallHeader, 1000);
 
     panel.querySelector('#callEndBtn').addEventListener('click', () => endCall());
-    panel.querySelector('#callMicBtn').addEventListener('click', (e) => {
+    panel.querySelector('#callMicBtn').addEventListener('click', () => {
       call.micOn = !call.micOn;
       call.local.getAudioTracks().forEach((t) => { t.enabled = call.micOn; });
-      e.currentTarget.classList.toggle('off', !call.micOn);
-      e.currentTarget.title = call.micOn ? 'Mute microphone' : 'Unmute microphone';
+      reflectLocalCallState();
+      sendCallState();
     });
-    panel.querySelector('#callCamBtn').addEventListener('click', (e) => {
+    panel.querySelector('#callCamBtn').addEventListener('click', () => {
+      if (!call.camTrack) return;
       call.camOn = !call.camOn;
-      call.local.getVideoTracks().forEach((t) => { t.enabled = call.camOn; });
-      e.currentTarget.classList.toggle('off', !call.camOn);
-      e.currentTarget.title = call.camOn ? 'Turn camera off' : 'Turn camera on';
+      call.camTrack.enabled = call.camOn;
+      reflectLocalCallState();
+      sendCallState();
+    });
+    panel.querySelector('#callShareBtn').addEventListener('click', () => {
+      if (call.screen) stopCallScreenShare(); else startCallScreenShare();
+    });
+    panel.querySelector('#callChatBtn').addEventListener('click', () => toggleCallChat());
+    panel.querySelector('#callChatClose').addEventListener('click', () => toggleCallChat(false));
+    panel.querySelector('#callChatForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      sendCallChat();
     });
     panel.querySelector('#callMinBtn').addEventListener('click', () => panel.classList.toggle('min'));
     panel.querySelector('#callFsBtn').addEventListener('click', () => {
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       else if (panel.requestFullscreen) panel.requestFullscreen().catch(() => {});
     });
+  }
+
+  /* ----- screen sharing inside a call -----
+     Same tab-only rule as the 1:1 "Share screen" button (see startScreenShare):
+     only a single browser tab can be shown, never a window or a whole screen.
+     The screen replaces our camera on every link (replaceTrack — no
+     renegotiation); with no camera there is no video sender yet, so one is
+     added and that link renegotiated. */
+  async function startCallScreenShare() {
+    const call = state.call;
+    if (!call || call.screen) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      return notifyToast('Screen sharing is not supported in this browser.');
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: 'browser', frameRate: { ideal: 15, max: 30 } },
+        audio: false,
+        monitorTypeSurfaces: 'exclude',
+        selfBrowserSurface: 'exclude',
+        surfaceSwitching: 'include',
+      });
+    } catch (_e) { return; } // picker cancelled
+    const track = stream.getVideoTracks()[0];
+    const surface = track && track.getSettings ? track.getSettings().displaySurface : null;
+    if (surface !== 'browser') {
+      stream.getTracks().forEach((t) => t.stop());
+      return notifyToast('You can only share a browser tab — pick a tab, not a window or a screen.');
+    }
+    if (state.call !== call) { stream.getTracks().forEach((t) => t.stop()); return; }
+    try { track.contentHint = 'detail'; } catch (_e) {} // keep text sharp
+    call.screen = stream;
+    track.addEventListener('ended', () => stopCallScreenShare()); // browser's own "Stop sharing"
+    call.peers.forEach((peer) => setPeerVideo(peer, track));
+    showLocalPreview();
+    reflectLocalCallState();
+    layoutCallGrid();
+    sendCallState();
+    callToast('You are sharing a tab with everyone in the call');
+  }
+
+  function stopCallScreenShare() {
+    const call = state.call;
+    if (!call || !call.screen) return;
+    const screen = call.screen;
+    call.screen = null;
+    screen.getTracks().forEach((t) => t.stop());
+    call.peers.forEach((peer) => setPeerVideo(peer, call.camTrack));
+    showLocalPreview();
+    reflectLocalCallState();
+    layoutCallGrid();
+    sendCallState();
+  }
+
+  function setPeerVideo(peer, track) {
+    if (peer.videoSender) {
+      peer.videoSender.replaceTrack(track).catch(() => {});
+    } else if (track) {
+      peer.videoSender = peer.pc.addTrack(track, state.call.local);
+      renegotiate(peer);
+    }
+  }
+
+  // Our own tile previews what we send: the shared tab, or the camera.
+  function showLocalPreview() {
+    const call = state.call;
+    const v = document.querySelector('#callPanel .call-tile.local video');
+    if (!call || !v) return;
+    v.srcObject = call.screen || call.local;
+  }
+
+  /* ----- chat inside a call -----
+     Messages go through the normal chat (1:1 or the group), so they're kept in
+     the conversation history; the call panel just shows them alongside the video. */
+  function toggleCallChat(open) {
+    const call = state.call;
+    const panel = document.getElementById('callPanel');
+    if (!call || !panel) return;
+    const isOpen = open == null ? !panel.classList.contains('chat-open') : open;
+    panel.classList.toggle('chat-open', isOpen);
+    panel.querySelector('#callChatBtn').classList.toggle('active', isOpen);
+    if (isOpen) {
+      panel.classList.remove('min');
+      call.chatUnread = 0;
+      setCallChatBadge();
+      setTimeout(() => panel.querySelector('#callChatInput').focus(), 0);
+    }
+  }
+
+  function setCallChatBadge() {
+    const call = state.call;
+    const badge = document.querySelector('#callChatBtn .call-badge');
+    if (!call || !badge) return;
+    badge.textContent = call.chatUnread > 9 ? '9+' : String(call.chatUnread);
+    badge.classList.toggle('hidden', !call.chatUnread);
+  }
+
+  function appendCallChat(name, body, mine, at) {
+    const call = state.call;
+    const list = document.getElementById('callChatList');
+    if (!call || !list) return;
+    const empty = list.querySelector('.call-chat-empty');
+    if (empty) empty.remove();
+    const item = el(`<div class="call-chat-msg${mine ? ' mine' : ''}"><div class="call-chat-meta"><b></b> <span>${fmtTime(at || Date.now())}</span></div><div class="call-chat-text"></div></div>`);
+    item.querySelector('b').textContent = mine ? 'You' : name;
+    item.querySelector('.call-chat-text').textContent = body;
+    list.appendChild(item);
+    list.scrollTop = list.scrollHeight;
+    const panel = document.getElementById('callPanel');
+    if (!mine && panel && !panel.classList.contains('chat-open')) {
+      call.chatUnread += 1;
+      setCallChatBadge();
+      callToast(`💬 ${name}: ${body.length > 60 ? body.slice(0, 60) + '…' : body}`);
+    }
+  }
+
+  function sendCallChat() {
+    const call = state.call;
+    const input = document.getElementById('callChatInput');
+    if (!call || !input || !state.socket) return;
+    const body = input.value.trim();
+    if (!body) return;
+    input.value = '';
+    const t = call.target;
+    if (t.kind === 'dm') {
+      state.socket.emit('chat:message', { to: t.to, body }, (res) => {
+        if (res && res.error) { input.value = body; return notifyToast(res.error); }
+        const m = (res && res.message) || {};
+        appendCallChat('You', m.body != null ? m.body : body, true, m.at);
+        // The 1:1 chat open behind the call shows it as well.
+        if (state.peer && state.peer.id === t.to) appendTextBubble({ body: m.body != null ? m.body : body, mine: true, at: m.at || Date.now(), id: m.id, status: m.status });
+      });
+    } else {
+      // The server echoes group messages to every member, us included — the
+      // group:message handler adds it to this panel then.
+      state.socket.emit('group:message', { groupId: t.groupId, body }, (res) => {
+        if (res && res.error) { input.value = body; notifyToast(res.error); }
+      });
+    }
   }
 
   // Hang up. `silent` skips telling the server (it already knows / never joined).
@@ -3647,9 +3953,11 @@
     state.call = null;
     clearTimeout(call.ringTimer);
     clearInterval(call.statsTimer);
+    clearInterval(call.headerTimer);
     if (!silent && call.room && state.socket) state.socket.emit('call:leave', { room: call.room });
     call.peers.forEach((p) => { try { p.pc.close(); } catch (_e) {} });
     try { call.local.getTracks().forEach((t) => t.stop()); } catch (_e) {}
+    try { if (call.screen) call.screen.getTracks().forEach((t) => t.stop()); } catch (_e) {}
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     const panel = document.getElementById('callPanel');
     if (panel) panel.remove();
@@ -3677,6 +3985,28 @@
     return () => { clearInterval(timer); try { if (ctx) ctx.close(); } catch (_e) {} };
   }
 
+  // Make a ring hard to miss when the tab isn't in front: flash the tab title,
+  // vibrate (phones), and raise a system notification if allowed. Returns a stopper.
+  function alertIncomingCall(text) {
+    const original = document.title;
+    let flip = false;
+    const timer = setInterval(() => { flip = !flip; document.title = flip ? text : original; }, 1000);
+    try { if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]); } catch (_e) {}
+    let note = null;
+    try {
+      if ('Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+        note = new Notification(text, { body: 'Tap to answer', tag: 'gxm-call', requireInteraction: true });
+        note.onclick = () => { window.focus(); note.close(); };
+      }
+    } catch (_e) {}
+    return () => {
+      clearInterval(timer);
+      document.title = original;
+      try { if (navigator.vibrate) navigator.vibrate(0); } catch (_e) {}
+      try { if (note) note.close(); } catch (_e) {}
+    };
+  }
+
   function dismissIncomingCall() {
     const inc = state.incomingCall;
     if (!inc) return;
@@ -3691,13 +4021,19 @@
     if (state.call || state.incomingCall) return;
     const isGroup = ring.kind === 'group';
     const who = esc(ring.fromName || 'Someone');
+    const groupName = esc(ring.groupName || 'a group');
+    const line = !isGroup ? `<b>${who}</b> is calling you`
+      : ring.ongoing ? `A video call is in progress in <b>${groupName}</b> (${Number(ring.count) || 1} in the call)`
+      : `${who} started a call in <b>${groupName}</b>`;
     const { card, close } = openModal(isGroup ? 'Group video call' : 'Incoming video call', `
-      <p class="incoming-call">${isGroup ? `${who} started a call in <b>${esc(ring.groupName || 'a group')}</b>` : `<b>${who}</b> is calling you`}</p>
+      <p class="incoming-call">${line}</p>
       <div class="row-actions">
         <button class="ghost" id="callDecline">Decline</button>
         <button class="primary" id="callAccept">📹 Join</button>
       </div>`);
-    const inc = { ring, close, stopTone: startRingTone() };
+    const stopAlert = alertIncomingCall(isGroup ? `📹 Call in ${ring.groupName || 'a group'}` : `📹 ${ring.fromName || 'Someone'} is calling`);
+    const stopTone = startRingTone();
+    const inc = { ring, close, stopTone: () => { stopTone(); stopAlert(); } };
     state.incomingCall = inc;
     inc.timer = setTimeout(dismissIncomingCall, RING_TIMEOUT_MS);
     // Closing the dialog any way (✕ or clicking outside) declines the call.
@@ -3711,6 +4047,7 @@
       dismissIncomingCall();
     });
     card.querySelector('#callAccept').addEventListener('click', () => {
+      askNotificationPermission();
       dismissIncomingCall();
       startCall(isGroup
         ? { kind: 'group', groupId: ring.groupId, name: ring.groupName || 'Group call' }
@@ -3727,6 +4064,8 @@
     // Learn which friends/relations are online now, and refresh on reconnect.
     s.on('connect', () => {
       seedFriendPresence();
+      // Reconnected mid-call: the server dropped us from the room — rejoin it.
+      if (state.call && state.call.room) joinCallRoom(state.call, true);
     });
 
     // A friend/relation came online or went offline — flip their dot live.
@@ -3736,6 +4075,11 @@
     });
 
     s.on('chat:message', (m) => {
+      const c = state.call;
+      if (c && c.target.kind === 'dm' && m.kind === 'text') {
+        if (m.from === c.target.to) appendCallChat(c.title, m.body, false, m.at);
+        else if (m.from === state.me.id && m.to === c.target.to) appendCallChat('You', m.body, true, m.at); // sent from another tab
+      }
       // Track the peer so it shows under "Chats".
       if (!state.chatPeers[m.from] && m.from !== state.me.id) rememberPeer(m.from);
       if (!state.chatPeers[m.to] && m.to !== state.me.id) rememberPeer(m.to);
@@ -3794,6 +4138,10 @@
 
     // Group chat message for one of my groups.
     s.on('group:message', (m) => {
+      const c = state.call;
+      if (c && c.target.kind === 'group' && c.target.groupId === m.groupId && (m.kind || 'text') === 'text') {
+        appendCallChat(m.fromName || 'Someone', m.body, !!m.mine, m.at);
+      }
       if (state.group && state.group.gid === m.groupId) appendGroupMessage(m);
       else if (!m.mine) {
         const tabId = 'g' + m.groupId;
@@ -3810,12 +4158,19 @@
       if (state.incomingCall && state.incomingCall.ring.room === room) dismissIncomingCall();
     });
     s.on('call:peer-joined', ({ room, peer }) => {
-      if (state.call && state.call.room === room && peer) { addCallPeer(peer.id, peer.name, false); setCallStatus(''); }
+      if (state.call && state.call.room === room && peer) {
+        removeCallPeer(peer.id); // a rejoin replaces any stale link to them
+        addCallPeer(peer.id, peer.name, false);
+        setCallStatus('');
+        sendCallState(); // tell the newcomer our mic / camera / screen state
+      }
     });
     s.on('call:peer-left', ({ room, userId }) => {
       const call = state.call;
       if (!call || call.room !== room) return;
       if (call.target.kind === 'dm') { endCall(); return notifyToast('Call ended.'); }
+      const gone = call.peers.get(userId);
+      if (gone) callToast(`${gone.name} left`);
       removeCallPeer(userId);
       if (!call.peers.size) setCallStatus('Everyone else left — waiting…');
     });
@@ -3826,6 +4181,11 @@
       }
     });
     s.on('call:signal', (msg) => handleCallSignal(msg));
+    s.on('call:state', (msg) => applyPeerState(msg));
+    // How many people are in a group's call — keeps "Join call" current.
+    s.on('group:call', ({ groupId, count }) => {
+      if (state.group && state.group.gid === groupId) reflectGroupCall(count);
+    });
 
     // A poll's tallies changed (someone voted) — repaint the card in place.
     s.on('poll:update', (e) => { if (e && e.poll) updatePollCard(e.poll); });

@@ -9,7 +9,7 @@ const express = require('express');
 
 const db = require('../db');
 const { requireAuth } = require('../auth');
-const { notifyGroup } = require('../socket');
+const { notifyGroup, groupCallCount } = require('../socket');
 const polls = require('../polls');
 const { areBlocked } = require('../relations');
 
@@ -79,6 +79,7 @@ function serializeGroup(groupId, viewerId) {
     memberCount: joined.length,
     max: MAX_MEMBERS,
     myStatus: myStatus(groupId, viewerId),
+    callCount: groupCallCount(groupId), // people in the group's video call now
   };
 }
 

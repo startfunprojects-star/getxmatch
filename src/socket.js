@@ -230,7 +230,8 @@ function broadcastLeaderboardChange() {
    pinned to the one socket (tab) that joined.
 -------------------------------------------------------------------------- */
 const MAX_CALL_PEOPLE = 4;
-const calls = new Map(); // room -> { kind, groupId, members: Map(userId -> socketId) }
+// room -> { kind, groupId, startedBy, members: Map(userId -> socketId), declined: Set(userId) }
+const calls = new Map();
 
 // Resolve and authorize the call room `me` asks for. Returns { room, kind,
 // groupId, audience } (audience = who to ring) or { error }.
@@ -262,6 +263,7 @@ function leaveCall(io, room, userId, socketId) {
   if (socketId && c.members.get(userId) !== socketId) return;
   c.members.delete(userId);
   c.members.forEach((sid) => io.to(sid).emit('call:peer-left', { room, userId }));
+  broadcastGroupCall(io, c);
   if (c.members.size === 0) {
     calls.delete(room);
     const audience = c.kind === 'group'
@@ -317,6 +319,38 @@ function markRead(io, readerId, senderId) {
   emitReceipts(io, rows, readerId, 'read');
 }
 
+// Tell every member of a group how many people are in its call right now, so
+// the group header can offer "Join call" (0 = no call running).
+function broadcastGroupCall(io, c) {
+  if (!c || c.kind !== 'group') return;
+  const count = c.members.size;
+  groupJoinedIds(c.groupId).forEach((uid) => io.to(`user:${uid}`).emit('group:call', { groupId: c.groupId, count }));
+}
+
+// People currently in a group's call (0 if none). Used by the groups routes.
+function groupCallCount(groupId) {
+  const c = calls.get(`group:${groupId}`);
+  return c ? c.members.size : 0;
+}
+
+// The ring payload for a running call `userId` could join, or null. A call
+// only rings once per person, at its start, and a phone tab that was asleep
+// then would miss it — so (re)connecting sockets are rung for calls in progress
+// they haven't joined or declined.
+function ongoingRing(room, c, userId) {
+  if (!c.members.size || c.members.has(userId) || c.declined.has(userId)) return null;
+  let groupName = null;
+  if (c.kind === 'group') {
+    if (!groupJoinedIds(c.groupId).includes(userId) || groupWalled(c.groupId, userId)) return null;
+    groupName = (db.prepare('SELECT name FROM chat_groups WHERE id = ?').get(c.groupId) || {}).name || 'Group chat';
+  } else {
+    const pair = room.slice(3).split('-').map(Number);
+    if (!pair.includes(userId)) return null;
+  }
+  const from = c.members.has(c.startedBy) ? c.startedBy : c.members.keys().next().value;
+  return { room, kind: c.kind, groupId: c.groupId, groupName, from, fromName: nameOf(from), ongoing: true, count: c.members.size };
+}
+
 // Display name (or @username) for a user id.
 function nameOf(uid) {
   const r = db
@@ -358,6 +392,11 @@ function initSocket(io) {
     socket.join(`user:${me.id}`);
     if (wasOffline) broadcastPresence(io, me.id, true);
     markDelivered(io, me.id); // messages that arrived while offline → ✓✓
+    // Ring this tab for calls already in progress that I could still join.
+    calls.forEach((c, room) => {
+      const ring = ongoingRing(room, c, me.id);
+      if (ring) socket.emit('call:ring', ring);
+    });
 
     // I have a 1:1 conversation open and visible → blue ticks for its sender.
     socket.on('chat:read', (payload) => {
@@ -745,10 +784,15 @@ function initSocket(io) {
         calls.forEach((c, room) => { if (room !== r.room && c.members.has(me.id)) leaveCall(io, room, me.id); });
 
         let c = calls.get(r.room);
-        if (!c) { c = { kind: r.kind, groupId: r.groupId, members: new Map() }; calls.set(r.room, c); }
+        if (!c) {
+          c = { kind: r.kind, groupId: r.groupId, startedBy: me.id, members: new Map(), declined: new Set() };
+          calls.set(r.room, c);
+        }
         const others = [...c.members.keys()].filter((id) => id !== me.id);
         if (others.length + 1 > MAX_CALL_PEOPLE) return ack && ack({ error: 'This call is full.' });
         c.members.set(me.id, socket.id);
+        c.declined.delete(me.id);
+        broadcastGroupCall(io, c);
 
         const myName = nameOf(me.id);
         others.forEach((uid) => io.to(c.members.get(uid)).emit('call:peer-joined', { room: r.room, peer: { id: me.id, name: myName } }));
@@ -785,6 +829,15 @@ function initSocket(io) {
       io.to(c.members.get(to)).emit('call:signal', out);
     });
 
+    // My mic / camera / screen-share state → everyone else in my call.
+    socket.on('call:state', (payload) => {
+      const room = String((payload && payload.room) || '');
+      const c = calls.get(room);
+      if (!c || c.members.get(me.id) !== socket.id) return;
+      const out = { room, from: me.id, mic: payload.mic !== false, cam: payload.cam !== false, screen: !!payload.screen };
+      c.members.forEach((sid, uid) => { if (uid !== me.id) io.to(sid).emit('call:state', out); });
+    });
+
     socket.on('call:leave', (payload) => {
       leaveCall(io, String((payload && payload.room) || ''), me.id, socket.id);
     });
@@ -795,6 +848,7 @@ function initSocket(io) {
       const room = String((payload && payload.room) || '');
       io.to(`user:${me.id}`).emit('call:ring-stop', { room });
       const c = calls.get(room);
+      if (c) c.declined.add(me.id); // don't ring them again for this call
       if (c && c.kind === 'dm') {
         c.members.forEach((sid) => io.to(sid).emit('call:declined', { room, userId: me.id, name: nameOf(me.id) }));
       }
@@ -881,4 +935,4 @@ function disconnectUser(userId) {
   if (ioRef) ioRef.in(`user:${userId}`).disconnectSockets(true);
 }
 
-module.exports = { initSocket, isOnline, disconnectUser, broadcastActivity, broadcastHighway, notifyHighwayEvent, notifyGroup, notifyUser, broadcastLeaderboardChange, broadcastNotify };
+module.exports = { initSocket, groupCallCount, isOnline, disconnectUser, broadcastActivity, broadcastHighway, notifyHighwayEvent, notifyGroup, notifyUser, broadcastLeaderboardChange, broadcastNotify };
