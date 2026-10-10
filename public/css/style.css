@@ -708,6 +708,28 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .lightbox img { max-width: 92vw; max-height: 88vh; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
 .lb-close { position: absolute; top: 18px; right: 22px; width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.1); color: #fff; font-size: 18px; z-index: 3; }
 
+/* Zoomable full-size images (lightbox, slideshow, gallery viewer). */
+img.zoomable { touch-action: none; cursor: zoom-in; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; will-change: transform; }
+img.zoomable.zoomed { cursor: grab; }
+img.zoomable.zoomed:active { cursor: grabbing; }
+.lightbox { overflow: hidden; }
+.zoom-ctl {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 4;
+  display: flex; align-items: center; gap: 2px; padding: 4px;
+  background: rgba(0, 0, 0, .6); border-radius: 999px; backdrop-filter: blur(6px);
+}
+.zoom-ctl button {
+  min-width: 38px; height: 34px; padding: 0 10px; border: 0; border-radius: 999px;
+  background: transparent; color: #fff; font-size: 18px; font-weight: 700; cursor: pointer;
+}
+.zoom-ctl .zoom-level { font-size: 12px; font-variant-numeric: tabular-nums; min-width: 54px; }
+.zoom-ctl button:hover { background: rgba(255, 255, 255, .18); }
+.slideshow .zoom-ctl { bottom: 74px; }      /* sits above the play / count bar */
+.slideshow .ss-nav, .slideshow .ss-bar, .slideshow .ss-caption { z-index: 3; } /* stay above a zoomed image */
+.pv-media { position: relative; overflow: hidden; }
+.pv-media.pv-reel .zoom-ctl { display: none; }
+.pro-avatar.clickable { cursor: zoom-in; }
+
 /* Little activity badge on a gallery cell: reaction + comment counts. */
 .gallery .cell-meta {
   position: absolute; left: 6px; bottom: 6px; z-index: 2;

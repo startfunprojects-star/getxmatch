@@ -2430,6 +2430,7 @@
       img.className = 'msg-img'; img.loading = 'lazy'; img.src = url;
       if (opts.onImgError) img.addEventListener('error', opts.onImgError);
       link.appendChild(img);
+      link.addEventListener('click', (e) => { e.preventDefault(); openLightbox(url); });
       return link;
     }
     if (isVideoUrl(url)) {
@@ -4953,13 +4954,148 @@
   }
 
   // Full-screen image lightbox for gallery photos.
-  function openLightbox(url) {
-    const box = el(`<div class="lightbox"><img src="${url}" /><button class="lb-close" title="Close">✕</button></div>`);
-    const close = () => box.remove();
-    box.addEventListener('click', (e) => { if (e.target === box || e.target.classList.contains('lb-close')) close(); });
-    document.addEventListener('keydown', function onKey(e) {
-      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
+  /* ---------- Zoom for full-size images ----------
+     attachZoom(img, host) lets the viewer zoom an image up to 5×: mouse wheel
+     (towards the pointer), pinch on touch screens, double-click / double-tap
+     to jump in and out, drag to move around a zoomed image, and the −/+ buttons
+     it adds to `host`. Returns { reset, isZoomed, wasDragged, destroy }. */
+  function attachZoom(img, host) {
+    const MIN = 1, MAX = 5;
+    let s = 1, tx = 0, ty = 0;
+    let dragged = false;
+    img.classList.add('zoomable');
+    img.draggable = false;
+
+    const controls = el(`
+      <div class="zoom-ctl" role="group" aria-label="Zoom">
+        <button type="button" class="zoom-out" title="Zoom out (−)">−</button>
+        <button type="button" class="zoom-level" title="Reset zoom (0)">100%</button>
+        <button type="button" class="zoom-in" title="Zoom in (+)">+</button>
+      </div>`);
+    host.appendChild(controls);
+    const level = controls.querySelector('.zoom-level');
+
+    const base = () => {
+      const r = img.getBoundingClientRect();
+      return { left: r.left - tx, top: r.top - ty, w: r.width / s, h: r.height / s };
+    };
+    const clamp = () => {
+      if (s <= 1) { s = 1; tx = 0; ty = 0; return; }
+      const b = base();
+      tx = Math.min(0, Math.max(b.w - b.w * s, tx));
+      ty = Math.min(0, Math.max(b.h - b.h * s, ty));
+    };
+    const apply = (animate) => {
+      clamp();
+      img.style.transition = animate ? 'transform .18s ease' : 'none';
+      img.style.transform = s === 1 ? '' : `translate(${tx}px, ${ty}px) scale(${s})`;
+      img.classList.toggle('zoomed', s > 1);
+      level.textContent = Math.round(s * 100) + '%';
+    };
+    // Zoom to `ns`, keeping the image point under (cx, cy) where it is.
+    const zoomAt = (ns, cx, cy, animate) => {
+      ns = Math.min(MAX, Math.max(MIN, ns));
+      const b = base();
+      if (cx == null) { cx = b.left + b.w / 2; cy = b.top + b.h / 2; }
+      const px = cx - b.left, py = cy - b.top;
+      tx = px - (px - tx) * (ns / s);
+      ty = py - (py - ty) * (ns / s);
+      s = ns;
+      apply(animate);
+    };
+    const reset = () => { s = 1; tx = 0; ty = 0; apply(false); };
+
+    controls.querySelector('.zoom-in').addEventListener('click', (e) => { e.stopPropagation(); zoomAt(s * 1.5, null, null, true); });
+    controls.querySelector('.zoom-out').addEventListener('click', (e) => { e.stopPropagation(); zoomAt(s / 1.5, null, null, true); });
+    level.addEventListener('click', (e) => { e.stopPropagation(); reset(); });
+
+    const onWheel = (e) => {
+      e.preventDefault();
+      zoomAt(s * Math.exp(-e.deltaY * 0.0022), e.clientX, e.clientY, false);
+    };
+    img.addEventListener('wheel', onWheel, { passive: false });
+    img.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      if (s > 1) { s = 1; apply(true); } else zoomAt(2.5, e.clientX, e.clientY, true);
     });
+
+    // Pointer gestures: one finger/mouse drags a zoomed image; two pinch.
+    const pts = new Map();
+    let pinch = null, pan = null, lastTap = 0;
+    img.addEventListener('pointerdown', (e) => {
+      try { img.setPointerCapture(e.pointerId); } catch (_e) { /* keep tracking without capture */ }
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      dragged = false;
+      if (pts.size === 2) {
+        const [a, b] = [...pts.values()];
+        pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), s };
+        pan = null;
+      } else if (pts.size === 1) {
+        pan = { x: e.clientX, y: e.clientY, tx, ty };
+        // Double-tap on touch screens (dblclick isn't fired there).
+        if (e.pointerType === 'touch') {
+          const now = Date.now();
+          if (now - lastTap < 300) {
+            if (s > 1) { s = 1; apply(true); } else zoomAt(2.5, e.clientX, e.clientY, true);
+            lastTap = 0;
+          } else lastTap = now;
+        }
+      }
+    });
+    img.addEventListener('pointermove', (e) => {
+      if (!pts.has(e.pointerId)) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch && pts.size === 2) {
+        const [a, b] = [...pts.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        zoomAt(pinch.s * (d / pinch.d), (a.x + b.x) / 2, (a.y + b.y) / 2, false);
+        dragged = true;
+      } else if (pan && s > 1) {
+        const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+        if (Math.abs(dx) + Math.abs(dy) > 3) dragged = true;
+        tx = pan.tx + dx; ty = pan.ty + dy;
+        apply(false);
+      }
+    });
+    const end = (e) => {
+      pts.delete(e.pointerId);
+      if (pts.size < 2) pinch = null;
+      if (pts.size === 1) { const [p] = [...pts.values()]; pan = { x: p.x, y: p.y, tx, ty }; }
+      if (!pts.size) pan = null;
+    };
+    img.addEventListener('pointerup', end);
+    img.addEventListener('pointercancel', end);
+
+    const onKey = (e) => {
+      if (!document.body.contains(img)) { document.removeEventListener('keydown', onKey); return; }
+      if (e.key === '+' || e.key === '=') zoomAt(s * 1.5, null, null, true);
+      else if (e.key === '-' || e.key === '_') zoomAt(s / 1.5, null, null, true);
+      else if (e.key === '0') reset();
+    };
+    document.addEventListener('keydown', onKey);
+    apply(false);
+
+    return {
+      reset,
+      isZoomed: () => s > 1,
+      wasDragged: () => dragged,
+      destroy: () => document.removeEventListener('keydown', onKey),
+    };
+  }
+
+  function openLightbox(url) {
+    const box = el(`<div class="lightbox"><img alt="" /><button class="lb-close" title="Close">✕</button></div>`);
+    const img = box.querySelector('img');
+    img.src = url;
+    const zoom = attachZoom(img, box);
+    const close = () => { zoom.destroy(); box.remove(); document.removeEventListener('keydown', onKey); };
+    // A click on the dark backdrop closes — but not right after dragging/zooming.
+    box.addEventListener('click', (e) => {
+      if (e.target.classList.contains('lb-close')) return close();
+      if (e.target === box && !zoom.wasDragged()) close();
+    });
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    document.addEventListener('keydown', onKey);
     document.body.appendChild(box);
   }
 
@@ -4996,8 +5132,10 @@
     const count = box.querySelector('.ss-count');
     const playBtn = box.querySelector('.ss-play');
 
+    const zoom = attachZoom(img, box);
     const paint = () => {
       const it = items[i];
+      zoom.reset(); // each picture starts unzoomed
       img.src = it.url;
       cap.textContent = it.caption || '';
       cap.style.display = it.caption ? '' : 'none';
@@ -5023,13 +5161,14 @@
 
     const close = () => {
       stopAuto();
+      zoom.destroy();
       box.remove();
       document.removeEventListener('keydown', onKey);
     };
     function onKey(e) {
       if (e.key === 'Escape') close();
-      else if (e.key === 'ArrowRight') { stopAuto(); go(1); }
-      else if (e.key === 'ArrowLeft') { stopAuto(); go(-1); }
+      else if (e.key === 'ArrowRight' && !zoom.isZoomed()) { stopAuto(); go(1); }
+      else if (e.key === 'ArrowLeft' && !zoom.isZoomed()) { stopAuto(); go(-1); }
       else if (e.key === ' ') { e.preventDefault(); toggleAuto(); }
     }
 
@@ -5037,14 +5176,21 @@
     box.querySelector('.ss-prev').addEventListener('click', () => { stopAuto(); go(-1); });
     box.querySelector('.ss-next').addEventListener('click', () => { stopAuto(); go(1); });
     playBtn.addEventListener('click', toggleAuto);
-    box.addEventListener('click', (e) => { if (e.target === box || e.target.classList.contains('ss-stage')) close(); });
+    box.addEventListener('click', (e) => {
+      if ((e.target === box || e.target.classList.contains('ss-stage')) && !zoom.wasDragged()) close();
+    });
     document.addEventListener('keydown', onKey);
+    // Zooming in pauses the slideshow so the picture doesn't change under you.
+    img.addEventListener('wheel', () => stopAuto(), { passive: true });
+    img.addEventListener('pointerdown', () => stopAuto());
 
-    // Touch swipe to change slides.
+    // Touch swipe to change slides (one finger, only when not zoomed in).
     let sx = null;
-    box.querySelector('.ss-stage').addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; }, { passive: true });
+    box.querySelector('.ss-stage').addEventListener('touchstart', (e) => {
+      sx = e.touches.length === 1 && !zoom.isZoomed() ? e.touches[0].clientX : null;
+    }, { passive: true });
     box.querySelector('.ss-stage').addEventListener('touchend', (e) => {
-      if (sx == null) return;
+      if (sx == null || zoom.isZoomed()) { sx = null; return; }
       const dx = e.changedTouches[0].clientX - sx;
       if (Math.abs(dx) > 40) { stopAuto(); go(dx < 0 ? 1 : -1); }
       sx = null;
@@ -5096,6 +5242,7 @@
       </div>
     `);
     const mediaImg = box.querySelector('.pv-media img');
+    const zoom = attachZoom(mediaImg, box.querySelector('.pv-media'));
     const mediaVid = box.querySelector('.pv-media video');
     const countEl = box.querySelector('.pv-count');
 
@@ -5291,9 +5438,11 @@
       // Swipe on the image to page between photos.
       let sx = null;
       const media = box.querySelector('.pv-media');
-      media.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; }, { passive: true });
+      media.addEventListener('touchstart', (e) => {
+        sx = e.touches.length === 1 && !zoom.isZoomed() ? e.touches[0].clientX : null;
+      }, { passive: true });
       media.addEventListener('touchend', (e) => {
-        if (sx == null) return;
+        if (sx == null || zoom.isZoomed()) { sx = null; return; }
         const dx = e.changedTouches[0].clientX - sx;
         if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1);
         sx = null;
@@ -5328,6 +5477,7 @@
     function loadPhoto() {
       paintDetails();
       const isReel = photo.kind === 'reel';
+      box.querySelector('.pv-media').classList.toggle('pv-reel', isReel); // hides the zoom buttons
       mediaImg.classList.toggle('hidden', isReel);
       mediaVid.classList.toggle('hidden', !isReel);
       if (isReel) {
@@ -5338,6 +5488,7 @@
         mediaVid.pause();
         mediaVid.removeAttribute('src');
         mediaVid.load();
+        zoom.reset();
         mediaImg.src = photo.url;
       }
       countEl.textContent = multi ? `${idx + 1} / ${items.length}` : '';
@@ -6018,6 +6169,13 @@
 
     /* ----- misc wiring ----- */
 
+    // Tap the profile picture to see it full size (zoomable).
+    if (profile.avatar) {
+      const av = view.querySelector('.pro-avatar');
+      av.classList.add('clickable');
+      av.title = 'View full size';
+      av.addEventListener('click', () => openLightbox(avatarUrl(profile.avatar)));
+    }
     view.querySelector('#pvBack').addEventListener('click', () => {
       if (state.peer) openChat(state.peer);
       else { document.getElementById('shell').classList.remove('viewing-main'); main.innerHTML = ''; }
