@@ -707,6 +707,9 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .lightbox { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.88); display: grid; place-items: center; padding: 24px; animation: pvIn .18s ease both; }
 .lightbox img { max-width: 92vw; max-height: 88vh; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
 .lb-close { position: absolute; top: 18px; right: 22px; width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.1); color: #fff; font-size: 18px; z-index: 3; }
+.prompt-form { display: flex; flex-direction: column; gap: 8px; min-width: min(360px, 78vw); }
+.prompt-form .row-actions { margin-top: 6px; }
+.ask-body p { margin: 0 0 10px; line-height: 1.45; }
 
 /* Zoomable full-size images (lightbox, slideshow, gallery viewer). */
 img.zoomable { touch-action: none; cursor: zoom-in; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; will-change: transform; }
@@ -1553,7 +1556,7 @@ a.share-link:hover { text-decoration: underline; }
 .group-avatars img:last-child { margin-right: 0; }
 .bubble-author { font-size: 12px; font-weight: 700; color: var(--accent-2); margin-bottom: 2px; }
 
-.modal-overlay { position: fixed; inset: 0; background: rgba(6,8,12,.62); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: grid; place-items: center; padding: 20px; z-index: 50; animation: pvIn .18s ease both; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(6,8,12,.62); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: grid; place-items: center; padding: 20px; z-index: 1200; /* above viewers, the call screen and the cropper */ animation: pvIn .18s ease both; }
 .modal-card { width: 100%; max-width: 440px; background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); padding: 20px; max-height: 86vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .modal-head h3 { margin: 0; font-size: 18px; }
@@ -1616,7 +1619,7 @@ a.share-link:hover { text-decoration: underline; }
 .toast {
   position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
   background: var(--bg-3); border: 1px solid var(--border); color: var(--text);
-  padding: 10px 16px; border-radius: 999px; z-index: 999;
+  padding: 10px 16px; border-radius: 999px; z-index: 1300; /* above pop-ups */
   box-shadow: 0 6px 20px rgba(0, 0, 0, .4); font-size: 14px;
 }
 

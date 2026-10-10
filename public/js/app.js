@@ -261,6 +261,46 @@
     });
   }
 
+  /* In-app replacements for the browser's confirm() / prompt(). The browser's
+     own dialogs dim the whole page, and on some phones and in-app browsers the
+     page isn't redrawn after they close — it stays blurred or white until a
+     refresh. These are ordinary page elements, so that can't happen. */
+  function confirmBox(message, okLabel) {
+    const html = esc(message).replace(/\n/g, '<br>');
+    return askYesNo('Please confirm', `<p>${html}</p>`, okLabel || 'OK', 'Cancel');
+  }
+
+  // Every alert(...) in this file shows the in-app message box instead of the
+  // browser's (this declaration shadows window.alert inside the app).
+  function alert(message) {
+    return askYesNo('Notice', `<p>${esc(String(message == null ? '' : message)).replace(/\n/g, '<br>')}</p>`, 'OK', '');
+  }
+
+  // Resolves with the text entered (possibly ''), or null when cancelled.
+  function promptBox(title, label, value) {
+    return new Promise((resolve) => {
+      const { card, close } = openModal(title, `
+        <form class="prompt-form">
+          ${label ? `<label class="hint">${esc(label)}</label>` : ''}
+          <input type="text" class="prompt-input" maxlength="500" autocomplete="off" dir="auto" />
+          <div class="row-actions">
+            <button class="primary" type="submit">OK</button>
+            <button class="ghost" type="button" data-cancel>Cancel</button>
+          </div>
+        </form>`);
+      const input = card.querySelector('.prompt-input');
+      input.value = value || '';
+      let done = false;
+      const finish = (v) => { if (done) return; done = true; close(); resolve(v); };
+      card.querySelector('.prompt-form').addEventListener('submit', (e) => { e.preventDefault(); finish(input.value); });
+      card.querySelector('[data-cancel]').addEventListener('click', () => finish(null));
+      new MutationObserver((_m, obs) => {
+        if (!document.body.contains(card)) { obs.disconnect(); finish(null); }
+      }).observe(document.body, { childList: true });
+      setTimeout(() => { input.focus(); input.select(); }, 0);
+    });
+  }
+
   function canvasBlob(canvas, type, quality) {
     return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
   }
@@ -1638,20 +1678,20 @@
     reflectGroupCall(group.callCount || 0);
     const leaveBtn = view.querySelector('#groupLeaveBtn');
     if (leaveBtn) leaveBtn.addEventListener('click', async () => {
-      if (!confirm('Leave this group chat?')) return;
+      if (!(await confirmBox('Leave this group chat?', 'Leave'))) return;
       try { await api.post('/api/groups/' + gid + '/leave', {}); } catch (e) { return notify(e.message); }
       closeChatTab('g' + gid);
     });
     const renameBtn = view.querySelector('#groupRenameBtn');
     if (renameBtn) renameBtn.addEventListener('click', async () => {
-      const name = prompt('Group name (leave empty to use members\' names):', group.name);
+      const name = await promptBox('Rename group', 'Group name (leave empty to use members\' names):', group.name);
       if (name === null) return;
       try { await api.put('/api/groups/' + gid, { name: name.trim() }); } catch (e) { return notify(e.message); }
       openGroup(gid);
     });
     const deleteBtn = view.querySelector('#groupDeleteBtn');
     if (deleteBtn) deleteBtn.addEventListener('click', async () => {
-      if (!confirm('Delete this group chat for everyone? All its messages will be removed.')) return;
+      if (!(await confirmBox('Delete this group chat for everyone? All its messages will be removed.', 'Delete'))) return;
       try { await api.del('/api/groups/' + gid); } catch (e) { return notify(e.message); }
       closeChatTab('g' + gid);
       if (state.tab === 'chats') renderList();
@@ -5550,7 +5590,7 @@
           ? el('<button class="ghost following-btn" title="Unfollow">✓ Following</button>')
           : el('<button class="ghost" title="Free — they earn a point, and you see a preview of their profile and their updates on Recent Activity.">➕ Follow</button>');
         btn.addEventListener('click', async () => {
-          if (f.isFollowing && !confirm(`Unfollow ${profile.displayName || '@' + profile.username}?`)) return;
+          if (f.isFollowing && !(await confirmBox(`Unfollow ${profile.displayName || '@' + profile.username}?`, 'Unfollow'))) return;
           btn.disabled = true;
           try {
             const out = f.isFollowing
@@ -5628,7 +5668,7 @@
         const del = el('<button class="del" title="Delete GIF">✕</button>');
         del.addEventListener('click', async (ev) => {
           ev.stopPropagation();
-          if (!confirm('Delete this GIF?')) return;
+          if (!(await confirmBox('Delete this GIF?', 'Delete'))) return;
           try {
             await api.del('/api/profile/gifs/' + g.id);
             cell.remove();
@@ -5702,7 +5742,7 @@
       if (!picked) return;
       if (!/image\/gif/i.test(picked.type)) { alert('Please choose a GIF file.'); return; }
       if (!(await fitImageToLimit(picked))) return; // over 5 MB: explained, not added
-      const caption = (prompt('Add a short caption for this GIF (optional):', '') || '').trim().slice(0, 80);
+      const caption = ((await promptBox('Add a caption', 'A short caption for this GIF (optional):', '')) || '').trim().slice(0, 80);
       const fd = new FormData();
       fd.append('gif', picked);
       if (caption) fd.append('caption', caption);
@@ -5911,7 +5951,7 @@
         const del = el(`<button class="del" title="Delete ${isReel ? 'reel' : 'photo'}">✕</button>`);
         del.addEventListener('click', async (ev) => {
           ev.stopPropagation();
-          if (!confirm(isReel ? 'Delete this reel?' : 'Delete this photo?')) return;
+          if (!(await confirmBox(isReel ? 'Delete this reel?' : 'Delete this photo?', 'Delete'))) return;
           try { await api.del('/api/profile/gallery/' + ph.id); metaUpdaters.delete(ph.id); cell.remove(); updateCount(); syncGalSlideBtn(); }
           catch (e) { alert(e.message); }
         });
@@ -6030,7 +6070,7 @@
         const del = el('<button class="del" title="Remove picture">✕</button>');
         del.addEventListener('click', async (ev) => {
           ev.stopPropagation();
-          if (!confirm('Remove this picture from your buffer?')) return;
+          if (!(await confirmBox('Remove this picture from your buffer?', 'Remove'))) return;
           try { await api.del('/api/profile/buffer/' + ph.id); cell.remove(); updateBufCount(); refreshBufBtn(); }
           catch (e) { alert(e.message); }
         });
@@ -6202,7 +6242,7 @@
           if (navigator.share) { await navigator.share({ title: text, url: link }); return; }
         } catch (e) { if (e && e.name === 'AbortError') return; }
         try { await navigator.clipboard.writeText(link); notifyToast('Profile link copied — the QR opens it too.'); }
-        catch (_e) { prompt('Copy this profile link:', link); }
+        catch (_e) { promptBox('Copy link', 'Copy this profile link:', link); }
       });
     }
 
@@ -6215,7 +6255,7 @@
           catch (_e) { /* user cancelled or unsupported — fall back to copy */ }
         }
         try { await navigator.clipboard.writeText(link); notifyToast('Profile link copied to share'); }
-        catch (_e) { prompt('Copy this link to share:', link); }
+        catch (_e) { promptBox('Copy link', 'Copy this link to share:', link); }
       });
     }
     // Refer: same as Share, but the link invites someone to sign up with my code.
@@ -6229,7 +6269,7 @@
           catch (_e) { /* user cancelled or unsupported — fall back to copy */ }
         }
         try { await navigator.clipboard.writeText(link); notifyToast('Referral link copied to share'); }
-        catch (_e) { prompt('Copy this link to share:', link); }
+        catch (_e) { promptBox('Copy link', 'Copy this link to share:', link); }
       });
     }
     const chatBtn = view.querySelector('#pvChat');
@@ -6249,7 +6289,7 @@
     slot.innerHTML = '';
     const u = encodeURIComponent(profile.username);
     const act = async (fn, confirmMsg) => {
-      if (confirmMsg && !confirm(confirmMsg)) return;
+      if (confirmMsg && !(await confirmBox(confirmMsg, 'OK'))) return;
       try { await fn(); refreshRequestBadge(); refresh(); } catch (e) { alert(e.message); }
     };
     const b = profile.blocked || {};
@@ -6288,7 +6328,7 @@
     // Report — always available (except on yourself, which never reaches here).
     const rep = el('<button class="ghost small" title="Report this profile">🚩 Report</button>');
     rep.addEventListener('click', async () => {
-      const reason = prompt('Report @' + profile.username + '?\nOptionally add a reason:', '');
+      const reason = await promptBox('Report @' + profile.username, 'Optionally add a reason:', '');
       if (reason === null) return; // cancelled
       try {
         const res = await api.post('/api/social/report/' + u, { reason: reason || '' });
@@ -6310,7 +6350,7 @@
     const b = el(`<button class="primary small" title="Send a friend request${priced ? ` — if accepted it costs you ${fee} point${fee === 1 ? '' : 's'} and they earn ${fee * 2}` : ''}">🤝 Add friend${priced && fee ? ` · ${fee} pt${fee === 1 ? '' : 's'}` : ''}</button>`);
     b.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (priced && fee && !confirm(`Send a friend request? If they accept, it costs you ${fee} point${fee === 1 ? '' : 's'} and they earn ${fee * 2}.`)) return;
+      if (priced && fee && !(await confirmBox(`Send a friend request? If they accept, it costs you ${fee} point${fee === 1 ? '' : 's'} and they earn ${fee * 2}.`, 'Send request'))) return;
       b.disabled = true;
       try {
         const out = await api.post('/api/social/friend/' + u, {});
@@ -6553,7 +6593,7 @@
       del.addEventListener('click', async (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        if (!confirm('Delete this post?')) return;
+        if (!(await confirmBox('Delete this post?', 'Delete'))) return;
         del.disabled = true;
         try { await api.del('/api/highway/' + p.id); }
         catch (e) { del.disabled = false; return notifyToast(e.message); }
