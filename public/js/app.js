@@ -867,10 +867,13 @@
           <div class="hint">When on, other people can't find you by searching or browsing. Your existing friends and chats are unaffected.</div>
         </div>
 
-        <div class="msg" id="pMsg"></div>
-        <div class="row-actions">
-          <button class="primary" id="saveProfile" type="button">${firstTime ? 'Create profile' : 'Save'}</button>
-          ${firstTime ? '' : '<button class="ghost" id="backBtn" type="button">Cancel</button>'}
+        <!-- Stays pinned to the bottom of the screen while the long form scrolls. -->
+        <div class="profile-save-bar">
+          <div class="msg" id="pMsg"></div>
+          <div class="row-actions">
+            <button class="primary" id="saveProfile" type="button">${firstTime ? 'Create profile' : 'Save'}</button>
+            ${firstTime ? '' : '<button class="ghost" id="backBtn" type="button">Cancel</button>'}
+          </div>
         </div>
       </div></div>
     `);

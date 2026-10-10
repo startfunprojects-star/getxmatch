@@ -510,6 +510,15 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .avatar-picker { display: flex; align-items: center; gap: 16px; }
 .hint { color: var(--muted); font-size: 13px; }
 .row-actions { display: flex; gap: 10px; margin-top: 18px; }
+/* Edit profile: Save / Cancel always in reach while the long form scrolls. */
+.profile-save-bar {
+  position: sticky; bottom: 0; z-index: 5;
+  margin: 18px -4px 0; padding: 10px 4px 12px;
+  background: var(--bg-2); border-top: 1px solid var(--border);
+  box-shadow: 0 -8px 16px -10px rgba(0, 0, 0, .25);
+}
+.profile-save-bar .row-actions { margin-top: 0; }
+.profile-save-bar .msg:empty { display: none; }
 .bio { color: var(--text); white-space: pre-wrap; margin: 12px 0 20px; }
 .section-title { margin: 26px 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 
