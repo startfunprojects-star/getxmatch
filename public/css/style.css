@@ -1702,10 +1702,9 @@ a.share-link:hover { text-decoration: underline; }
 
 .screen-panel {
   position: fixed; right: 20px; bottom: 20px; z-index: 900;
-  width: min(520px, 92vw); background: var(--bg-2);
+  width: min(480px, 92vw); background: var(--bg-2);
   border: 1px solid var(--border-strong); border-radius: 14px; overflow: hidden;
   box-shadow: 0 16px 44px rgba(0, 0, 0, .55);
-  resize: both; min-width: 260px; min-height: 190px; max-width: 96vw; max-height: 88vh;
 }
 .screen-panel.hidden { display: none; }
 .screen-panel-head {
@@ -1726,12 +1725,23 @@ a.share-link:hover { text-decoration: underline; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .screen-actions { display: flex; gap: 4px; flex: 0 0 auto; }
-.screen-panel video {
-  display: block; width: 100%; height: calc(100% - 39px);
-  background: #000; object-fit: contain;
+/* Fixed 16:9 frame; the shared tab is fitted inside it, so the window never
+   changes size when the stream's resolution or shape changes. */
+.screen-stage { position: relative; aspect-ratio: 16 / 9; background: #000; }
+.screen-stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+/* Corner grip: resize (keeps 16:9). */
+.screen-resize {
+  position: absolute; right: 0; bottom: 0; width: 22px; height: 22px; z-index: 2;
+  cursor: nwse-resize; touch-action: none;
+  background:
+    linear-gradient(135deg, transparent 0 55%, rgba(255, 255, 255, .55) 55% 62%, transparent 62% 72%,
+      rgba(255, 255, 255, .55) 72% 79%, transparent 79%);
 }
+.screen-panel.resizing { user-select: none; }
+.screen-panel.resizing video { pointer-events: none; }
 @media (max-width: 560px) {
   .screen-panel { right: 8px; left: 8px; bottom: 8px; width: auto; }
+  .screen-resize { width: 30px; height: 30px; } /* easier to grab with a finger */
 }
 
 /* ============================================================

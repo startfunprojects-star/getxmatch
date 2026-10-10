@@ -3752,10 +3752,12 @@
             <button class="icon-btn small" id="screenCloseBtn" title="Stop">✕</button>
           </div>
         </div>
-        <video id="screenVideo" autoplay playsinline></video>
+        <div class="screen-stage"><video id="screenVideo" autoplay playsinline></video></div>
+        <div class="screen-resize" title="Drag to resize"></div>
       </div>`);
     document.body.appendChild(panel);
     makeDraggable(panel, { onMove: (x, y) => { state.screenPanelPos = { x, y }; } });
+    makeScreenPanelResizable(panel);
     panel.querySelector('#screenCloseBtn').addEventListener('click', () => stopScreenShare());
     panel.querySelector('#screenFsBtn').addEventListener('click', () => {
       const v = panel.querySelector('#screenVideo');
@@ -3764,12 +3766,59 @@
     return panel;
   }
 
+  /* The screen-share window keeps a steady 16:9 frame: the shared tab is fitted
+     inside it (dark bars when its shape differs), so the window never jumps
+     around as the stream's resolution or the sharer's tab size changes. It's
+     resized only from the corner grip, which keeps the 16:9 shape and stays on
+     screen. */
+  const SCREEN_PANEL_MIN = 280;
+  function clampScreenPanelWidth(w) {
+    if (!window.innerWidth || !window.innerHeight) return Math.max(SCREEN_PANEL_MIN, w);
+    const head = 40; // title bar height
+    const maxByHeight = (window.innerHeight * 0.88 - head) * 16 / 9;
+    const max = Math.max(SCREEN_PANEL_MIN, Math.min(window.innerWidth - 16, maxByHeight));
+    return Math.round(Math.min(max, Math.max(SCREEN_PANEL_MIN, w)));
+  }
+
+  function makeScreenPanelResizable(panel) {
+    const grip = panel.querySelector('.screen-resize');
+    let rs = null;
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Anchor the top-left corner so the window grows towards the grip.
+      const r = panel.getBoundingClientRect();
+      placeFloating(panel, r.left, r.top);
+      rs = { id: e.pointerId, x: e.clientX, w: r.width, left: r.left };
+      try { grip.setPointerCapture(e.pointerId); } catch (_e) {}
+      panel.classList.add('resizing');
+    });
+    grip.addEventListener('pointermove', (e) => {
+      if (!rs || e.pointerId !== rs.id) return;
+      const room = window.innerWidth - rs.left - 8; // don't grow past the right edge
+      const w = Math.min(room, clampScreenPanelWidth(rs.w + (e.clientX - rs.x)));
+      panel.style.width = Math.max(SCREEN_PANEL_MIN, w) + 'px';
+      state.screenPanelWidth = panel.offsetWidth;
+      const r = panel.getBoundingClientRect();
+      const pos = placeFloating(panel, r.left, r.top); // keep the bottom on screen too
+      state.screenPanelPos = pos;
+    });
+    const end = (e) => {
+      if (!rs || e.pointerId !== rs.id) return;
+      rs = null;
+      panel.classList.remove('resizing');
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  }
+
   function showScreenPanel(title) {
     const panel = screenPanel();
-    // Re-open where it was last dragged to (kept on screen).
-    if (state.screenPanelPos && panel.classList.contains('hidden')) {
+    // Re-open at the size and place it was last given (kept on screen).
+    if (panel.classList.contains('hidden')) {
       panel.classList.remove('hidden');
-      placeFloating(panel, state.screenPanelPos.x, state.screenPanelPos.y);
+      if (state.screenPanelWidth) panel.style.width = clampScreenPanelWidth(state.screenPanelWidth) + 'px';
+      if (state.screenPanelPos) placeFloating(panel, state.screenPanelPos.x, state.screenPanelPos.y);
     }
     panel.querySelector('#screenTitle').textContent = title;
     panel.classList.remove('hidden');
@@ -4336,6 +4385,8 @@
      opts.active() says whether it may be dragged right now; opts.onMove(x, y)
      remembers where it was left. */
   function placeFloating(panel, x, y) {
+    // A minimized/hidden browser window measures 0×0 — don't squash the window then.
+    if (!window.innerWidth || !window.innerHeight) return { x, y };
     const w = panel.offsetWidth, h = panel.offsetHeight;
     x = Math.min(Math.max(0, window.innerWidth - w), Math.max(0, x));
     y = Math.min(Math.max(0, window.innerHeight - h), Math.max(0, y));
@@ -4361,7 +4412,7 @@
     panel.classList.add('draggable');
     panel.addEventListener('pointerdown', (e) => {
       if (!active() || e.button > 0) return;
-      if (e.target.closest('button, input, textarea, select, a, form, .zoom-ctl')) return;
+      if (e.target.closest('button, input, textarea, select, a, form, .zoom-ctl, .screen-resize')) return;
       const r = panel.getBoundingClientRect();
       // The bottom-right corner of a resizable window resizes it instead.
       if (getComputedStyle(panel).resize !== 'none' && e.clientX > r.right - 22 && e.clientY > r.bottom - 22) return;
