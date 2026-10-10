@@ -194,10 +194,11 @@ function notifyHighwayEvent(event) {
 }
 
 // Tell the given users that a group they're in changed (created, invited,
-// joined, left) so their UI can refetch. Used by the groups HTTP routes.
-function notifyGroup(userIds, groupId) {
+// joined, left, renamed, deleted) so their UI can refetch. Used by the groups
+// HTTP routes; `extra` carries flags such as { deleted: true }.
+function notifyGroup(userIds, groupId, extra) {
   if (!ioRef || !Array.isArray(userIds)) return;
-  userIds.forEach((uid) => ioRef.to(`user:${uid}`).emit('group:changed', { groupId }));
+  userIds.forEach((uid) => ioRef.to(`user:${uid}`).emit('group:changed', { groupId, ...(extra || {}) }));
 }
 
 // Emit an event to every socket of a single user (all their open tabs). Used by

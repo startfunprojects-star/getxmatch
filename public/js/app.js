@@ -1393,6 +1393,8 @@
       return `<label class="pick-row"><input type="checkbox" value="${esc(f.username)}"${pre ? ' checked' : ''}/> <img class="avatar sm" src="${avatarUrl(f.avatar)}"/> <span>${esc(f.displayName || f.username)}</span></label>`;
     }).join('');
     const { card, close } = openModal('New group chat', `
+      <label class="hint" for="gcName">Group name (optional)</label>
+      <input type="text" id="gcName" maxlength="60" placeholder="e.g. Weekend plans" autocomplete="off" dir="auto" />
       <p class="hint">Pick up to 3 people to add (4 in the group, including you). They'll get an invite and join once they accept.</p>
       <div class="pick-list">${rows || '<div class="hint">You have no connections yet. Add friends first.</div>'}</div>
       <div class="msg" id="gcMsg"></div>
@@ -1405,7 +1407,8 @@
       if (!invite.length) { msg.className = 'msg error'; msg.textContent = 'Pick at least one person.'; return; }
       if (invite.length > 3) { msg.className = 'msg error'; msg.textContent = 'A group can have at most 4 people (pick up to 3).'; return; }
       try {
-        const { group } = await api.post('/api/groups', { invite });
+        const name = card.querySelector('#gcName').value.trim();
+        const { group } = await api.post('/api/groups', { name, invite });
         close();
         openGroup(group.id);
       } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
@@ -1457,6 +1460,7 @@
 
     const joined = group.members.filter((m) => m.status === 'joined');
     const pending = group.members.filter((m) => m.status === 'invited');
+    const isOwner = !!(state.me && group.createdBy === state.me.id);
     const main = document.getElementById('main');
     main.innerHTML = '';
     const view = el(`
@@ -1470,7 +1474,10 @@
             <div class="status">${joined.length}/${group.max} member${joined.length === 1 ? '' : 's'}${pending.length ? ` · ${pending.length} invited` : ''}</div>
           </div>
           <button class="ghost small" id="groupAddBtn" title="Add someone">＋ Add</button>
-          <button class="ghost small" id="groupLeaveBtn" title="Leave this group">Leave</button>
+          ${isOwner ? '<button class="ghost small" id="groupRenameBtn" title="Rename this group">✎ Rename</button>' : ''}
+          ${isOwner
+            ? '<button class="ghost small" id="groupDeleteBtn" title="Delete this group for everyone">Delete</button>'
+            : '<button class="ghost small" id="groupLeaveBtn" title="Leave this group">Leave</button>'}
         </div>
         <div class="chat-body" id="chatBody"></div>
         <div class="composer-preview hidden" id="composerPreview"></div>
@@ -1496,10 +1503,25 @@
       state.group = null;
     });
     view.querySelector('#groupAddBtn').addEventListener('click', () => openGroupAdder(state.group));
-    view.querySelector('#groupLeaveBtn').addEventListener('click', async () => {
+    const leaveBtn = view.querySelector('#groupLeaveBtn');
+    if (leaveBtn) leaveBtn.addEventListener('click', async () => {
       if (!confirm('Leave this group chat?')) return;
       try { await api.post('/api/groups/' + gid + '/leave', {}); } catch (e) { return notify(e.message); }
       closeChatTab('g' + gid);
+    });
+    const renameBtn = view.querySelector('#groupRenameBtn');
+    if (renameBtn) renameBtn.addEventListener('click', async () => {
+      const name = prompt('Group name (leave empty to use members\' names):', group.name);
+      if (name === null) return;
+      try { await api.put('/api/groups/' + gid, { name: name.trim() }); } catch (e) { return notify(e.message); }
+      openGroup(gid);
+    });
+    const deleteBtn = view.querySelector('#groupDeleteBtn');
+    if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+      if (!confirm('Delete this group chat for everyone? All its messages will be removed.')) return;
+      try { await api.del('/api/groups/' + gid); } catch (e) { return notify(e.message); }
+      closeChatTab('g' + gid);
+      if (state.tab === 'chats') renderList();
     });
 
     const input = view.querySelector('#msgInput');
@@ -3382,9 +3404,15 @@
     s.on('poll:update', (e) => { if (e && e.poll) updatePollCard(e.poll); });
     s.on('quiz:update', (e) => { if (e && e.quiz) updateQuizCard(e.quiz); });
 
-    // A group I'm in changed (created / invited / joined / left).
-    s.on('group:changed', ({ groupId }) => {
-      if (state.group && state.group.gid === groupId) openGroup(groupId); // refresh header/members
+    // A group I'm in changed (created / invited / joined / left / renamed / deleted).
+    s.on('group:changed', ({ groupId, deleted }) => {
+      if (deleted) {
+        const tabId = 'g' + groupId;
+        if (state.openChats.some((p) => p.id === tabId)) {
+          if (state.group && state.group.gid === groupId) notify('This group chat was deleted by its creator.');
+          closeChatTab(tabId);
+        }
+      } else if (state.group && state.group.gid === groupId) openGroup(groupId); // refresh header/members
       if (state.tab === 'chats') renderList();
       refreshRequestBadge(); // blinks "Requests" if a new invite raised the count
     });

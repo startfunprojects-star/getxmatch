@@ -229,4 +229,33 @@ router.post('/:id/leave', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// PUT /api/groups/:id  { name } — rename a group (its creator only). An empty
+// name falls back to the auto-generated members' names.
+router.put('/:id', requireAuth, (req, res) => {
+  const me = req.user.id;
+  const gid = parseInt(req.params.id, 10);
+  const g = db.prepare('SELECT created_by FROM chat_groups WHERE id = ?').get(gid);
+  if (!g || myStatus(gid, me) !== 'joined') return res.status(404).json({ error: 'You are not in this group.' });
+  if (g.created_by !== me) return res.status(403).json({ error: 'Only the person who created this group can rename it.' });
+  const name = String((req.body && req.body.name) || '').trim().slice(0, 60) || null;
+  db.prepare('UPDATE chat_groups SET name = ? WHERE id = ?').run(name, gid);
+  notifyGroup(memberIds(gid), gid);
+  res.json({ group: serializeGroup(gid, me) });
+});
+
+// DELETE /api/groups/:id — delete a group chat for everyone (its creator only).
+// Members, messages and their polls all go with it.
+router.delete('/:id', requireAuth, (req, res) => {
+  const me = req.user.id;
+  const gid = parseInt(req.params.id, 10);
+  const g = db.prepare('SELECT created_by FROM chat_groups WHERE id = ?').get(gid);
+  if (!g || !myStatus(gid, me)) return res.status(404).json({ error: 'You are not in this group.' });
+  if (g.created_by !== me) return res.status(403).json({ error: 'Only the person who created this group can delete it.' });
+  const everyone = memberIds(gid);
+  db.prepare("DELETE FROM chat_polls WHERE scope = 'group' AND group_id = ?").run(gid);
+  db.prepare('DELETE FROM chat_groups WHERE id = ?').run(gid); // cascades members + messages
+  notifyGroup(everyone, gid, { deleted: true });
+  res.json({ ok: true });
+});
+
 module.exports = router;
