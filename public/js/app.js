@@ -4315,11 +4315,85 @@
       e.preventDefault();
       sendCallChat();
     });
-    panel.querySelector('#callMinBtn').addEventListener('click', () => panel.classList.toggle('min'));
+    panel.querySelector('#callMinBtn').addEventListener('click', () => setCallMinimized(!panel.classList.contains('min')));
+    makeCallPanelDraggable(panel, call);
     panel.querySelector('#callFsBtn').addEventListener('click', () => {
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       else if (panel.requestFullscreen) panel.requestFullscreen().catch(() => {});
     });
+  }
+
+  /* ----- minimized call window: drag it anywhere -----
+     While minimized, the small window can be dragged by any part that isn't a
+     button (mouse or finger). It stays fully on screen — also when the browser
+     window is resized — and remembers where it was for the next minimize. */
+  function setCallMinimized(on) {
+    const call = state.call;
+    const panel = document.getElementById('callPanel');
+    if (!call || !panel) return;
+    panel.classList.toggle('min', on);
+    if (on && call.minPos) placeCallPanel(panel, call.minPos.x, call.minPos.y);
+    else clearCallPanelPos(panel);
+  }
+
+  function clearCallPanelPos(panel) {
+    ['left', 'top', 'right', 'bottom', 'width'].forEach((k) => { panel.style[k] = ''; });
+    panel.classList.remove('moved');
+  }
+
+  // Put the minimized window's top-left corner at (x, y), kept on screen.
+  function placeCallPanel(panel, x, y) {
+    const w = panel.offsetWidth, h = panel.offsetHeight;
+    const maxX = Math.max(0, window.innerWidth - w), maxY = Math.max(0, window.innerHeight - h);
+    x = Math.min(maxX, Math.max(0, x));
+    y = Math.min(maxY, Math.max(0, y));
+    panel.style.width = w + 'px'; // phones stretch it edge to edge; freeze that width while it floats
+    panel.style.left = x + 'px';
+    panel.style.top = y + 'px';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    panel.classList.add('moved');
+    if (state.call) state.call.minPos = { x, y };
+  }
+
+  function makeCallPanelDraggable(panel, call) {
+    let drag = null;
+    panel.addEventListener('pointerdown', (e) => {
+      if (!panel.classList.contains('min') || e.button > 0) return;
+      if (e.target.closest('button, input, textarea, select, a, form, .zoom-ctl')) return;
+      const r = panel.getBoundingClientRect();
+      drag = { id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY, moving: false };
+    });
+    window.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      // A small threshold so a tap/click on the window still works as a click.
+      if (!drag.moving && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 5) return;
+      if (!drag.moving) {
+        drag.moving = true;
+        panel.classList.add('dragging');
+        try { panel.setPointerCapture(drag.id); } catch (_e) {}
+      }
+      e.preventDefault();
+      placeCallPanel(panel, e.clientX - drag.dx, e.clientY - drag.dy);
+    });
+    const end = (e) => {
+      if (!drag || (e && e.pointerId !== drag.id)) return;
+      panel.classList.remove('dragging');
+      drag = null;
+    };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    // Keep it on screen when the browser window changes size or rotates.
+    const onResize = () => {
+      if (!document.body.contains(panel)) return window.removeEventListener('resize', onResize);
+      if (panel.classList.contains('min') && panel.classList.contains('moved')) {
+        // Keep its size (narrowing only if the screen got smaller), then pull it back on screen.
+        panel.style.width = Math.min(panel.offsetWidth, window.innerWidth - 16) + 'px';
+        const r = panel.getBoundingClientRect();
+        placeCallPanel(panel, r.left, r.top);
+      }
+    };
+    window.addEventListener('resize', onResize);
   }
 
   /* ----- screen sharing inside a call -----
@@ -4403,7 +4477,7 @@
     panel.classList.toggle('chat-open', isOpen);
     panel.querySelector('#callChatBtn').classList.toggle('active', isOpen);
     if (isOpen) {
-      panel.classList.remove('min');
+      setCallMinimized(false);
       call.chatUnread = 0;
       setCallChatBadge();
       setTimeout(() => panel.querySelector('#callChatInput').focus(), 0);
