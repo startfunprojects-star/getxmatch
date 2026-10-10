@@ -1619,6 +1619,7 @@
     catch (e) { return notify(e.message); }
     try { const r = await api.get('/api/groups/' + gid + '/messages'); messages = r.messages || []; } catch (_e) {}
 
+    cancelVoiceRecorder();
     state.peer = null;
     state.group = { gid, name: group.name, members: group.members, max: group.max };
     closeReactionPalette();
@@ -1650,6 +1651,7 @@
         <div class="chat-body" id="chatBody"></div>
         <div class="gift-picker hidden" id="giftPicker"></div>
         <div class="reply-banner hidden" id="replyBanner"></div>
+        <div class="voice-recorder hidden" id="voiceRecorder"></div>
         <div class="composer-preview hidden" id="composerPreview"></div>
         <div class="composer">
           <input type="file" id="fileInput" class="hidden" />
@@ -1657,6 +1659,7 @@
           <button class="icon-btn" id="giftBtn" title="Send the group a gift">🎁</button>
           <button class="icon-btn" id="pollBtn" title="Create a poll">📊</button>
           <button class="icon-btn" id="quizBtn" title="Take a quiz together">🧩</button>
+          <button class="icon-btn" id="voiceBtn" title="Record a voice note">🎤</button>
           <input type="text" id="msgInput" placeholder="Message the group…" autocomplete="off" dir="auto" />
           <button class="primary" id="sendBtn">Send</button>
         </div>
@@ -1708,6 +1711,7 @@
     // Poll builder, quiz picker, gifts and files — same tools as a 1:1 chat.
     view.querySelector('#pollBtn').addEventListener('click', () => openPollBuilder({ groupId: gid }));
     view.querySelector('#quizBtn').addEventListener('click', () => openQuizPicker({ groupId: gid }));
+    view.querySelector('#voiceBtn').addEventListener('click', () => startVoiceRecorder({ groupId: gid }));
     const fileInput = view.querySelector('#fileInput');
     view.querySelector('#attachBtn').addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', () => {
@@ -1760,6 +1764,7 @@
     if (m.kind === 'poll') return appendPollBubble(m);
     if (m.kind === 'quiz') return appendQuizBubble(m);
     if (m.kind === 'gift') return appendGiftBubble(m);
+    if (m.kind === 'voice') return isVoiceBody(m.body) ? appendVoiceBubble(m) : undefined;
     const narration = narrationText(m.body);
     if (narration != null) {
       return appendNarrationLine(narration, m.at, { author: m.mine ? 'You' : m.fromName });
@@ -1796,6 +1801,7 @@
     const main = document.getElementById('main');
     if (!main) return;
     state.peer = null;
+    cancelVoiceRecorder();
     closeReactionPalette();
     resetAvatars(); // stop the in-chat picture rotation
     if (focusMain) document.getElementById('shell').classList.add('viewing-main');
@@ -2080,6 +2086,7 @@
     state.peer = peer;
     state.group = null; // leaving any group view
     state.replyTo = null; // clear any half-composed reply from a previous chat
+    cancelVoiceRecorder(); // a recording never follows you into another chat
     closeReactionPalette();
     state.chatPeers[peer.id] = peer;
     delete state.unread[peer.id];
@@ -2121,6 +2128,7 @@
         <div class="typing hidden" id="typing">typing…</div>
         <div class="gift-picker hidden" id="giftPicker"></div>
         <div class="reply-banner hidden" id="replyBanner"></div>
+        <div class="voice-recorder hidden" id="voiceRecorder"></div>
         <div class="composer-preview hidden" id="composerPreview"></div>
         <div class="composer">
           <input type="file" id="fileInput" class="hidden" />
@@ -2128,6 +2136,7 @@
           <button class="icon-btn" id="giftBtn" title="Send a gift">🎁</button>
           <button class="icon-btn" id="pollBtn" title="Create a poll">📊</button>
           <button class="icon-btn" id="quizBtn" title="Take a quiz together">🧩</button>
+          <button class="icon-btn" id="voiceBtn" title="Record a voice note">🎤</button>
           <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" dir="auto" />
           <button class="primary" id="sendBtn">Send</button>
         </div>
@@ -2179,6 +2188,7 @@
     view.querySelector('#pollBtn').addEventListener('click', () => openPollBuilder({ to: peer.id }));
     // Quiz picker — start a quiz to attempt together.
     view.querySelector('#quizBtn').addEventListener('click', () => openQuizPicker(peer.id));
+    view.querySelector('#voiceBtn').addEventListener('click', () => startVoiceRecorder({ to: peer.id }));
 
     await loadChatHistory(view, peer);
   }
@@ -2246,7 +2256,7 @@
   // Replace a conversation's composer (and its share / group / activity
   // controls) with a "friends only" notice and a way to their profile.
   function lockChatComposer(view, peer) {
-    ['.composer', '#activityBar', '#callBtn', '#screenShareBtn', '#makeGroupBtn', '#giftPicker'].forEach((sel) => {
+    ['.composer', '#activityBar', '#callBtn', '#screenShareBtn', '#makeGroupBtn', '#giftPicker', '#voiceRecorder'].forEach((sel) => {
       const n = view.querySelector(sel);
       if (n) n.remove();
     });
@@ -2699,7 +2709,7 @@
     else if (m.kind === 'poll') appendPollBubble(m);
     else if (m.kind === 'quiz') appendQuizBubble(m);
     else if (m.kind === 'hwevent') appendHighwayEventBubble(m);
-    else if (m.kind === 'voice') return; // legacy voice notes (feature removed)
+    else if (m.kind === 'voice') { if (isVoiceBody(m.body)) appendVoiceBubble(m); else return; } // old-style notes are skipped
     else appendTextBubble(m);
     // Advertisement after every 20 exchanged messages (text + gifts).
     if (m.kind !== 'voice' && m.kind !== 'poll' && m.kind !== 'quiz' && m.kind !== 'hwevent') {
@@ -3073,6 +3083,247 @@
     renderQuizInner(card);
   }
 
+  /* ---------- voice notes (1:1 and group) ----------
+     Recorded with the browser's own MediaRecorder (Opus/WebM on Chrome, Firefox
+     and Android; AAC/MP4 on Safari and iPhone) with echo cancellation and noise
+     suppression, then uploaded. The server converts every note to AAC .m4a —
+     the one format every browser plays — and evens out the volume, so a note
+     recorded anywhere plays everywhere. Playback streams from /api/voice/:id,
+     which only the people in that conversation can open. */
+  const VOICE_MAX_SECONDS = 300;
+  let voiceRec = null; // the recording in progress
+
+  function isVoiceBody(body) {
+    return typeof body === 'string' && body.charAt(0) === '{' && body.indexOf('voiceId') > -1;
+  }
+  function voiceInfo(body) {
+    try { return JSON.parse(body) || {}; } catch (_e) { return {}; }
+  }
+  function fmtClock(sec) {
+    sec = Math.max(0, Math.round(sec || 0));
+    return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+  }
+  function voiceLabel(body) {
+    const d = voiceInfo(body).dur;
+    return d ? `🎤 Voice note (${fmtClock(d)})` : '🎤 Voice note';
+  }
+
+  function pickRecorderType() {
+    const types = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/aac'];
+    if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
+    return types.find((t) => MediaRecorder.isTypeSupported(t)) || '';
+  }
+
+  // target: { to } for a 1:1 chat or { groupId } for a group chat.
+  async function startVoiceRecorder(target) {
+    if (voiceRec) return;
+    const bar = document.getElementById('voiceRecorder');
+    if (!bar) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+      return alert('Voice notes aren’t supported in this browser. Try Chrome, Edge, Firefox or Safari.');
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      });
+    } catch (_e) {
+      return alert('Allow microphone access to record a voice note.');
+    }
+    const type = pickRecorderType();
+    let recorder;
+    try { recorder = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 64000 } : undefined); }
+    catch (_e) { recorder = new MediaRecorder(stream); }
+
+    const rec = { target, stream, recorder, chunks: [], started: Date.now(), cancelled: false, replyTo: state.replyTo && !state.replyTo.file ? state.replyTo.id : null };
+    recorder.addEventListener('dataavailable', (e) => { if (e.data && e.data.size) rec.chunks.push(e.data); });
+    try { recorder.start(250); }
+    catch (_e) {
+      stream.getTracks().forEach((t) => t.stop());
+      return alert('Couldn’t start recording. Check that no other app is using the microphone and try again.');
+    }
+    voiceRec = rec;
+
+    // Recording bar: pulsing dot, timer, live level meter, cancel and send.
+    bar.innerHTML = `
+      <button type="button" class="vr-btn vr-cancel" title="Discard">🗑</button>
+      <span class="vr-dot"></span>
+      <span class="vr-time">0:00</span>
+      <canvas class="vr-level" width="240" height="32"></canvas>
+      <span class="vr-hint">Recording… tap ➤ to send</span>
+      <button type="button" class="vr-btn vr-send" title="Send voice note">➤</button>`;
+    bar.classList.remove('hidden');
+    const composer = bar.parentNode.querySelector('.composer');
+    if (composer) composer.classList.add('hidden');
+    bar.querySelector('.vr-cancel').addEventListener('click', () => stopVoiceRecorder(false));
+    bar.querySelector('.vr-send').addEventListener('click', () => stopVoiceRecorder(true));
+
+    // Level meter (display only — the recording itself comes from MediaRecorder).
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      rec.audioCtx = new AC();
+      const src = rec.audioCtx.createMediaStreamSource(stream);
+      const an = rec.audioCtx.createAnalyser();
+      an.fftSize = 512;
+      src.connect(an);
+      const data = new Uint8Array(an.fftSize);
+      const canvas = bar.querySelector('.vr-level');
+      const g = canvas.getContext('2d');
+      const levels = [];
+      const draw = () => {
+        if (voiceRec !== rec) return;
+        an.getByteTimeDomainData(data);
+        let peak = 0;
+        for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i] - 128));
+        levels.push(Math.min(1, peak / 70));
+        if (levels.length > 60) levels.shift();
+        g.clearRect(0, 0, canvas.width, canvas.height);
+        g.fillStyle = getComputedStyle(bar).getPropertyValue('--vr-wave') || '#1f4e8c';
+        levels.forEach((l, i) => {
+          const h = Math.max(2, l * canvas.height);
+          g.fillRect(i * 4, (canvas.height - h) / 2, 2.5, h);
+        });
+        rec.raf = requestAnimationFrame(draw);
+      };
+      draw();
+    } catch (_e) { /* no meter, recording still works */ }
+
+    rec.timer = setInterval(() => {
+      const secs = (Date.now() - rec.started) / 1000;
+      const t = bar.querySelector('.vr-time');
+      if (t) t.textContent = fmtClock(secs);
+      if (secs >= VOICE_MAX_SECONDS) stopVoiceRecorder(true); // 5-minute cap: send what we have
+    }, 250);
+  }
+
+  function closeVoiceBar() {
+    const bar = document.getElementById('voiceRecorder');
+    if (!bar) return;
+    bar.classList.add('hidden');
+    bar.innerHTML = '';
+    const composer = bar.parentNode && bar.parentNode.querySelector('.composer');
+    if (composer) composer.classList.remove('hidden');
+  }
+
+  // Stop recording; `send` uploads it, otherwise it's thrown away.
+  function stopVoiceRecorder(send) {
+    const rec = voiceRec;
+    if (!rec) return;
+    voiceRec = null;
+    clearInterval(rec.timer);
+    if (rec.raf) cancelAnimationFrame(rec.raf);
+    try { if (rec.audioCtx) rec.audioCtx.close(); } catch (_e) {}
+    const secs = (Date.now() - rec.started) / 1000;
+    rec.recorder.addEventListener('stop', async () => {
+      rec.stream.getTracks().forEach((t) => t.stop());
+      if (!send) return closeVoiceBar();
+      if (secs < 0.7) { closeVoiceBar(); return notifyToast('Hold on a little longer to record a voice note.'); }
+      const bar = document.getElementById('voiceRecorder');
+      if (bar) bar.innerHTML = '<span class="vr-dot sending"></span><span class="vr-hint">Sending voice note…</span>';
+      const mime = rec.recorder.mimeType || (rec.chunks[0] && rec.chunks[0].type) || 'audio/webm';
+      const ext = /mp4|aac/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : 'webm';
+      const fd = new FormData();
+      fd.append('audio', new Blob(rec.chunks, { type: mime.split(';')[0] }), 'voice.' + ext);
+      if (rec.target.to) fd.append('to', String(rec.target.to));
+      if (rec.target.groupId) fd.append('groupId', String(rec.target.groupId));
+      if (rec.replyTo) fd.append('replyTo', String(rec.replyTo));
+      try {
+        await api.postForm('/api/voice', fd);
+        if (rec.replyTo) cancelReply();
+        // The note arrives on every tab (this one too) as a chat message.
+      } catch (e) {
+        notify(e.message || 'Could not send the voice note.');
+      }
+      closeVoiceBar();
+    }, { once: true });
+    try { rec.recorder.stop(); } catch (_e) { rec.stream.getTracks().forEach((t) => t.stop()); closeVoiceBar(); }
+  }
+
+  // Leaving a chat while recording throws the recording away.
+  function cancelVoiceRecorder() { stopVoiceRecorder(false); }
+
+  // A voice-note bubble: play/pause, a seekable progress bar, time, and speed.
+  function appendVoiceBubble(m) {
+    const b = chatBody();
+    if (!b) return;
+    const info = voiceInfo(m.body);
+    const bubble = el(`<div class="bubble voice ${m.mine ? 'me' : 'them'}"></div>`);
+    if (m.id) bubble.dataset.id = m.id;
+    if (m.groupId != null && !m.mine && m.fromName) bubble.appendChild(el(`<div class="bubble-author">${esc(m.fromName)}</div>`));
+    if (m.reply) bubble.appendChild(renderQuote(m.reply));
+    const player = el(`
+      <div class="voice-note">
+        <button type="button" class="vn-play" title="Play">▶</button>
+        <div class="vn-track" title="Seek"><div class="vn-fill"></div><div class="vn-knob"></div></div>
+        <span class="vn-time">${fmtClock(info.dur)}</span>
+        <button type="button" class="vn-speed" title="Playback speed">1×</button>
+      </div>`);
+    bubble.appendChild(player);
+    bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
+    attachBubbleActions(bubble, m);
+    mountBubble(bubble, m);
+    wireVoicePlayer(player, info);
+    scrollBody();
+    return bubble;
+  }
+
+  const VOICE_SPEEDS = [1, 1.5, 2];
+  function wireVoicePlayer(player, info) {
+    const audio = new Audio();
+    audio.preload = 'none'; // nothing downloads until someone presses play
+    audio.src = '/api/voice/' + encodeURIComponent(info.voiceId);
+    const playBtn = player.querySelector('.vn-play');
+    const track = player.querySelector('.vn-track');
+    const fill = player.querySelector('.vn-fill');
+    const knob = player.querySelector('.vn-knob');
+    const time = player.querySelector('.vn-time');
+    const speedBtn = player.querySelector('.vn-speed');
+    let speed = 0;
+    const total = () => (isFinite(audio.duration) && audio.duration > 0 ? audio.duration : info.dur || 0);
+    const paint = () => {
+      const frac = total() ? Math.min(1, audio.currentTime / total()) : 0;
+      fill.style.width = (frac * 100) + '%';
+      knob.style.left = (frac * 100) + '%';
+      time.textContent = audio.currentTime > 0 && !audio.ended ? fmtClock(audio.currentTime) : fmtClock(total());
+    };
+    let raf = null;
+    const loop = () => { paint(); if (!audio.paused) raf = requestAnimationFrame(loop); };
+    playBtn.addEventListener('click', () => {
+      if (audio.paused) {
+        // Only one voice note plays at a time.
+        document.querySelectorAll('.voice-note.playing').forEach((o) => { if (o !== player && o._audio) o._audio.pause(); });
+        player.classList.add('loading');
+        audio.play().catch(() => { player.classList.remove('loading'); notifyToast('Couldn’t play this voice note.'); });
+      } else audio.pause();
+    });
+    audio.addEventListener('playing', () => { player.classList.remove('loading'); player.classList.add('playing'); playBtn.textContent = '❚❚'; playBtn.title = 'Pause'; loop(); });
+    audio.addEventListener('pause', () => { player.classList.remove('playing'); playBtn.textContent = '▶'; playBtn.title = 'Play'; if (raf) cancelAnimationFrame(raf); paint(); });
+    audio.addEventListener('ended', () => { audio.currentTime = 0; paint(); });
+    audio.addEventListener('loadedmetadata', paint);
+    audio.addEventListener('error', () => { player.classList.remove('loading', 'playing'); });
+    // Click or drag on the bar to jump to that point.
+    const seek = (clientX) => {
+      const r = track.getBoundingClientRect();
+      const frac = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+      const go = () => { audio.currentTime = frac * total(); paint(); };
+      if (audio.readyState >= 1) go();
+      else { audio.preload = 'metadata'; audio.addEventListener('loadedmetadata', go, { once: true }); audio.load(); }
+    };
+    track.addEventListener('pointerdown', (e) => {
+      seek(e.clientX);
+      const move = (ev) => seek(ev.clientX);
+      const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
+    speedBtn.addEventListener('click', () => {
+      speed = (speed + 1) % VOICE_SPEEDS.length;
+      audio.playbackRate = VOICE_SPEEDS[speed];
+      speedBtn.textContent = VOICE_SPEEDS[speed] + '×';
+    });
+    player._audio = audio;
+  }
+
   /* ---------- reply / quote ---------- */
 
   function peerLabel() {
@@ -3081,6 +3332,7 @@
 
   // A short text snapshot of a message, for quoting.
   function previewTextOf(m) {
+    if (m.kind === 'voice') return voiceLabel(m.body);
     if (m.kind === 'gift') {
       const g = state.giftsById[m.body];
       return g ? `${g.emoji} ${g.name}` : 'a gift';

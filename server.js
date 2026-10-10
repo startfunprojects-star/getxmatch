@@ -82,6 +82,7 @@ app.use('/api/follow', require('./src/routes/follows'));
 app.use('/api/match', matchRoutes); // public: shared compatibility-quiz links
 app.use('/api/ads', adsRoutes); // public: serve ads + log clicks
 app.use('/api/highway', highwayRoutes); // registered users: shared post pool
+app.use('/api/voice', require('./src/routes/voice')); // voice notes: upload + permission-checked playback
 require('./src/referrals').backfill(); // every member gets a fixed referral code
 require('./src/news').start(); // fetch interest-based news for Recent Activity
 require('./src/alerts').start(); // fetch keyword alerts for Recent Activity

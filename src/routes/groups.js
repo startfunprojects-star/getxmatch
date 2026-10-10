@@ -12,6 +12,7 @@ const { requireAuth } = require('../auth');
 const { notifyGroup, groupCallCount } = require('../socket');
 const polls = require('../polls');
 const chatQuiz = require('../chatQuiz');
+const voiceNotes = require('../voiceNotes');
 const { getGift } = require('../gifts');
 const { areBlocked } = require('../relations');
 
@@ -196,6 +197,7 @@ function quoteText(kind, body) {
   if (kind === 'gift') { const g = getGift(body); text = g ? `${g.emoji} ${g.name}` : 'a gift'; }
   else if (kind === 'poll') text = polls.pollLabel(polls.pollIdFromBody(body));
   else if (kind === 'quiz') text = chatQuiz.quizLabel(chatQuiz.chatQuizIdFromBody(body));
+  else if (kind === 'voice') text = voiceNotes.label(body);
   return String(text || '').slice(0, 140);
 }
 
@@ -243,6 +245,7 @@ router.post('/:id/leave', requireAuth, (req, res) => {
   db.prepare('DELETE FROM chat_group_members WHERE group_id = ? AND user_id = ?').run(gid, me);
   const remainingJoined = db.prepare("SELECT COUNT(*) AS n FROM chat_group_members WHERE group_id = ? AND status = 'joined'").get(gid).n;
   if (remainingJoined === 0) {
+    voiceNotes.removeForGroup(gid);
     db.prepare('DELETE FROM chat_groups WHERE id = ?').run(gid); // cascades members + messages
   }
   notifyGroup(others, gid);
@@ -273,6 +276,7 @@ router.delete('/:id', requireAuth, (req, res) => {
   if (g.created_by !== me) return res.status(403).json({ error: 'Only the person who created this group can delete it.' });
   const everyone = memberIds(gid);
   db.prepare("DELETE FROM chat_polls WHERE scope = 'group' AND group_id = ?").run(gid);
+  voiceNotes.removeForGroup(gid);
   db.prepare('DELETE FROM chat_groups WHERE id = ?').run(gid); // cascades members + messages
   notifyGroup(everyone, gid, { deleted: true });
   res.json({ ok: true });

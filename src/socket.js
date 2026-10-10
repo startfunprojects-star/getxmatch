@@ -12,6 +12,7 @@ const { isCompatibility } = require('./quizTypes');
 const { isValidActivity } = require('./activities');
 const nsfw = require('./nsfw');
 const linkSafety = require('./linkSafety');
+const voiceNotes = require('./voiceNotes');
 
 // Emoji reactions a user may place on a message/gift. Server-side allow-list so
 // clients can't store arbitrary strings.
@@ -152,6 +153,8 @@ function groupReplyPreview(id) {
     text = polls.pollLabel(polls.pollIdFromBody(row.body));
   } else if (row.kind === 'quiz') {
     text = chatQuiz.quizLabel(chatQuiz.chatQuizIdFromBody(row.body));
+  } else if (row.kind === 'voice') {
+    text = voiceNotes.label(row.body);
   }
   return { id: row.id, from: row.sender_id, fromName: nameOf(row.sender_id), kind: row.kind || 'text', text: String(text).slice(0, 140) };
 }
@@ -185,6 +188,8 @@ function replyPreview(replyToId) {
     text = polls.pollLabel(polls.pollIdFromBody(row.body));
   } else if (row.kind === 'quiz') {
     text = chatQuiz.quizLabel(chatQuiz.chatQuizIdFromBody(row.body));
+  } else if (row.kind === 'voice') {
+    text = voiceNotes.label(row.body);
   }
   return { id: row.id, from: row.sender_id, kind: row.kind || 'text', text: String(text).slice(0, 140) };
 }
@@ -391,6 +396,37 @@ function ongoingRing(room, c, userId) {
   }
   const from = c.members.has(c.startedBy) ? c.startedBy : c.members.keys().next().value;
   return { room, kind: c.kind, groupId: c.groupId, groupName, from, fromName: nameOf(from), ongoing: true, count: c.members.size };
+}
+
+/* --------------------------------------------------------------------------
+   Messages created over HTTP (voice notes are uploaded, not sent on the
+   socket). These deliver them exactly like socket-sent messages — to every tab
+   of both people (the sender's tabs included, since no socket sent it).
+-------------------------------------------------------------------------- */
+
+// Why `from` may not post `kind` to `to` / group `groupId` (null = allowed).
+function postDenied(from, { to, groupId }) {
+  if (groupId) return groupPostDenied(groupId, from);
+  if (!db.prepare('SELECT id FROM users WHERE id = ?').get(to)) return 'Recipient not found.';
+  return dmDenied(from, to, 'You cannot message this user.');
+}
+
+// Store and deliver a message. Returns its id.
+function deliverMessage(from, { to, groupId, kind, body, replyTo }) {
+  if (groupId) {
+    return deliverGroupMessage(ioRef, groupId, from, kind, body, { replyTo: resolveGroupReplyTo(replyTo, groupId) });
+  }
+  const rt = resolveReplyTo(replyTo, from, to);
+  const now = Date.now();
+  const info = db
+    .prepare('INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at, expires_at, delivered_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)')
+    .run(from, to, body, kind, rt, now, deliveredNow(to, now));
+  const msg = { id: info.lastInsertRowid, from, to, body, kind, at: now, replyTo: rt, reply: replyPreview(rt), status: receiptStatus(to) };
+  if (ioRef) {
+    ioRef.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
+    ioRef.to(`user:${from}`).emit('chat:message', { ...msg, mine: true });
+  }
+  return msg.id;
 }
 
 // Display name (or @username) for a user id.
@@ -1065,4 +1101,4 @@ function disconnectUser(userId) {
   if (ioRef) ioRef.in(`user:${userId}`).disconnectSockets(true);
 }
 
-module.exports = { initSocket, groupCallCount, isOnline, disconnectUser, broadcastActivity, broadcastHighway, notifyHighwayEvent, notifyGroup, notifyUser, broadcastLeaderboardChange, broadcastNotify };
+module.exports = { initSocket, groupCallCount, postDenied, deliverMessage, isOnline, disconnectUser, broadcastActivity, broadcastHighway, notifyHighwayEvent, notifyGroup, notifyUser, broadcastLeaderboardChange, broadcastNotify };

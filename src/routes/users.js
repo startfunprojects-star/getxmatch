@@ -21,6 +21,8 @@ function buildReplyPreview(row) {
     text = polls.pollLabel(polls.pollIdFromBody(row.reply_body));
   } else if (row.reply_kind === 'quiz') {
     text = chatQuiz.quizLabel(chatQuiz.chatQuizIdFromBody(row.reply_body));
+  } else if (row.reply_kind === 'voice') {
+    text = require('../voiceNotes').label(row.reply_body);
   }
   return { id: row.reply_id, from: row.reply_sender, kind: row.reply_kind || 'text', text: String(text).slice(0, 140) };
 }
