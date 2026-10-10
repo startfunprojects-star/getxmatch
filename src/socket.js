@@ -838,6 +838,19 @@ function initSocket(io) {
       c.members.forEach((sid, uid) => { if (uid !== me.id) io.to(sid).emit('call:state', out); });
     });
 
+    // In-call chat: relayed live to the other people in my call only. Never
+    // stored, and never posted into the 1:1 or group conversation.
+    socket.on('call:chat', (payload, ack) => {
+      const room = String((payload && payload.room) || '');
+      const body = (payload && typeof payload.body === 'string' ? payload.body : '').trim();
+      const c = calls.get(room);
+      if (!c || c.members.get(me.id) !== socket.id) return ack && ack({ error: 'You are not in this call.' });
+      if (!body || body.length > 2000) return ack && ack({ error: 'Invalid message.' });
+      const out = { room, from: me.id, fromName: nameOf(me.id), body, at: Date.now() };
+      c.members.forEach((sid, uid) => { if (uid !== me.id) io.to(sid).emit('call:chat', out); });
+      ack && ack({ ok: true, at: out.at });
+    });
+
     socket.on('call:leave', (payload) => {
       leaveCall(io, String((payload && payload.room) || ''), me.id, socket.id);
     });

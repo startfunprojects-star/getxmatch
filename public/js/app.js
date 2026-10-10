@@ -3738,10 +3738,10 @@
           </div>
           <aside class="call-chat" id="callChat">
             <div class="call-chat-head">
-              <b>Chat</b><span class="hint">Saved in your ${call.target.kind === 'dm' ? 'chat' : 'group chat'} too</span>
+              <b>Chat</b><span class="hint">Only for this call · not saved</span>
               <button class="icon-btn small" id="callChatClose" title="Close chat">✕</button>
             </div>
-            <div class="call-chat-list" id="callChatList"><div class="call-chat-empty">Messages you send here go to everyone in the call.</div></div>
+            <div class="call-chat-list" id="callChatList"><div class="call-chat-empty">Messages here go only to people in this call and disappear when it ends.</div></div>
             <form class="call-chat-form" id="callChatForm">
               <input type="text" id="callChatInput" placeholder="Type a message…" autocomplete="off" dir="auto" maxlength="4000" />
               <button class="primary small" type="submit">Send</button>
@@ -3867,8 +3867,8 @@
   }
 
   /* ----- chat inside a call -----
-     Messages go through the normal chat (1:1 or the group), so they're kept in
-     the conversation history; the call panel just shows them alongside the video. */
+     Relayed live to the people in the call only (`call:chat`): never stored,
+     and never shown in the 1:1 or group conversation. */
   function toggleCallChat(open) {
     const call = state.call;
     const panel = document.getElementById('callPanel');
@@ -3918,22 +3918,10 @@
     const body = input.value.trim();
     if (!body) return;
     input.value = '';
-    const t = call.target;
-    if (t.kind === 'dm') {
-      state.socket.emit('chat:message', { to: t.to, body }, (res) => {
-        if (res && res.error) { input.value = body; return notifyToast(res.error); }
-        const m = (res && res.message) || {};
-        appendCallChat('You', m.body != null ? m.body : body, true, m.at);
-        // The 1:1 chat open behind the call shows it as well.
-        if (state.peer && state.peer.id === t.to) appendTextBubble({ body: m.body != null ? m.body : body, mine: true, at: m.at || Date.now(), id: m.id, status: m.status });
-      });
-    } else {
-      // The server echoes group messages to every member, us included — the
-      // group:message handler adds it to this panel then.
-      state.socket.emit('group:message', { groupId: t.groupId, body }, (res) => {
-        if (res && res.error) { input.value = body; notifyToast(res.error); }
-      });
-    }
+    state.socket.emit('call:chat', { room: call.room, body }, (res) => {
+      if (res && res.error) { input.value = body; return notifyToast(res.error); }
+      appendCallChat('You', body, true, res && res.at);
+    });
   }
 
   // Hang up. `silent` skips telling the server (it already knows / never joined).
@@ -4065,11 +4053,6 @@
     });
 
     s.on('chat:message', (m) => {
-      const c = state.call;
-      if (c && c.target.kind === 'dm' && m.kind === 'text') {
-        if (m.from === c.target.to) appendCallChat(c.title, m.body, false, m.at);
-        else if (m.from === state.me.id && m.to === c.target.to) appendCallChat('You', m.body, true, m.at); // sent from another tab
-      }
       // Track the peer so it shows under "Chats".
       if (!state.chatPeers[m.from] && m.from !== state.me.id) rememberPeer(m.from);
       if (!state.chatPeers[m.to] && m.to !== state.me.id) rememberPeer(m.to);
@@ -4128,10 +4111,6 @@
 
     // Group chat message for one of my groups.
     s.on('group:message', (m) => {
-      const c = state.call;
-      if (c && c.target.kind === 'group' && c.target.groupId === m.groupId && (m.kind || 'text') === 'text') {
-        appendCallChat(m.fromName || 'Someone', m.body, !!m.mine, m.at);
-      }
       if (state.group && state.group.gid === m.groupId) appendGroupMessage(m);
       else if (!m.mine) {
         const tabId = 'g' + m.groupId;
@@ -4172,6 +4151,9 @@
     });
     s.on('call:signal', (msg) => handleCallSignal(msg));
     s.on('call:state', (msg) => applyPeerState(msg));
+    s.on('call:chat', (m) => {
+      if (state.call && state.call.room === m.room) appendCallChat(m.fromName || 'Someone', m.body, false, m.at);
+    });
     // How many people are in a group's call — keeps "Join call" current.
     s.on('group:call', ({ groupId, count }) => {
       if (state.group && state.group.gid === groupId) reflectGroupCall(count);
