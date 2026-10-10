@@ -91,13 +91,18 @@ function groupWalled(groupId, userId) {
   return groupJoinedIds(groupId).some((uid) => uid !== userId && areBlocked(userId, uid));
 }
 
-// Persist a group message of any kind (text | poll) and deliver it to
-// every joined member (mine flag per recipient). Returns the new row id.
-function deliverGroupMessage(io, groupId, senderId, kind, body) {
+// Persist a group message of any kind (text | gift | quiz …) and deliver it to
+// every joined member (mine flag per recipient). opts.replyTo quotes an earlier
+// message of the group; opts.perUser(uid) adds viewer-specific fields (e.g. a
+// quiz payload). Returns the new row id.
+function deliverGroupMessage(io, groupId, senderId, kind, body, opts) {
+  opts = opts || {};
   const now = Date.now();
+  const replyTo = opts.replyTo || null;
   const info = db
-    .prepare('INSERT INTO group_messages (group_id, sender_id, body, kind, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run(groupId, senderId, body, kind, now);
+    .prepare('INSERT INTO group_messages (group_id, sender_id, body, kind, reply_to, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(groupId, senderId, body, kind, replyTo, now);
+  if (opts.onInsert) opts.onInsert(info.lastInsertRowid);
   const prof = db.prepare('SELECT display_name, avatar FROM profiles WHERE user_id = ?').get(senderId);
   const base = {
     id: info.lastInsertRowid,
@@ -108,10 +113,46 @@ function deliverGroupMessage(io, groupId, senderId, kind, body) {
     body,
     kind,
     at: now,
+    replyTo,
+    reply: groupReplyPreview(replyTo),
   };
   groupJoinedIds(groupId).forEach((uid) =>
-    io.to(`user:${uid}`).emit('group:message', { ...base, mine: uid === senderId }));
+    io.to(`user:${uid}`).emit('group:message', { ...base, mine: uid === senderId, ...(opts.perUser ? opts.perUser(uid) : {}) }));
   return info.lastInsertRowid;
+}
+
+// A group member allowed to post here? Returns an error string or null.
+function groupPostDenied(groupId, userId) {
+  const member = db
+    .prepare("SELECT 1 FROM chat_group_members WHERE group_id = ? AND user_id = ? AND status = 'joined'")
+    .get(groupId, userId);
+  if (!member) return 'You are not a member of this group.';
+  if (groupWalled(groupId, userId)) return 'You cannot post in this group.';
+  return null;
+}
+
+// Validate a reply target: a message of THIS group. Returns the id or null.
+function resolveGroupReplyTo(raw, groupId) {
+  const id = parseInt(raw, 10);
+  if (!id) return null;
+  return db.prepare('SELECT id FROM group_messages WHERE id = ? AND group_id = ?').get(id, groupId) ? id : null;
+}
+
+// Snapshot of a quoted group message: who wrote it and a short text.
+function groupReplyPreview(id) {
+  if (!id) return null;
+  const row = db.prepare('SELECT id, sender_id, body, kind FROM group_messages WHERE id = ?').get(id);
+  if (!row) return null;
+  let text = row.body;
+  if (row.kind === 'gift') {
+    const g = getGift(row.body);
+    text = g ? `${g.emoji} ${g.name}` : 'a gift';
+  } else if (row.kind === 'poll') {
+    text = polls.pollLabel(polls.pollIdFromBody(row.body));
+  } else if (row.kind === 'quiz') {
+    text = chatQuiz.quizLabel(chatQuiz.chatQuizIdFromBody(row.body));
+  }
+  return { id: row.id, from: row.sender_id, fromName: nameOf(row.sender_id), kind: row.kind || 'text', text: String(text).slice(0, 140) };
 }
 
 /* --------------------------------------------------------------------------
@@ -647,8 +688,28 @@ function initSocket(io) {
     // see a compatibility result.
     socket.on('quiz:start', (payload, ack) => {
       try {
-        const to = parseInt(payload && payload.to, 10);
         const quizId = parseInt(payload && payload.quizId, 10);
+        const groupId = parseInt(payload && payload.groupId, 10) || null;
+        if (groupId) {
+          // Group chat: every joined member answers; each sees how much they
+          // match the others who've finished.
+          if (!quizId) return ack && ack({ error: 'Invalid quiz.' });
+          const denied = groupPostDenied(groupId, me.id);
+          if (denied) return ack && ack({ error: denied });
+          const quiz = db.prepare('SELECT id, questions, type FROM quizzes WHERE id = ?').get(quizId);
+          if (!quiz) return ack && ack({ error: 'Quiz not found.' });
+          if (!isCompatibility(quiz.type)) return ack && ack({ error: 'Only compatibility quizzes can be played together in chat.' });
+          let qn = 0;
+          try { qn = (JSON.parse(quiz.questions) || []).length; } catch (_e) {}
+          if (!qn) return ack && ack({ error: 'This quiz has no questions.' });
+          const chatQuizId = chatQuiz.startSession({ quizId, creatorId: me.id, groupId });
+          deliverGroupMessage(io, groupId, me.id, 'quiz', JSON.stringify({ chatQuizId }), {
+            onInsert: (mid) => chatQuiz.attachMessage(chatQuizId, mid),
+            perUser: (uid) => ({ quiz: chatQuiz.sessionPayload(chatQuizId, uid) }),
+          });
+          return ack && ack({ ok: true });
+        }
+        const to = parseInt(payload && payload.to, 10);
         if (!to || !quizId) return ack && ack({ error: 'Invalid quiz.' });
         const recipient = db.prepare('SELECT id FROM users WHERE id = ?').get(to);
         if (!recipient) return ack && ack({ error: 'Recipient not found.' });
@@ -692,7 +753,7 @@ function initSocket(io) {
         const out = chatQuiz.submitAnswers(session, me.id, payload && payload.answers);
         if (out.error) return ack && ack({ error: out.error });
 
-        [session.dm_a, session.dm_b].forEach((uid) =>
+        chatQuiz.participantIds(session).forEach((uid) =>
           io.to(`user:${uid}`).emit('quiz:update', { chatQuizId, quiz: chatQuiz.sessionPayload(chatQuizId, uid) }));
 
         ack && ack({ ok: true, quiz: chatQuiz.sessionPayload(chatQuizId, me.id) });
@@ -875,15 +936,67 @@ function initSocket(io) {
         if (!groupId || !body) return ack && ack({ error: 'Invalid message.' });
         if (body.length > 4000) return ack && ack({ error: 'Message too long.' });
 
-        const mine = db
-          .prepare("SELECT 1 FROM chat_group_members WHERE group_id = ? AND user_id = ? AND status = 'joined'")
-          .get(groupId, me.id);
-        if (!mine) return ack && ack({ error: 'You are not a member of this group.' });
-        if (groupWalled(groupId, me.id)) return ack && ack({ error: 'You cannot post in this group.' });
+        const denied = groupPostDenied(groupId, me.id);
+        if (denied) return ack && ack({ error: denied });
 
-        deliverGroupMessage(io, groupId, me.id, 'text', body);
+        const replyTo = resolveGroupReplyTo(payload && payload.replyTo, groupId);
+        deliverGroupMessage(io, groupId, me.id, 'text', body, { replyTo });
 
         ack && ack({ ok: true });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // A gift sent to a whole group chat (stored like any group message).
+    socket.on('group:gift', (payload, ack) => {
+      try {
+        const groupId = parseInt(payload && payload.groupId, 10);
+        const gift = getGift(payload && payload.gift);
+        if (!groupId || !gift) return ack && ack({ error: 'Invalid gift.' });
+        const denied = groupPostDenied(groupId, me.id);
+        if (denied) return ack && ack({ error: denied });
+        deliverGroupMessage(io, groupId, me.id, 'gift', gift.id);
+        ack && ack({ ok: true });
+      } catch (e) {
+        ack && ack({ error: 'Server error.' });
+      }
+    });
+
+    // File share in a group → relayed live to the members who are online, like
+    // 1:1 files: never written to disk or the database.
+    socket.on('group:file', (payload, ack) => {
+      try {
+        const groupId = parseInt(payload && payload.groupId, 10);
+        const { name, mime, data } = payload || {};
+        if (!groupId || !name || !data) return ack && ack({ error: 'Invalid file.' });
+        const size = data.byteLength != null ? data.byteLength : (data.length || 0);
+        if (size > config.maxChatFileBytes) return ack && ack({ error: 'File exceeds the size limit.' });
+        const denied = groupPostDenied(groupId, me.id);
+        if (denied) return ack && ack({ error: denied });
+        const others = groupJoinedIds(groupId).filter((uid) => uid !== me.id && isOnline(uid));
+        if (!others.length) {
+          return ack && ack({ error: 'Nobody else in the group is online. Files are only delivered live and are never stored.' });
+        }
+        const meta = {
+          id: typeof payload.id === 'string' ? payload.id.slice(0, 64) : 'f' + Date.now().toString(36),
+          groupId,
+          from: me.id,
+          fromName: nameOf(me.id),
+          name: String(name).slice(0, 200),
+          mime: String(mime || 'application/octet-stream').slice(0, 100),
+          size,
+          data, // relayed in-memory, then discarded
+          at: Date.now(),
+        };
+        nsfw.checkBuffer(Buffer.isBuffer(data) ? data : Buffer.from(data)).then((result) => {
+          if (result.blocked) {
+            const what = String(meta.mime).startsWith('video/') ? 'a video' : 'an image';
+            return ack && ack({ error: nsfw.rejectionMessage(result, what) });
+          }
+          others.forEach((uid) => io.to(`user:${uid}`).emit('group:file', meta));
+          ack && ack({ ok: true, id: meta.id, delivered: others.length });
+        }, () => ack && ack({ error: 'Server error.' }));
       } catch (e) {
         ack && ack({ error: 'Server error.' });
       }

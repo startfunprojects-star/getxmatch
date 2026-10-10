@@ -1476,10 +1476,16 @@
             : '<button class="ghost small" id="groupLeaveBtn" title="Leave this group">Leave</button>'}
         </div>
         <div class="chat-body" id="chatBody"></div>
+        <div class="gift-picker hidden" id="giftPicker"></div>
+        <div class="reply-banner hidden" id="replyBanner"></div>
         <div class="composer-preview hidden" id="composerPreview"></div>
         <div class="composer">
-          <input type="text" id="msgInput" placeholder="Message the group…" autocomplete="off" dir="auto" />
+          <input type="file" id="fileInput" class="hidden" />
+          <button class="icon-btn" id="attachBtn" title="Share a file with the group (delivered live to members online, never stored)">📎</button>
+          <button class="icon-btn" id="giftBtn" title="Send the group a gift">🎁</button>
           <button class="icon-btn" id="pollBtn" title="Create a poll">📊</button>
+          <button class="icon-btn" id="quizBtn" title="Take a quiz together">🧩</button>
+          <input type="text" id="msgInput" placeholder="Message the group…" autocomplete="off" dir="auto" />
           <button class="primary" id="sendBtn">Send</button>
         </div>
       </div>
@@ -1527,10 +1533,29 @@
     // Put the cursor in the composer right away so the user can type at once.
     setTimeout(() => input.focus(), 0);
 
-    // Poll builder.
+    // Poll builder, quiz picker, gifts and files — same tools as a 1:1 chat.
     view.querySelector('#pollBtn').addEventListener('click', () => openPollBuilder({ groupId: gid }));
+    view.querySelector('#quizBtn').addEventListener('click', () => openQuizPicker({ groupId: gid }));
+    const fileInput = view.querySelector('#fileInput');
+    view.querySelector('#attachBtn').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) sendFile(fileInput.files[0]);
+      fileInput.value = '';
+    });
+    wireGiftPicker(view);
+    state.replyTo = null; // never carry a half-composed reply into another chat
+    renderReplyBanner();
 
-    messages.forEach(appendGroupMessage);
+    // Shared files live only in this browser (IndexedDB); interleave them with
+    // the stored messages by time so the history reads in order.
+    let files = await idbLoadFiles('g' + gid);
+    if (files == null) files = ((state.sharedFiles && state.sharedFiles['g' + gid]) || []).slice();
+    if (!(state.group && state.group.gid === gid)) return; // switched away meanwhile
+    const timeline = [];
+    messages.forEach((m) => timeline.push({ at: m.at, seq: 0, render: () => appendGroupMessage(m) }));
+    files.forEach((f) => timeline.push({ at: f.at, seq: 1, render: () => appendFileBubble(f, f.mine, f.url) }));
+    timeline.sort((a, b) => (a.at - b.at) || (a.seq - b.seq));
+    timeline.forEach((it) => it.render());
     scrollBody();
   }
 
@@ -1547,9 +1572,11 @@
     const body = input.value.trim();
     if (!body || !state.socket || !state.group) return;
     const gid = state.group.gid;
+    const replyTo = state.replyTo && !state.replyTo.file ? state.replyTo.id : null;
     input.value = '';
     clearComposerPreview();
-    state.socket.emit('group:message', { groupId: gid, body }, (res) => {
+    cancelReply();
+    state.socket.emit('group:message', { groupId: gid, body, replyTo }, (res) => {
       if (res && res.error) { notify(res.error); input.value = body; updateComposerPreview(body); }
     });
   }
@@ -1559,15 +1586,20 @@
     const b = chatBody();
     if (!b) return;
     if (m.kind === 'poll') return appendPollBubble(m);
+    if (m.kind === 'quiz') return appendQuizBubble(m);
+    if (m.kind === 'gift') return appendGiftBubble(m);
     const narration = narrationText(m.body);
     if (narration != null) {
       return appendNarrationLine(narration, m.at, { author: m.mine ? 'You' : m.fromName });
     }
     const side = m.mine ? 'me' : 'them';
     const bubble = el(`<div class="bubble ${side}"></div>`);
+    if (m.id) bubble.dataset.id = m.id;
     if (!m.mine) bubble.appendChild(el(`<div class="bubble-author">${esc(m.fromName)}</div>`));
+    if (m.reply) bubble.appendChild(renderQuote(m.reply));
     appendRichText(bubble, m.body);
     bubble.appendChild(el(`<span class="time">${fmtTime(m.at)}</span>`));
+    attachBubbleActions(bubble, m);
     mountBubble(bubble, m);
     scrollBody();
   }
@@ -1966,7 +1998,18 @@
     });
 
 
-    // Gift picker.
+    wireGiftPicker(view);
+
+    // Poll builder.
+    view.querySelector('#pollBtn').addEventListener('click', () => openPollBuilder({ to: peer.id }));
+    // Quiz picker — start a quiz to attempt together.
+    view.querySelector('#quizBtn').addEventListener('click', () => openQuizPicker(peer.id));
+
+    await loadChatHistory(view, peer);
+  }
+
+  // Gift button + picker inside a chat view (1:1 or group).
+  function wireGiftPicker(view) {
     const giftPicker = view.querySelector('#giftPicker');
     const giftBtn = view.querySelector('#giftBtn');
     giftBtn.addEventListener('click', async (e) => {
@@ -1988,12 +2031,11 @@
         giftPicker.classList.add('hidden');
       }
     });
+  }
 
-    // Poll builder.
-    view.querySelector('#pollBtn').addEventListener('click', () => openPollBuilder({ to: peer.id }));
-    // Quiz picker — start a quiz to attempt together.
-    view.querySelector('#quizBtn').addEventListener('click', () => openQuizPicker(peer.id));
-
+  // Load a 1:1 conversation's persisted history (text, gifts, …) plus the files
+  // kept in this browser, in time order.
+  async function loadChatHistory(view, peer) {
     // Load persisted history (text + gifts).
     adState.counters.chat = 0; // restart the every-20-messages ad cadence per chat
     try {
@@ -2419,6 +2461,7 @@
     const bubble = el(`<div class="bubble ${mine ? 'me' : 'them'}"></div>`);
     if (meta.id) bubble.dataset.id = meta.id;
     if (meta.from != null) bubble.dataset.from = meta.from;
+    if (meta.groupId != null && !mine && meta.fromName) bubble.appendChild(el(`<div class="bubble-author">${esc(meta.fromName)}</div>`));
     if (isImg) {
       const img = document.createElement('img');
       img.className = 'shared';
@@ -2445,8 +2488,8 @@
       bubble.appendChild(share);
     }
     bubble.appendChild(el(`<span class="time">${fmtTime(meta.at || Date.now())}</span>`));
-    attachFileActions(bubble, meta, mine);
-    mountBubble(bubble, { mine: mine, from: meta.from });
+    if (meta.groupId == null) attachFileActions(bubble, meta, mine); // reply / delete-for-both are 1:1 only
+    mountBubble(bubble, { mine: mine, from: meta.from, groupId: meta.groupId });
     scrollBody();
   }
 
@@ -2522,7 +2565,9 @@
     const bubble = el(`
       <div class="bubble gift ${m.mine ? 'me' : 'them'}">
         <span class="gift-emoji">${esc(gift.emoji)}</span>
-        <span class="gift-name">${m.mine ? 'You sent' : 'Sent you'} a ${esc(gift.name)}</span>
+        <span class="gift-name">${m.groupId != null
+          ? `${m.mine ? 'You' : esc(m.fromName || 'Someone')} sent the group “${esc(gift.name)}”`
+          : `${m.mine ? 'You sent' : 'Sent you'} a ${esc(gift.name)}`}</span>
       </div>
     `);
     if (m.id) bubble.dataset.id = m.id;
@@ -2694,7 +2739,9 @@
   /* ---------- Quizzes attempted together (in chat) ---------- */
 
   // Picker: list the available quizzes; choosing one starts it in this chat.
-  async function openQuizPicker(toId) {
+  // `target` is a 1:1 peer id, or { groupId } for a group chat.
+  async function openQuizPicker(target) {
+    const where = typeof target === 'object' ? target : { to: target };
     const { card, close } = openModal('Take a quiz together', `
       <div class="quiz-picker"><div class="hint">Loading quizzes…</div></div>
     `);
@@ -2703,7 +2750,9 @@
     try { quizzes = ((await api.get('/api/content/quizzes')).quizzes || []).filter((q) => q.type === 'compatibility'); }
     catch (_e) { box.innerHTML = '<div class="hint">Could not load quizzes.</div>'; return; }
     if (!quizzes.length) { box.innerHTML = '<div class="hint">No compatibility quizzes are available yet.</div>'; return; }
-    box.innerHTML = '<div class="pb-label">Pick a quiz — you’ll both answer it, then see how much you match.</div>';
+    box.innerHTML = where.groupId
+      ? '<div class="pb-label">Pick a quiz — everyone in the group answers it, then sees how much they match each other.</div>'
+      : '<div class="pb-label">Pick a quiz — you’ll both answer it, then see how much you match.</div>';
     quizzes.forEach((q) => {
       const item = el(`
         <button class="quiz-pick" type="button">
@@ -2714,7 +2763,7 @@
       item.addEventListener('click', () => {
         if (!state.socket) return;
         item.disabled = true;
-        state.socket.emit('quiz:start', { to: toId, quizId: q.id }, (res) => {
+        state.socket.emit('quiz:start', { ...where, quizId: q.id }, (res) => {
           if (res && res.error) { item.disabled = false; return notify(res.error); }
           close();
         });
@@ -2746,6 +2795,26 @@
     `;
     card.querySelector('.quiz-title').textContent = q.title;
     const body = card.querySelector('.quiz-body');
+
+    if (q.group && q.iSubmitted) {
+      // ----- group: my match with each member who has finished -----
+      const waiting = q.people.filter((p) => !p.submitted).map((p) => p.name);
+      if (q.results && q.results.length) {
+        q.results.forEach((r) => {
+          const row = el(`<div class="quiz-group-row"><span class="qg-name"></span><span class="qg-pct">${r.percent}%</span><span class="qg-sub">${r.matches}/${r.total} matched</span></div>`);
+          row.querySelector('.qg-name').textContent = 'You & ' + r.name;
+          body.appendChild(row);
+        });
+      } else {
+        body.appendChild(el('<div class="quiz-wait">✓ You’re done — your matches appear as others finish.</div>'));
+      }
+      if (waiting.length) {
+        const w = el('<div class="quiz-sub"></div>');
+        w.textContent = 'Still answering: ' + waiting.join(', ');
+        body.appendChild(w);
+      }
+      return;
+    }
 
     if (q.bothDone && q.result) {
       // ----- result: compatibility + per-question comparison -----
@@ -2779,7 +2848,9 @@
     }
 
     // ----- answer form -----
-    body.appendChild(el('<div class="quiz-sub">Answer together — pick your response to each. You’ll both see how much you have in common once you’re both done.</div>'));
+    body.appendChild(el(q.group
+      ? '<div class="quiz-sub">Answer together — pick your response to each. Once you submit, you’ll see how much you match everyone else who has finished.</div>'
+      : '<div class="quiz-sub">Answer together — pick your response to each. You’ll both see how much you have in common once you’re both done.</div>'));
     q.questions.forEach((qq, i) => {
       const block = el('<div class="quiz-q"></div>');
       block.appendChild(el('<div class="quiz-q-prompt"></div>')).textContent = (i + 1) + '. ' + qq.prompt;
@@ -2844,7 +2915,7 @@
   function renderQuote(reply) {
     const mine = reply.mine != null ? reply.mine : (reply.from === state.me.id);
     const q = el('<div class="reply-quote"><span class="rq-who"></span><span class="rq-text"></span></div>');
-    q.querySelector('.rq-who').textContent = mine ? 'You' : peerLabel();
+    q.querySelector('.rq-who').textContent = mine ? 'You' : (reply.fromName || peerLabel());
     q.querySelector('.rq-text').textContent = reply.text || '';
     if (reply.id) q.addEventListener('click', () => scrollToMessage(reply.id));
     return q;
@@ -2868,11 +2939,12 @@
     const actions = el('<div class="bubble-actions"></div>');
     const reply = el('<button class="act-btn" title="Reply">↩</button>');
     reply.addEventListener('click', (e) => { e.stopPropagation(); startReply(m); });
+    actions.appendChild(reply);
+    bubble.appendChild(actions);
+    if (m.groupId != null) return; // group messages: reply only
     const react = el('<button class="act-btn" title="React">🙂</button>');
     react.addEventListener('click', (e) => { e.stopPropagation(); openReactionPalette(react, m.id); });
-    actions.appendChild(reply);
     actions.appendChild(react);
-    bubble.appendChild(actions);
 
     bubble._reactions = Array.isArray(m.reactions) ? m.reactions.slice() : [];
     const rc = el('<div class="reactions hidden"></div>');
@@ -2954,7 +3026,7 @@
   }
 
   function startReply(m) {
-    state.replyTo = { id: m.id, mine: m.mine, text: previewTextOf(m) };
+    state.replyTo = { id: m.id, mine: m.mine, fromName: m.fromName, text: previewTextOf(m) };
     renderReplyBanner();
     const input = document.getElementById('msgInput');
     if (input) input.focus();
@@ -2975,7 +3047,7 @@
     }
     banner.innerHTML = '';
     const body = el('<div class="rb-body"><span class="rb-who"></span> <span class="rb-text"></span></div>');
-    body.querySelector('.rb-who').textContent = 'Replying to ' + (state.replyTo.mine ? 'yourself' : peerLabel());
+    body.querySelector('.rb-who').textContent = 'Replying to ' + (state.replyTo.mine ? 'yourself' : (state.replyTo.fromName || peerLabel()));
     body.querySelector('.rb-text').textContent = state.replyTo.text;
     const x = el('<button class="rb-cancel" title="Cancel reply">×</button>');
     x.addEventListener('click', cancelReply);
@@ -3006,6 +3078,12 @@
   }
 
   function sendGift(giftId) {
+    if (state.group && state.socket) {
+      // The server delivers it to every member (us included) as a group message.
+      return state.socket.emit('group:gift', { groupId: state.group.gid, gift: giftId }, (res) => {
+        if (res && res.error) notify(res.error);
+      });
+    }
     if (!state.peer || !state.socket) return;
     state.socket.emit('chat:gift', { to: state.peer.id, gift: giftId }, (res) => {
       if (res && res.error) return notify(res.error);
@@ -3039,6 +3117,7 @@
   }
 
   async function sendFile(file) {
+    if (state.group && state.socket) return sendGroupFile(file);
     if (!state.peer || !state.socket) return;
     const buf = await file.arrayBuffer();
     const fid = 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -3052,6 +3131,23 @@
       cacheSharedFile(peerId, entry);
       idbSaveFile(peerId, entry, blob); // survive a refresh (this browser only)
       appendFileBubble(entry, true, url);
+    });
+  }
+
+  // Share a file with the group: relayed live to members who are online.
+  async function sendGroupFile(file) {
+    const gid = state.group.gid;
+    const buf = await file.arrayBuffer();
+    const fid = 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const mime = file.type || 'application/octet-stream';
+    state.socket.emit('group:file', { groupId: gid, id: fid, name: file.name, mime, data: buf }, (res) => {
+      if (res && res.error) return notify(res.error);
+      const blob = new Blob([buf], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const entry = { id: fid, groupId: gid, from: state.me.id, mine: true, name: file.name, mime, size: file.size, at: Date.now(), url };
+      cacheSharedFile('g' + gid, entry);
+      idbSaveFile('g' + gid, entry, blob);
+      if (state.group && state.group.gid === gid) appendFileBubble(entry, true, url);
     });
   }
 
@@ -4110,6 +4206,17 @@
     });
 
     // Group chat message for one of my groups.
+    // A file shared in one of my groups (live only, never stored server-side).
+    s.on('group:file', (meta) => {
+      const blob = new Blob([meta.data], { type: meta.mime });
+      const url = URL.createObjectURL(blob);
+      const entry = { id: meta.id, groupId: meta.groupId, from: meta.from, fromName: meta.fromName, mine: false, name: meta.name, mime: meta.mime, size: meta.size, at: meta.at || Date.now(), url };
+      cacheSharedFile('g' + meta.groupId, entry);
+      idbSaveFile('g' + meta.groupId, entry, blob);
+      if (state.group && state.group.gid === meta.groupId) appendFileBubble(entry, false, url);
+      else notify(`${meta.fromName || 'Someone'} shared a file in a group`);
+    });
+
     s.on('group:message', (m) => {
       if (state.group && state.group.gid === m.groupId) appendGroupMessage(m);
       else if (!m.mine) {

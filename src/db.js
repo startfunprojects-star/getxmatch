@@ -278,6 +278,7 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages (expires_at
 })();
 db.exec('CREATE INDEX IF NOT EXISTS idx_messages_undelivered ON messages (recipient_id, delivered_at);');
 
+
 // --- Migration: multi-dimension ratings. A rating of another user now carries
 // four independent 1-5 star scores (Knowledgeable / Helpful / Creative / Thoughtful), stored
 // as nullable columns on the existing ratings row. The legacy `stars` column is
@@ -1050,5 +1051,15 @@ db.exec("UPDATE gallery_photos SET music = 'piano' WHERE music = 'romantic';");
 
 // --- Migration: education streams are all "Field (specialisation)" now.
 db.exec("UPDATE users SET education_stream = education_stream || ' (General)' WHERE education_stream IN ('Arts', 'Commerce');");
+
+// --- Migration: group chats gain replies (group_messages.reply_to = the quoted
+// group message) and quizzes (chat_quizzes.group_id; dm_a/dm_b are 0 for a
+// group session, whose participants are the group's joined members).
+(function migrateGroupChatExtras() {
+  const gm = db.prepare('PRAGMA table_info(group_messages)').all().map((c) => c.name);
+  if (!gm.includes('reply_to')) db.exec('ALTER TABLE group_messages ADD COLUMN reply_to INTEGER;');
+  const cq = db.prepare('PRAGMA table_info(chat_quizzes)').all().map((c) => c.name);
+  if (!cq.includes('group_id')) db.exec('ALTER TABLE chat_quizzes ADD COLUMN group_id INTEGER;');
+})();
 
 module.exports = db;

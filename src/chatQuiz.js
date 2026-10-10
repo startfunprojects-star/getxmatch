@@ -32,17 +32,38 @@ function quizMeta(quizId) {
   return db.prepare('SELECT id, title, description FROM quizzes WHERE id = ?').get(quizId) || null;
 }
 
-// Create a session between two DM participants. Returns the new session id.
-function startSession({ quizId, creatorId, dmA, dmB }) {
-  const lo = Math.min(dmA, dmB);
-  const hi = Math.max(dmA, dmB);
+// Create a session between two DM participants, or (with groupId) for a whole
+// group chat. Returns the new session id.
+function startSession({ quizId, creatorId, dmA, dmB, groupId }) {
+  const lo = groupId ? 0 : Math.min(dmA, dmB);
+  const hi = groupId ? 0 : Math.max(dmA, dmB);
   const info = db
     .prepare(
-      `INSERT INTO chat_quizzes (quiz_id, dm_a, dm_b, creator_id, created_at)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO chat_quizzes (quiz_id, dm_a, dm_b, creator_id, created_at, group_id)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(quizId, lo, hi, creatorId, Date.now());
+    .run(quizId, lo, hi, creatorId, Date.now(), groupId || null);
   return info.lastInsertRowid;
+}
+
+// Joined members of a group session's group, with display names.
+function groupPeople(groupId) {
+  return db
+    .prepare(
+      `SELECT m.user_id AS id, COALESCE(p.display_name, u.username) AS name
+       FROM chat_group_members m
+       JOIN users u ON u.id = m.user_id
+       LEFT JOIN profiles p ON p.user_id = m.user_id
+       WHERE m.group_id = ? AND m.status = 'joined'
+       ORDER BY m.created_at ASC`
+    )
+    .all(groupId);
+}
+
+// Everyone who should receive updates for a session.
+function participantIds(session) {
+  if (session.group_id) return groupPeople(session.group_id).map((p) => p.id);
+  return [session.dm_a, session.dm_b];
 }
 
 function attachMessage(chatQuizId, messageId) {
@@ -53,9 +74,11 @@ function getSession(chatQuizId) {
   return db.prepare('SELECT * FROM chat_quizzes WHERE id = ?').get(chatQuizId);
 }
 
-// One of the two DM participants?
+// One of the two DM participants (or a joined member of the session's group)?
 function canParticipate(session, userId) {
-  return !!session && (userId === session.dm_a || userId === session.dm_b);
+  if (!session) return false;
+  if (session.group_id) return groupPeople(session.group_id).some((p) => p.id === userId);
+  return userId === session.dm_a || userId === session.dm_b;
 }
 
 // Record (or replace) a participant's answers, validated against the quiz.
@@ -92,6 +115,7 @@ function answersOf(chatQuizId, userId) {
 function sessionPayload(chatQuizId, viewerId) {
   const session = typeof chatQuizId === 'object' ? chatQuizId : getSession(chatQuizId);
   if (!session) return null;
+  if (session.group_id) return groupSessionPayload(session, viewerId);
   const meta = quizMeta(session.quiz_id);
   const questions = quizQuestions(session.quiz_id) || [];
 
@@ -140,6 +164,44 @@ function sessionPayload(chatQuizId, viewerId) {
   return payload;
 }
 
+// Group version: who has finished, and — once the viewer has submitted — how
+// much they match each other member who has finished too.
+function groupSessionPayload(session, viewerId) {
+  const meta = quizMeta(session.quiz_id);
+  const questions = quizQuestions(session.quiz_id) || [];
+  const myAnswers = answersOf(session.id, viewerId);
+  const people = groupPeople(session.group_id).map((p) => ({
+    id: p.id,
+    name: p.name,
+    submitted: !!answersOf(session.id, p.id),
+  }));
+  const payload = {
+    id: session.id,
+    group: true,
+    quizId: session.quiz_id,
+    title: meta ? meta.title : 'Quiz',
+    description: meta ? meta.description : '',
+    creatorId: session.creator_id,
+    questions,
+    iSubmitted: !!myAnswers,
+    myAnswers: myAnswers || null,
+    people,
+    bothDone: false,
+  };
+  if (myAnswers) {
+    const total = questions.length || 1;
+    payload.results = people
+      .filter((p) => p.id !== viewerId && p.submitted)
+      .map((p) => {
+        const theirs = answersOf(session.id, p.id) || [];
+        const matches = questions.reduce((n, _q, i) => n + (theirs[i] === myAnswers[i] ? 1 : 0), 0);
+        return { id: p.id, name: p.name, matches, total: questions.length, percent: Math.round((matches / total) * 100) };
+      })
+      .sort((a, b) => b.percent - a.percent);
+  }
+  return payload;
+}
+
 // Short label for a quiz session (reply previews).
 function quizLabel(chatQuizId) {
   const s = getSession(chatQuizId);
@@ -162,6 +224,7 @@ module.exports = {
   attachMessage,
   getSession,
   canParticipate,
+  participantIds,
   submitAnswers,
   sessionPayload,
   quizLabel,

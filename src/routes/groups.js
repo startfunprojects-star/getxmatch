@@ -11,6 +11,8 @@ const db = require('../db');
 const { requireAuth } = require('../auth');
 const { notifyGroup, groupCallCount } = require('../socket');
 const polls = require('../polls');
+const chatQuiz = require('../chatQuiz');
+const { getGift } = require('../gifts');
 const { areBlocked } = require('../relations');
 
 const router = express.Router();
@@ -155,10 +157,15 @@ router.get('/:id/messages', requireAuth, (req, res) => {
   if (myStatus(gid, req.user.id) !== 'joined') return res.status(403).json({ error: 'You are not in this group.' });
   const rows = db
     .prepare(
-      `SELECT gm.id, gm.sender_id, gm.body, gm.kind, gm.created_at, u.username, p.display_name, p.avatar
+      `SELECT gm.id, gm.sender_id, gm.body, gm.kind, gm.created_at, gm.reply_to, u.username, p.display_name, p.avatar,
+              r.id AS r_id, r.sender_id AS r_sender, r.body AS r_body, r.kind AS r_kind,
+              COALESCE(rp.display_name, ru.username) AS r_name
        FROM group_messages gm
        JOIN users u ON u.id = gm.sender_id
        LEFT JOIN profiles p ON p.user_id = gm.sender_id
+       LEFT JOIN group_messages r ON r.id = gm.reply_to
+       LEFT JOIN users ru ON ru.id = r.sender_id
+       LEFT JOIN profiles rp ON rp.user_id = r.sender_id
        WHERE gm.group_id = ?
        ORDER BY gm.created_at ASC
        LIMIT 200`
@@ -176,9 +183,21 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       at: r.created_at,
       mine: r.sender_id === req.user.id,
       poll: r.kind === 'poll' ? polls.pollPayload(polls.pollIdFromBody(r.body), req.user.id) : undefined,
+      quiz: r.kind === 'quiz' ? chatQuiz.sessionPayload(chatQuiz.chatQuizIdFromBody(r.body), req.user.id) : undefined,
+      replyTo: r.reply_to || null,
+      reply: r.r_id ? { id: r.r_id, from: r.r_sender, fromName: r.r_name, kind: r.r_kind, text: quoteText(r.r_kind, r.r_body) } : null,
     })),
   });
 });
+
+// Short text for a quoted message (replies), by kind.
+function quoteText(kind, body) {
+  let text = body;
+  if (kind === 'gift') { const g = getGift(body); text = g ? `${g.emoji} ${g.name}` : 'a gift'; }
+  else if (kind === 'poll') text = polls.pollLabel(polls.pollIdFromBody(body));
+  else if (kind === 'quiz') text = chatQuiz.quizLabel(chatQuiz.chatQuizIdFromBody(body));
+  return String(text || '').slice(0, 140);
+}
 
 // POST /api/groups/:id/invite  { username } — invite one more connection.
 router.post('/:id/invite', requireAuth, (req, res) => {

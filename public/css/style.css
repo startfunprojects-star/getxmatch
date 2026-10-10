@@ -411,6 +411,14 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .poll-card .poll-opt-text { position: relative; z-index: 1; flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .poll-card .poll-opt-count { position: relative; z-index: 1; flex: none; font-weight: 700; font-size: 13px; color: var(--muted); }
 .poll-card .time { color: var(--muted); font-size: 10px; }
+/* Group quiz: "You & Asha — 80%" for each member who has finished. */
+.quiz-group-row {
+  display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 10px;
+  padding: 8px 10px; margin-top: 6px; border-radius: var(--radius-sm); background: var(--bg-3);
+}
+.qg-name { font-weight: 600; }
+.qg-pct { font-size: 20px; font-weight: 800; color: var(--accent); }
+.qg-sub { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
 
 /* Gender-coloured vote segments + legend (shared by chat & explore polls). */
 .vote-seg { height: 100%; min-width: 0; }
