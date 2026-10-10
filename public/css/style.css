@@ -1901,11 +1901,12 @@ a.share-link:hover { text-decoration: underline; }
 
 /* Minimized: a small floating window so you can keep using the app. */
 .call-panel.min { inset: auto 20px 20px auto; width: min(340px, 92vw); height: 280px; }
-/* Minimized window can be dragged anywhere (see makeCallPanelDraggable). */
-.call-panel.min { cursor: grab; touch-action: none; user-select: none; }
-.call-panel.min.dragging { cursor: grabbing; box-shadow: 0 24px 60px rgba(0, 0, 0, .7); transition: none; }
-.call-panel.min.dragging video { pointer-events: none; }
-.call-panel.min button { cursor: pointer; }
+/* Floating windows that can be dragged anywhere (see makeDraggable): the
+   minimized call window and the screen-share window. */
+.call-panel.min, .screen-panel.draggable { cursor: grab; touch-action: none; user-select: none; }
+.call-panel.min.dragging, .screen-panel.dragging { cursor: grabbing; box-shadow: 0 24px 60px rgba(0, 0, 0, .7); transition: none; }
+.call-panel.min.dragging video, .screen-panel.dragging video { pointer-events: none; }
+.call-panel.min button, .screen-panel button { cursor: pointer; }
 .call-panel.min .call-chat { display: none; }
 .call-panel.min .call-controls { padding: 6px; gap: 4px; }
 .call-panel.min .call-btn { min-width: 50px; }

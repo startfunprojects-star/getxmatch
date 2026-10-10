@@ -3755,6 +3755,7 @@
         <video id="screenVideo" autoplay playsinline></video>
       </div>`);
     document.body.appendChild(panel);
+    makeDraggable(panel, { onMove: (x, y) => { state.screenPanelPos = { x, y }; } });
     panel.querySelector('#screenCloseBtn').addEventListener('click', () => stopScreenShare());
     panel.querySelector('#screenFsBtn').addEventListener('click', () => {
       const v = panel.querySelector('#screenVideo');
@@ -3765,6 +3766,11 @@
 
   function showScreenPanel(title) {
     const panel = screenPanel();
+    // Re-open where it was last dragged to (kept on screen).
+    if (state.screenPanelPos && panel.classList.contains('hidden')) {
+      panel.classList.remove('hidden');
+      placeFloating(panel, state.screenPanelPos.x, state.screenPanelPos.y);
+    }
     panel.querySelector('#screenTitle').textContent = title;
     panel.classList.remove('hidden');
     return panel;
@@ -4323,45 +4329,42 @@
     });
   }
 
-  /* ----- minimized call window: drag it anywhere -----
-     While minimized, the small window can be dragged by any part that isn't a
-     button (mouse or finger). It stays fully on screen — also when the browser
-     window is resized — and remembers where it was for the next minimize. */
-  function setCallMinimized(on) {
-    const call = state.call;
-    const panel = document.getElementById('callPanel');
-    if (!call || !panel) return;
-    panel.classList.toggle('min', on);
-    if (on && call.minPos) placeCallPanel(panel, call.minPos.x, call.minPos.y);
-    else clearCallPanelPos(panel);
-  }
-
-  function clearCallPanelPos(panel) {
-    ['left', 'top', 'right', 'bottom', 'width'].forEach((k) => { panel.style[k] = ''; });
-    panel.classList.remove('moved');
-  }
-
-  // Put the minimized window's top-left corner at (x, y), kept on screen.
-  function placeCallPanel(panel, x, y) {
+  /* ----- floating windows you can drag anywhere -----
+     Used by the minimized video-call window and the screen-share window. Grab
+     any part that isn't a button (mouse or finger) and move it; it stays fully
+     on screen — also when the browser window is resized or the phone rotates.
+     opts.active() says whether it may be dragged right now; opts.onMove(x, y)
+     remembers where it was left. */
+  function placeFloating(panel, x, y) {
     const w = panel.offsetWidth, h = panel.offsetHeight;
-    const maxX = Math.max(0, window.innerWidth - w), maxY = Math.max(0, window.innerHeight - h);
-    x = Math.min(maxX, Math.max(0, x));
-    y = Math.min(maxY, Math.max(0, y));
+    x = Math.min(Math.max(0, window.innerWidth - w), Math.max(0, x));
+    y = Math.min(Math.max(0, window.innerHeight - h), Math.max(0, y));
     panel.style.width = w + 'px'; // phones stretch it edge to edge; freeze that width while it floats
     panel.style.left = x + 'px';
     panel.style.top = y + 'px';
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
     panel.classList.add('moved');
-    if (state.call) state.call.minPos = { x, y };
+    return { x, y };
   }
 
-  function makeCallPanelDraggable(panel, call) {
+  function clearFloatingPos(panel) {
+    ['left', 'top', 'right', 'bottom', 'width'].forEach((k) => { panel.style[k] = ''; });
+    panel.classList.remove('moved');
+  }
+
+  function makeDraggable(panel, opts) {
+    opts = opts || {};
+    const active = opts.active || (() => true);
+    const onMove = opts.onMove || (() => {});
     let drag = null;
+    panel.classList.add('draggable');
     panel.addEventListener('pointerdown', (e) => {
-      if (!panel.classList.contains('min') || e.button > 0) return;
+      if (!active() || e.button > 0) return;
       if (e.target.closest('button, input, textarea, select, a, form, .zoom-ctl')) return;
       const r = panel.getBoundingClientRect();
+      // The bottom-right corner of a resizable window resizes it instead.
+      if (getComputedStyle(panel).resize !== 'none' && e.clientX > r.right - 22 && e.clientY > r.bottom - 22) return;
       drag = { id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY, moving: false };
     });
     window.addEventListener('pointermove', (e) => {
@@ -4374,7 +4377,8 @@
         try { panel.setPointerCapture(drag.id); } catch (_e) {}
       }
       e.preventDefault();
-      placeCallPanel(panel, e.clientX - drag.dx, e.clientY - drag.dy);
+      const pos = placeFloating(panel, e.clientX - drag.dx, e.clientY - drag.dy);
+      onMove(pos.x, pos.y);
     });
     const end = (e) => {
       if (!drag || (e && e.pointerId !== drag.id)) return;
@@ -4386,14 +4390,32 @@
     // Keep it on screen when the browser window changes size or rotates.
     const onResize = () => {
       if (!document.body.contains(panel)) return window.removeEventListener('resize', onResize);
-      if (panel.classList.contains('min') && panel.classList.contains('moved')) {
-        // Keep its size (narrowing only if the screen got smaller), then pull it back on screen.
-        panel.style.width = Math.min(panel.offsetWidth, window.innerWidth - 16) + 'px';
-        const r = panel.getBoundingClientRect();
-        placeCallPanel(panel, r.left, r.top);
-      }
+      if (!panel.classList.contains('moved') || !active()) return;
+      // Keep its size (narrowing only if the screen got smaller), then pull it back on screen.
+      panel.style.width = Math.min(panel.offsetWidth, window.innerWidth - 16) + 'px';
+      const r = panel.getBoundingClientRect();
+      const pos = placeFloating(panel, r.left, r.top);
+      onMove(pos.x, pos.y);
     };
     window.addEventListener('resize', onResize);
+  }
+
+  // Minimized call window: draggable while minimized; it returns to the same
+  // spot the next time the call is minimized.
+  function setCallMinimized(on) {
+    const call = state.call;
+    const panel = document.getElementById('callPanel');
+    if (!call || !panel) return;
+    panel.classList.toggle('min', on);
+    if (on && call.minPos) placeFloating(panel, call.minPos.x, call.minPos.y);
+    else clearFloatingPos(panel);
+  }
+
+  function makeCallPanelDraggable(panel, call) {
+    makeDraggable(panel, {
+      active: () => panel.classList.contains('min'),
+      onMove: (x, y) => { call.minPos = { x, y }; },
+    });
   }
 
   /* ----- screen sharing inside a call -----
