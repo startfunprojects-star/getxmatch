@@ -264,6 +264,20 @@ db.exec(`
 })();
 db.exec('CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages (expires_at);');
 
+// --- Migration: WhatsApp-style receipts. delivered_at = when the message
+// reached one of the recipient's live tabs (✓✓), read_at = when they had the
+// conversation open (blue ✓✓). Messages from before tracking existed are
+// treated as already read, so old chats don't show stale single ticks.
+(function migrateMessageReceipts() {
+  const cols = db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
+  if (!cols.includes('delivered_at')) {
+    db.exec('ALTER TABLE messages ADD COLUMN delivered_at INTEGER;');
+    db.exec('ALTER TABLE messages ADD COLUMN read_at INTEGER;');
+    db.exec('UPDATE messages SET delivered_at = created_at, read_at = created_at;');
+  }
+})();
+db.exec('CREATE INDEX IF NOT EXISTS idx_messages_undelivered ON messages (recipient_id, delivered_at);');
+
 // --- Migration: multi-dimension ratings. A rating of another user now carries
 // four independent 1-5 star scores (Knowledgeable / Helpful / Creative / Thoughtful), stored
 // as nullable columns on the existing ratings row. The legacy `stars` column is

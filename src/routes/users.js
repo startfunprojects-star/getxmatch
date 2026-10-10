@@ -107,7 +107,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
 
   const rows = db
     .prepare(
-      `SELECT m.id, m.sender_id, m.recipient_id, m.body, m.kind, m.created_at, m.reply_to,
+      `SELECT m.id, m.sender_id, m.recipient_id, m.body, m.kind, m.created_at, m.reply_to, m.delivered_at, m.read_at,
               r.id AS reply_id, r.sender_id AS reply_sender, r.body AS reply_body, r.kind AS reply_kind
        FROM messages m
        LEFT JOIN messages r ON r.id = m.reply_to
@@ -145,6 +145,8 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       kind: m.kind || 'text',
       at: m.created_at,
       mine: m.sender_id === req.user.id,
+      // Tick state of my own messages: sent → delivered → read.
+      status: m.read_at ? 'read' : m.delivered_at ? 'delivered' : 'sent',
       replyTo: m.reply_to || null,
       reply: buildReplyPreview(m),
       reactions: reactionsByMsg.get(m.id) || [],

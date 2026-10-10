@@ -305,6 +305,18 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .msg-row .bubble:not(.has-narration) .bubble-author { color: #8c2f39; }
 .msg-row .bubble:not(.has-narration) .time { color: rgba(20, 23, 31, .55); }
 
+/* WhatsApp-style receipts after the time: ✓ sent, ✓✓ delivered, blue ✓✓ read.
+   The time line keeps full opacity so the blue reads clearly; its own text is
+   already muted by its colour. */
+.bubble .time:has(.ticks) { opacity: 1; }
+.ticks {
+  display: inline-block; margin-left: 4px; font-size: 12px; font-weight: 700;
+  letter-spacing: -4px; padding-right: 4px; /* tuck the two ticks together */
+  color: rgba(20, 23, 31, .45); transition: color .25s;
+}
+.ticks.sent { letter-spacing: 0; padding-right: 0; }
+.ticks.read { color: #1a8cff; }
+
 /* Tail = an outer ink triangle with a slightly-inset fill triangle on top, so
    it reads as an outlined comic tail whose tip reaches into the picture. */
 .msg-row .bubble:not(.has-narration)::before,

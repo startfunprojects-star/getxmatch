@@ -2025,6 +2025,7 @@
         // order they were first shown live. (Array.sort is stable.)
         timeline.sort((a, b) => (a.at - b.at) || (a.seq - b.seq));
         timeline.forEach((it) => it.render());
+        markChatRead();
       }
     } catch (_e) {}
     scrollBody();
@@ -2161,8 +2162,54 @@
     row.appendChild(bubble);
     b.appendChild(row);
     ensureAvatars(uid, fallback);
+    // My stored 1:1 messages carry WhatsApp-style ticks after the time.
+    if (mine && m.id && m.groupId == null) {
+      const time = bubble.querySelector(':scope > .time');
+      if (time) time.appendChild(tickEl(m.status));
+    }
     return row;
   }
+
+  /* ---------- read receipts (1:1) ----------
+     ✓ sent · ✓✓ delivered · blue ✓✓ read. The server stamps delivery/read
+     and pushes `chat:receipt`; the open, visible conversation reports itself
+     read with `chat:read`. */
+  const TICK_RANK = { sent: 0, delivered: 1, read: 2 };
+  const TICK_LABEL = { sent: 'Sent', delivered: 'Delivered', read: 'Seen' };
+
+  function tickEl(status) {
+    const t = el('<span class="ticks"></span>');
+    setTicks(t, status || 'sent');
+    return t;
+  }
+
+  function setTicks(t, status) {
+    // Ticks only ever move forward (a late "delivered" never undoes "read").
+    if (t.dataset.status && TICK_RANK[t.dataset.status] >= TICK_RANK[status]) return;
+    t.dataset.status = status;
+    t.className = 'ticks ' + status;
+    t.textContent = status === 'sent' ? '✓' : '✓✓';
+    t.title = TICK_LABEL[status];
+  }
+
+  function applyReceipt(r) {
+    if (!r || !state.peer || state.peer.id !== r.peerId || !Array.isArray(r.ids)) return;
+    const b = chatBody();
+    if (!b) return;
+    r.ids.forEach((id) => {
+      const t = b.querySelector(`.bubble[data-id="${Number(id)}"] .ticks`);
+      if (t) setTicks(t, r.status);
+    });
+  }
+
+  // Tell the server I've seen the open conversation (only while it's on screen).
+  function markChatRead() {
+    if (!state.socket || !state.peer || !chatBody()) return;
+    if (document.visibilityState !== 'visible') return;
+    state.socket.emit('chat:read', { peer: state.peer.id });
+  }
+  document.addEventListener('visibilitychange', markChatRead);
+  window.addEventListener('focus', markChatRead);
 
   /* ---------- rich message bodies: clickable links + inline media ---------- */
   const URL_RE = /(https?:\/\/[^\s<]+)/gi;
@@ -2968,7 +3015,7 @@
     state.socket.emit('chat:gift', { to: state.peer.id, gift: giftId }, (res) => {
       if (res && res.error) return notify(res.error);
       const m = (res && res.message) || {};
-      appendGiftBubble({ body: giftId, mine: true, at: m.at || Date.now(), id: m.id });
+      appendGiftBubble({ body: giftId, mine: true, at: m.at || Date.now(), id: m.id, status: m.status });
     });
   }
 
@@ -2992,7 +3039,7 @@
       if (res && res.error) return notify(res.error);
       // Echo is handled here for the sending tab. Use the server's returned body.
       const m = (res && res.message) || {};
-      appendTextBubble({ body: m.body != null ? m.body : body, mine: true, at: m.at || Date.now(), id: m.id, reply: m.reply || replySnapshot });
+      appendTextBubble({ body: m.body != null ? m.body : body, mine: true, at: m.at || Date.now(), id: m.id, status: m.status, reply: m.reply || replySnapshot });
     });
   }
 
@@ -3694,8 +3741,10 @@
       if (!state.chatPeers[m.to] && m.to !== state.me.id) rememberPeer(m.to);
       const peerId = state.peer && state.peer.id;
       const relevant = peerId && (m.from === peerId || m.to === peerId);
-      if (relevant) appendMessage(m);
-      else {
+      if (relevant) {
+        appendMessage(m);
+        if (m.from === peerId) markChatRead(); // reading it as it arrives → blue ticks
+      } else {
         // Message for a non-active conversation: flag its tab if it's open.
         const otherId = m.from === state.me.id ? m.to : m.from;
         if (state.openChats.some((p) => p.id === otherId)) {
@@ -3862,6 +3911,8 @@
 
     // A new Highway post from anyone — prepend it to an open Highway feed.
     s.on('highway:new', (p) => { if (p && p.id) pushHighwayPost(p); });
+
+    s.on('chat:receipt', (r) => applyReceipt(r));
 
     s.on('chat:reaction', (e) => {
       if (e && e.messageId != null) updateReaction(e.messageId, e.userId, e.emoji);

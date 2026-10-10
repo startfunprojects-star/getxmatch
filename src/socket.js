@@ -184,8 +184,8 @@ function notifyHighwayEvent(event) {
     text: event.text || '',
   });
   const info = db
-    .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'hwevent', ?, NULL)")
-    .run(o.a, o.b, body, now);
+    .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at, delivered_at, read_at) VALUES (?, ?, ?, 'hwevent', ?, NULL, ?, ?)")
+    .run(o.a, o.b, body, now, now, now);
   const msg = { id: info.lastInsertRowid, from: o.a, to: o.b, body, kind: 'hwevent', at: now };
   if (ioRef) {
     ioRef.to(`user:${o.a}`).emit('chat:message', { ...msg, mine: true });
@@ -271,6 +271,52 @@ function leaveCall(io, room, userId, socketId) {
   }
 }
 
+/* --------------------------------------------------------------------------
+   Message receipts (WhatsApp-style ticks) for 1:1 chat.
+   ✓ sent (stored) · ✓✓ delivered (reached a live tab of the recipient) ·
+   blue ✓✓ read (the recipient had the conversation open).
+-------------------------------------------------------------------------- */
+
+// delivered_at for a message being sent now: stamped at once if the recipient
+// has a live tab, otherwise left NULL until they connect.
+function deliveredNow(recipientId, now) {
+  return isOnline(recipientId) ? now : null;
+}
+function receiptStatus(recipientId) {
+  return isOnline(recipientId) ? 'delivered' : 'sent';
+}
+
+// Tell each sender which of their messages changed state, as one
+// `chat:receipt` per sender: { peerId: who received/read, ids, status }.
+function emitReceipts(io, rows, peerId, status) {
+  const bySender = new Map();
+  rows.forEach((r) => {
+    if (!bySender.has(r.sender_id)) bySender.set(r.sender_id, []);
+    bySender.get(r.sender_id).push(r.id);
+  });
+  bySender.forEach((ids, senderId) => io.to(`user:${senderId}`).emit('chat:receipt', { peerId, ids, status }));
+}
+
+// A user just came online: everything waiting for them is now delivered.
+function markDelivered(io, userId) {
+  const rows = db.prepare('SELECT id, sender_id FROM messages WHERE recipient_id = ? AND delivered_at IS NULL').all(userId);
+  if (!rows.length) return;
+  db.prepare('UPDATE messages SET delivered_at = ? WHERE recipient_id = ? AND delivered_at IS NULL').run(Date.now(), userId);
+  emitReceipts(io, rows, userId, 'delivered');
+}
+
+// `readerId` has the conversation with `senderId` open: mark it all read.
+function markRead(io, readerId, senderId) {
+  const rows = db
+    .prepare('SELECT id, sender_id FROM messages WHERE recipient_id = ? AND sender_id = ? AND read_at IS NULL')
+    .all(readerId, senderId);
+  if (!rows.length) return;
+  const now = Date.now();
+  db.prepare('UPDATE messages SET read_at = ?, delivered_at = COALESCE(delivered_at, ?) WHERE recipient_id = ? AND sender_id = ? AND read_at IS NULL')
+    .run(now, now, readerId, senderId);
+  emitReceipts(io, rows, readerId, 'read');
+}
+
 // Display name (or @username) for a user id.
 function nameOf(uid) {
   const r = db
@@ -311,6 +357,13 @@ function initSocket(io) {
     // Personal room makes it easy to target all of a user's sockets.
     socket.join(`user:${me.id}`);
     if (wasOffline) broadcastPresence(io, me.id, true);
+    markDelivered(io, me.id); // messages that arrived while offline → ✓✓
+
+    // I have a 1:1 conversation open and visible → blue ticks for its sender.
+    socket.on('chat:read', (payload) => {
+      const peer = parseInt(payload && payload.peer, 10);
+      if (peer && peer !== me.id) markRead(io, me.id, peer);
+    });
 
     // Text message → persisted to history, then delivered live if online.
     socket.on('chat:message', (payload, ack) => {
@@ -333,8 +386,8 @@ function initSocket(io) {
         const now = Date.now();
 
         const info = db
-          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at, expires_at) VALUES (?, ?, ?, 'text', ?, ?, NULL)")
-          .run(me.id, to, body, replyTo, now);
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, reply_to, created_at, expires_at, delivered_at) VALUES (?, ?, ?, 'text', ?, ?, NULL, ?)")
+          .run(me.id, to, body, replyTo, now, deliveredNow(to, now));
 
         // Reply target: normally another persisted message. A reply to a shared
         // FILE (which isn't in the DB) carries a client snapshot instead — the
@@ -345,7 +398,7 @@ function initSocket(io) {
           const from = parseInt(rf.from, 10) === to ? to : me.id;
           reply = { id: rf.id.slice(0, 64), from, kind: 'file', text: String(rf.text || '📎 File').slice(0, 140) };
         }
-        const msg = { id: info.lastInsertRowid, from: me.id, to, body, kind: 'text', at: now, replyTo, reply };
+        const msg = { id: info.lastInsertRowid, from: me.id, to, body, kind: 'text', at: now, replyTo, reply, status: receiptStatus(to) };
 
         // Deliver to recipient's sockets and echo to sender's other tabs.
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
@@ -442,10 +495,10 @@ function initSocket(io) {
 
         const now = Date.now();
         const info = db
-          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'gift', ?, NULL)")
-          .run(me.id, to, gift.id, now);
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at, delivered_at) VALUES (?, ?, ?, 'gift', ?, NULL, ?)")
+          .run(me.id, to, gift.id, now, deliveredNow(to, now));
 
-        const msg = { id: info.lastInsertRowid, from: me.id, to, body: gift.id, kind: 'gift', at: now };
+        const msg = { id: info.lastInsertRowid, from: me.id, to, body: gift.id, kind: 'gift', at: now, status: receiptStatus(to) };
 
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
         socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
@@ -508,8 +561,8 @@ function initSocket(io) {
         const pollId = polls.createPoll({ creatorId: me.id, ...clean, dmA: me.id, dmB: to });
         const now = Date.now();
         const info = db
-          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'poll', ?, NULL)")
-          .run(me.id, to, JSON.stringify({ pollId }), now);
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at, delivered_at) VALUES (?, ?, ?, 'poll', ?, NULL, ?)")
+          .run(me.id, to, JSON.stringify({ pollId }), now, deliveredNow(to, now));
         polls.attachMessage(pollId, info.lastInsertRowid);
 
         const base = { id: info.lastInsertRowid, from: me.id, to, kind: 'poll', at: now };
@@ -574,8 +627,8 @@ function initSocket(io) {
         const chatQuizId = chatQuiz.startSession({ quizId, creatorId: me.id, dmA: me.id, dmB: to });
         const now = Date.now();
         const info = db
-          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at) VALUES (?, ?, ?, 'quiz', ?, NULL)")
-          .run(me.id, to, JSON.stringify({ chatQuizId }), now);
+          .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at, delivered_at) VALUES (?, ?, ?, 'quiz', ?, NULL, ?)")
+          .run(me.id, to, JSON.stringify({ chatQuizId }), now, deliveredNow(to, now));
         chatQuiz.attachMessage(chatQuizId, info.lastInsertRowid);
 
         const base = { id: info.lastInsertRowid, from: me.id, to, kind: 'quiz', at: now };
