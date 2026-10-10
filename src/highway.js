@@ -17,11 +17,31 @@ const SELECT =
      JOIN users u ON u.id = h.user_id
      LEFT JOIN profiles p ON p.user_id = h.user_id`;
 
+// A post's photos/videos in order: [{ filename, kind }]. Older posts have only
+// the single `image` column.
+function postMedia(postId, legacyImage) {
+  const rows = db.prepare('SELECT filename, kind FROM highway_media WHERE post_id = ? ORDER BY position, id').all(postId);
+  if (rows.length) return rows;
+  return legacyImage ? [{ filename: legacyImage, kind: 'image' }] : [];
+}
+
+// Every uploaded file belonging to a post (to unlink when it's deleted).
+function postFiles(postId) {
+  const row = db.prepare('SELECT image FROM highway_posts WHERE id = ?').get(postId);
+  const files = new Set(postMedia(postId, row && row.image).map((m) => m.filename));
+  if (row && row.image) files.add(row.image);
+  return [...files];
+}
+
 // Create a Highway post and prune the pool back to the cap. `opts.origin` is
-// { kind, a, b } linking the post to a conversation, or null. Returns
-// { id, prunedImages } — the caller broadcasts and unlinks the pruned images.
+// { kind, a, b } linking the post to a conversation, or null. `opts.media` is
+// [{ filename, kind }] (photos and videos, in order); `opts.image` a single
+// photo (older callers). Returns { id, prunedImages } — the caller broadcasts
+// and unlinks the pruned files.
 function createPost(opts) {
   const now = Date.now();
+  const media = opts.media || (opts.image ? [{ filename: opts.image, kind: 'image' }] : []);
+  const firstImage = (media.find((m) => m.kind === 'image') || {}).filename || null;
   const info = db
     .prepare(
       `INSERT INTO highway_posts (user_id, body, image, origin_kind, origin_a, origin_b, created_at)
@@ -30,12 +50,14 @@ function createPost(opts) {
     .run(
       opts.userId,
       opts.body || '',
-      opts.image || null,
+      firstImage,
       opts.origin ? opts.origin.kind : null,
       opts.origin ? opts.origin.a : null,
       opts.origin ? opts.origin.b : null,
       now
     );
+  const ins = db.prepare('INSERT INTO highway_media (post_id, filename, kind, position) VALUES (?, ?, ?, ?)');
+  media.forEach((m, i) => ins.run(info.lastInsertRowid, m.filename, m.kind, i));
   const prunedImages = prune().filter(Boolean);
   return { id: info.lastInsertRowid, prunedImages };
 }
@@ -67,9 +89,10 @@ function prune() {
       WHERE pinned = 0
         AND id NOT IN (SELECT id FROM highway_posts WHERE pinned = 0 ORDER BY created_at DESC, id DESC LIMIT ?)`
   ).all(keepUnpinned);
+  const files = stale.flatMap((s) => postFiles(s.id)); // read before the rows go
   const del = db.prepare('DELETE FROM highway_posts WHERE id = ?');
   stale.forEach((s) => del.run(s.id));
-  return stale.map((s) => s.image).filter(Boolean);
+  return files;
 }
 
 // --- Audience rule: a member sees a post on the Highway only when its author is
@@ -122,5 +145,6 @@ function canSeeAuthor(viewerId, authorId) {
 
 module.exports = {
   MAX_POSTS, MIN_SHARED_INTERESTS, SELECT, orderRows, allOrdered, byId, prune, createPost,
+  postMedia, postFiles,
   audienceFilter, canSeeAuthor,
 };

@@ -14,8 +14,8 @@ const rateLimit = require('express-rate-limit');
 const db = require('../db');
 const config = require('../config');
 const { requireAuth } = require('../auth');
-const { imageUpload } = require('../upload');
-const { nsfwGuard } = require('../nsfw');
+const { mediaUpload } = require('../upload');
+const nsfw = require('../nsfw');
 const { friendState } = require('../profileData');
 const { areBlocked, ignoredIds } = require('../relations');
 const { broadcastHighway, notifyHighwayEvent, broadcastLeaderboardChange } = require('../socket');
@@ -25,6 +25,7 @@ const router = express.Router();
 
 const BODY_MAX = 2000;
 const COMMENT_MAX = 500;
+const MAX_MEDIA = 10; // photos + videos per post
 
 function nameOf(userId) {
   const r = db.prepare('SELECT p.display_name, u.username FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?').get(userId);
@@ -93,6 +94,7 @@ function shapePost(r, viewerId) {
     id: r.id,
     body: r.body || '',
     image: r.image ? `/uploads/${r.image}` : null,
+    media: hw.postMedia(r.id, r.image).map((m) => ({ url: `/uploads/${m.filename}`, kind: m.kind })),
     createdAt: r.created_at,
     author: {
       id: r.user_id,
@@ -121,14 +123,49 @@ router.get('/', requireAuth, (req, res) => {
   res.json({ posts, max: hw.MAX_POSTS });
 });
 
-// POST /api/highway — create a post (text and/or image), then prune to 100. An
-// optional `originPeer` links a picture shared straight from a chat back to that
-// conversation, so later likes/comments surface there.
-router.post('/', requireAuth, postLimiter, imageUpload.single('image'), nsfwGuard, (req, res) => {
+// Accept up to MAX_MEDIA photos/videos ("media"), or one photo ("image", used
+// by "Share to Highway" from a chat). Multer errors become a JSON 400.
+const takeMedia = (req, res, next) => {
+  mediaUpload.fields([{ name: 'media', maxCount: MAX_MEDIA }, { name: 'image', maxCount: 1 }])(req, res, (err) => {
+    if (!err) return next();
+    const msg = err.code === 'LIMIT_FILE_SIZE' ? 'A file is too large.'
+      : err.code === 'LIMIT_UNEXPECTED_FILE' ? `You can add up to ${MAX_MEDIA} photos or videos.`
+      : err.message;
+    res.status(400).json({ error: msg });
+  });
+};
+
+// Check every uploaded file: photos within the image size cap, and nothing
+// explicit. On any problem, all of this request's files are removed.
+async function vetMedia(req, res, next) {
+  const files = [...((req.files && req.files.media) || []), ...((req.files && req.files.image) || [])];
+  req.mediaFiles = files;
+  const reject = (error) => {
+    files.forEach((f) => removeUpload(f.filename));
+    res.status(400).json({ error });
+  };
+  try {
+    for (const f of files) {
+      const isVideo = f.mimetype.startsWith('video/');
+      if (!isVideo && f.size > config.maxUploadBytes) {
+        return reject(`Photos must be ${Math.round(config.maxUploadBytes / 1048576)} MB or smaller.`);
+      }
+      const result = isVideo ? await nsfw.checkVideo(f.path) : await nsfw.checkImage(f.path);
+      if (result.blocked) return reject(nsfw.rejectionMessage(result, isVideo ? 'a video' : 'an image'));
+    }
+    next();
+  } catch (e) { next(e); }
+}
+
+// POST /api/highway — create a post (text and/or photos/videos), then prune to
+// 100. An optional `originPeer` links a picture shared straight from a chat back
+// to that conversation, so later likes/comments surface there.
+router.post('/', requireAuth, postLimiter, takeMedia, vetMedia, (req, res) => {
   const body = String((req.body && req.body.body) || '').trim().slice(0, BODY_MAX);
-  const image = req.file ? req.file.filename : null;
-  if (!body && !image) {
-    return res.status(400).json({ error: 'Write something or add an image to post.' });
+  const media = req.mediaFiles.map((f) => ({ filename: f.filename, kind: f.mimetype.startsWith('video/') ? 'video' : 'image' }));
+  const image = (media.find((m) => m.kind === 'image') || {}).filename || null;
+  if (!body && !media.length) {
+    return res.status(400).json({ error: 'Write something or add a photo or video to post.' });
   }
 
   let origin = null;
@@ -140,7 +177,7 @@ router.post('/', requireAuth, postLimiter, imageUpload.single('image'), nsfwGuar
     }
   }
 
-  const { id, prunedImages } = hw.createPost({ userId: req.user.id, body, image, origin });
+  const { id, prunedImages } = hw.createPost({ userId: req.user.id, body, media, origin });
   prunedImages.forEach(removeUpload);
 
   const post = shapePost(hw.byId(id), req.user.id);
@@ -149,7 +186,7 @@ router.post('/', requireAuth, postLimiter, imageUpload.single('image'), nsfwGuar
   // in per-client, so send the neutral author-centric shape.
   try {
     broadcastHighway({
-      id: post.id, body: post.body, image: post.image,
+      id: post.id, body: post.body, image: post.image, media: post.media,
       createdAt: post.createdAt, author: post.author,
     }, (viewerId) => hw.canSeeAuthor(viewerId, req.user.id));
   } catch (_e) { /* never block the response */ }
@@ -185,6 +222,33 @@ router.get('/:id/comments', requireAuth, (req, res) => {
   const post = resolvePost(req, res);
   if (!post) return;
   res.json({ comments: postComments(post.id, req.user.id, post.user_id) });
+});
+
+// GET /api/highway/:id/likes — who liked a post, newest first.
+router.get('/:id/likes', requireAuth, (req, res) => {
+  const post = resolvePost(req, res);
+  if (!post) return;
+  const rows = db
+    .prepare(
+      `SELECT l.user_id, l.created_at, u.username, p.display_name, p.avatar
+         FROM highway_likes l
+         JOIN users u ON u.id = l.user_id
+         LEFT JOIN profiles p ON p.user_id = l.user_id
+        WHERE l.post_id = ?
+        ORDER BY l.created_at DESC
+        LIMIT 500`
+    )
+    .all(post.id);
+  res.json({
+    likes: rows.map((r) => ({
+      id: r.user_id,
+      username: r.username,
+      displayName: r.display_name || r.username,
+      avatar: r.avatar ? `/uploads/${r.avatar}` : null,
+      at: r.created_at,
+      friendState: friendState(r.user_id, req.user.id),
+    })),
+  });
 });
 
 // POST /api/highway/:id/like — toggle the viewer's like on a post.
@@ -278,8 +342,9 @@ router.delete('/:id', requireAuth, (req, res) => {
   const row = db.prepare('SELECT id, user_id, image FROM highway_posts WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Post not found.' });
   if (row.user_id !== req.user.id) return res.status(403).json({ error: 'You can only delete your own posts.' });
+  const files = hw.postFiles(row.id);
   db.prepare('DELETE FROM highway_posts WHERE id = ?').run(row.id);
-  removeUpload(row.image);
+  files.forEach(removeUpload);
   res.json({ ok: true });
 });
 

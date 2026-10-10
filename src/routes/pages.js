@@ -728,7 +728,9 @@ function highwayCard(p) {
         ${p.pinned ? '<span class="hw-pin">📌 Pinned</span>' : ''}
       </header>
       ${p.body ? renderUserText(p.body) : ''}
-      ${p.image ? `<a href="/uploads/${escAttr(p.image)}" target="_blank" rel="noopener"><img class="hw-card-img" src="/uploads/${escAttr(p.image)}" alt="" loading="lazy" /></a>` : ''}
+      ${hw.postMedia(p.id, p.image).map((m) => m.kind === 'video'
+        ? `<video class="hw-card-img" src="/uploads/${escAttr(m.filename)}" controls preload="metadata" playsinline></video>`
+        : `<a href="/uploads/${escAttr(m.filename)}" target="_blank" rel="noopener"><img class="hw-card-img" src="/uploads/${escAttr(m.filename)}" alt="" loading="lazy" /></a>`).join('')}
     </article>`;
 }
 

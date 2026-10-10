@@ -55,4 +55,19 @@ const videoUpload = multer({
   limits: { fileSize: config.maxReelBytes },
 });
 
-module.exports = { imageUpload, videoUpload };
+// Highway posts: several photos and/or videos at once. Each file is capped at
+// the reel size here; photos are held to the (smaller) image cap by the route.
+const MEDIA_ALLOWED = { ...ALLOWED, ...VIDEO_ALLOWED };
+const mediaUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, config.uploadsDir),
+    filename: (req, file, cb) => cb(null, crypto.randomBytes(16).toString('hex') + MEDIA_ALLOWED[file.mimetype]),
+  }),
+  fileFilter: (req, file, cb) => {
+    if (MEDIA_ALLOWED[file.mimetype]) return cb(null, true);
+    cb(new Error('Only photos (JPG, PNG, WEBP, GIF) and videos (MP4, MOV, WEBM) are allowed'));
+  },
+  limits: { fileSize: Math.max(config.maxReelBytes, config.maxUploadBytes) },
+});
+
+module.exports = { imageUpload, videoUpload, mediaUpload };

@@ -1123,8 +1123,9 @@ router.get('/highway', requireAdmin, (req, res) => {
 router.delete('/highway/:id', requireAdmin, (req, res) => {
   const row = db.prepare('SELECT id, image FROM highway_posts WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Post not found.' });
+  const files = hw.postFiles(row.id);
   db.prepare('DELETE FROM highway_posts WHERE id = ?').run(row.id);
-  removeUpload(row.image);
+  files.forEach(removeUpload);
   res.json({ ok: true });
 });
 

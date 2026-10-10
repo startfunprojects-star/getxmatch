@@ -1062,4 +1062,19 @@ db.exec("UPDATE users SET education_stream = education_stream || ' (General)' WH
   if (!cq.includes('group_id')) db.exec('ALTER TABLE chat_quizzes ADD COLUMN group_id INTEGER;');
 })();
 
+// --- Highway posts can carry several photos and/or videos. One row per file,
+// in display order. (highway_posts.image still names the first photo, for the
+// chat-share link, the public page and the admin list; posts from before this
+// table existed only have that column.)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS highway_media (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id   INTEGER NOT NULL REFERENCES highway_posts(id) ON DELETE CASCADE,
+    filename  TEXT NOT NULL,               -- in uploads/
+    kind      TEXT NOT NULL,               -- 'image' | 'video'
+    position  INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_highway_media_post ON highway_media (post_id, position);
+`);
+
 module.exports = db;

@@ -6129,12 +6129,13 @@
       <div class="card highway-composer">
         <textarea id="hwText" maxlength="2000" placeholder="Share something with everyone — a thought, a link, a YouTube / Instagram / Facebook URL…"></textarea>
         <div class="hw-compose-actions">
-          <label class="hw-attach" title="Attach an image">📷 <span id="hwFileName">Add image</span>
-            <input type="file" id="hwImage" accept="image/*" hidden />
+          <label class="hw-attach" title="Add photos or videos (up to 10)">📷 <span id="hwFileName">Add photos / videos</span>
+            <input type="file" id="hwImage" accept="image/*,video/*" multiple hidden />
           </label>
           <span class="spacer"></span>
           <button class="primary" id="hwPost">Post to Highway</button>
         </div>
+        <div class="hw-picked hidden" id="hwPicked"></div>
         <div class="msg" id="hwMsg"></div>
       </div>
     `);
@@ -6144,28 +6145,57 @@
     body.appendChild(feed);
     highwayFeed = feed;
 
+    // Picked photos/videos, previewed under the box; each can be removed.
+    const MAX_HW_MEDIA = 10;
     const fileInput = composer.querySelector('#hwImage');
     const fileName = composer.querySelector('#hwFileName');
+    const pickedBox = composer.querySelector('#hwPicked');
+    let picked = []; // [{ file, url }]
+    const renderPicked = () => {
+      pickedBox.innerHTML = '';
+      pickedBox.classList.toggle('hidden', !picked.length);
+      fileName.textContent = picked.length ? `${picked.length} selected · add more` : 'Add photos / videos';
+      picked.forEach((pk, i) => {
+        const isVideo = pk.file.type.startsWith('video/');
+        const cell = el(`<div class="hw-picked-item">${isVideo ? '<video muted playsinline></video><span class="hw-picked-badge">▶</span>' : '<img alt="" />'}<button type="button" class="hw-picked-x" title="Remove">✕</button></div>`);
+        cell.querySelector(isVideo ? 'video' : 'img').src = pk.url;
+        cell.querySelector('.hw-picked-x').addEventListener('click', () => {
+          URL.revokeObjectURL(pk.url);
+          picked.splice(i, 1);
+          renderPicked();
+        });
+        pickedBox.appendChild(cell);
+      });
+    };
     fileInput.addEventListener('change', () => {
-      fileName.textContent = fileInput.files[0] ? fileInput.files[0].name.slice(0, 22) : 'Add image';
+      const msg = composer.querySelector('#hwMsg'); msg.className = 'msg';
+      const files = Array.from(fileInput.files || []).filter((f) => /^(image|video)\//.test(f.type));
+      fileInput.value = '';
+      const room = MAX_HW_MEDIA - picked.length;
+      if (files.length > room) { msg.className = 'msg error'; msg.textContent = `You can add up to ${MAX_HW_MEDIA} photos or videos to one post.`; }
+      files.slice(0, Math.max(0, room)).forEach((file) => picked.push({ file, url: URL.createObjectURL(file) }));
+      renderPicked();
     });
     const postBtn = composer.querySelector('#hwPost');
     postBtn.addEventListener('click', async () => {
       const msg = composer.querySelector('#hwMsg'); msg.className = 'msg';
       const text = composer.querySelector('#hwText').value.trim();
-      if (!text && !fileInput.files[0]) { msg.className = 'msg error'; msg.textContent = 'Write something or add an image.'; return; }
+      if (!text && !picked.length) { msg.className = 'msg error'; msg.textContent = 'Write something or add a photo or video.'; return; }
       const fd = new FormData();
       fd.append('body', text);
-      if (fileInput.files[0]) fd.append('image', fileInput.files[0]);
+      picked.forEach((pk) => fd.append('media', pk.file));
       postBtn.disabled = true;
+      postBtn.textContent = picked.length ? 'Uploading…' : 'Posting…';
       try {
         const { post } = await api.postForm('/api/highway', fd);
         composer.querySelector('#hwText').value = '';
-        fileInput.value = ''; fileName.textContent = 'Add image';
+        picked.forEach((pk) => URL.revokeObjectURL(pk.url));
+        picked = [];
+        renderPicked();
         prependHighwayPost(feed, post);
         trimHighwayFeed(feed);
       } catch (e) { msg.className = 'msg error'; msg.textContent = e.message; }
-      finally { postBtn.disabled = false; }
+      finally { postBtn.disabled = false; postBtn.textContent = 'Post to Highway'; }
     });
 
     try {
@@ -6217,19 +6247,20 @@
 
     const bodyEl = card.querySelector('.hw-body');
     if (p.body) appendRichText(bodyEl, p.body); else bodyEl.remove();
-    if (p.image) {
-      const img = el('<img class="hw-image" loading="lazy" alt="shared image" />');
-      img.src = p.image;
-      img.addEventListener('click', () => openLightbox(p.image));
-      card.appendChild(img);
-    }
+    const media = (p.media && p.media.length) ? p.media : (p.image ? [{ url: p.image, kind: 'image' }] : []);
+    if (media.length) card.appendChild(highwayMediaEl(media));
 
     const actionSlot = card.querySelector('.hw-action');
     if (p.mine) {
-      const del = el('<button class="ghost small" title="Delete this post">Delete</button>');
-      del.addEventListener('click', async () => {
+      const del = el('<button class="ghost small" type="button" title="Delete this post">Delete</button>');
+      del.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
         if (!confirm('Delete this post?')) return;
-        try { await api.del('/api/highway/' + p.id); card.remove(); } catch (e) { alert(e.message); }
+        del.disabled = true;
+        try { await api.del('/api/highway/' + p.id); }
+        catch (e) { del.disabled = false; return notifyToast(e.message); }
+        removeHighwayCard(card);
       });
       actionSlot.appendChild(del);
     } else {
@@ -6248,8 +6279,8 @@
       <div class="hw-foot">
         <button class="hw-like${likes.mine ? ' on' : ''}" type="button" title="Like this post">
           <span class="hw-like-ico">${likes.mine ? '❤️' : '🤍'}</span>
-          <span class="hw-like-n">${likes.count || ''}</span>
         </button>
+        <button class="hw-like-n" type="button" title="See who liked this">${likesLabel(likes.count)}</button>
         <button class="hw-comment-toggle" type="button" title="Show comments">
           💬 <span class="hw-comment-n">${p.commentCount || ''}</span>
         </button>
@@ -6272,10 +6303,12 @@
         const { likes: st } = await api.post('/api/highway/' + p.id + '/like', {});
         likeBtn.classList.toggle('on', st.mine);
         likeBtn.querySelector('.hw-like-ico').textContent = st.mine ? '❤️' : '🤍';
-        likeBtn.querySelector('.hw-like-n').textContent = st.count || '';
+        foot.querySelector('.hw-like-n').textContent = likesLabel(st.count);
       } catch (e) { alert(e.message); }
       finally { likeBusy = false; }
     });
+
+    foot.querySelector('.hw-like-n').addEventListener('click', () => openHighwayLikes(p.id));
 
     const cToggle = foot.querySelector('.hw-comment-toggle');
     let loaded = false;
@@ -6362,6 +6395,85 @@
     }
   }
 
+  function likesLabel(n) {
+    return n ? `${n} like${n === 1 ? '' : 's'}` : '';
+  }
+
+  // A post's photos/videos: one shows big; 2–4 in a grid; more show "+N" on
+  // the 4th tile. Photos open a full-screen slideshow; videos play in place.
+  function highwayMediaEl(media) {
+    const shown = media.slice(0, 4);
+    const grid = el(`<div class="hw-media" data-count="${shown.length}"></div>`);
+    const photos = media.filter((m) => m.kind !== 'video');
+    shown.forEach((m, i) => {
+      const extra = i === 3 && media.length > 4 ? media.length - 4 : 0;
+      const tile = el('<div class="hw-media-tile"></div>');
+      if (m.kind === 'video') {
+        const v = el('<video controls preload="metadata" playsinline></video>');
+        v.src = m.url;
+        tile.appendChild(v);
+      } else {
+        const img = el('<img loading="lazy" alt="shared photo" />');
+        img.src = m.url;
+        img.addEventListener('click', () => openSlideshow(photos.map((ph) => ({ url: ph.url })), photos.indexOf(m)));
+        tile.appendChild(img);
+      }
+      if (extra) {
+        const more = el(`<button type="button" class="hw-media-more">+${extra}</button>`);
+        more.addEventListener('click', () => openHighwayMediaAll(media));
+        tile.appendChild(more);
+      }
+      grid.appendChild(tile);
+    });
+    return grid;
+  }
+
+  // Every photo/video of a post, one under the other.
+  function openHighwayMediaAll(media) {
+    const { card } = openModal(`${media.length} photos & videos`, '<div class="hw-media-all"></div>');
+    const list = card.querySelector('.hw-media-all');
+    media.forEach((m) => {
+      const node = m.kind === 'video' ? el('<video controls preload="metadata" playsinline></video>') : el('<img loading="lazy" alt="" />');
+      node.src = m.url;
+      list.appendChild(node);
+    });
+  }
+
+  // "Who liked this": everyone who liked a post, with a link to their profile.
+  async function openHighwayLikes(postId) {
+    const { card, close } = openModal('Liked by', '<div class="hw-likers"><div class="hint">Loading…</div></div>');
+    const box = card.querySelector('.hw-likers');
+    let likes = [];
+    try { likes = (await api.get('/api/highway/' + postId + '/likes')).likes || []; }
+    catch (e) { box.innerHTML = `<div class="hint">${esc(e.message)}</div>`; return; }
+    if (!likes.length) { box.innerHTML = '<div class="hint">No likes yet.</div>'; return; }
+    box.innerHTML = '';
+    likes.forEach((u) => {
+      const row = el(`
+        <button class="hw-liker" type="button">
+          <img class="avatar sm" src="${avatarUrl(u.avatar)}" alt="" />
+          <span class="hw-liker-name"><b></b> <span class="hint"></span></span>
+          <span class="hint">${fmtDate(u.at)}</span>
+        </button>`);
+      row.querySelector('b').textContent = u.id === (state.me && state.me.id) ? 'You' : u.displayName;
+      row.querySelector('.hw-liker-name .hint').textContent = '@' + u.username;
+      row.addEventListener('click', () => { close(); showProfile(u.username); });
+      box.appendChild(row);
+    });
+  }
+
+  // Take a deleted post off the feed, with any ad that sat right after it, and
+  // show the empty message if nothing is left.
+  function removeHighwayCard(card) {
+    const feed = card.parentNode;
+    const next = card.nextElementSibling;
+    if (next && next.classList.contains('ad-stream')) next.remove();
+    card.remove();
+    if (feed && !feed.querySelector('.highway-post') && !feed.querySelector('.empty-main')) {
+      feed.appendChild(el('<div class="empty-main">No posts yet — be the first to hit the Highway!</div>'));
+    }
+  }
+
   function prependHighwayPost(feed, post) {
     if (!feed) return;
     const dup = feed.querySelector(`.highway-post[data-id="${post.id}"]`);
@@ -6397,7 +6509,7 @@
     if (payload.author && state.ignored[payload.author.id]) return; // muted author
     const mine = !!(state.me && payload.author && payload.author.id === state.me.id);
     prependHighwayPost(highwayFeed, {
-      id: payload.id, body: payload.body, image: payload.image,
+      id: payload.id, body: payload.body, image: payload.image, media: payload.media,
       createdAt: payload.createdAt, author: payload.author, mine, friendState: mine ? 'self' : 'none',
     });
     trimHighwayFeed(highwayFeed);
