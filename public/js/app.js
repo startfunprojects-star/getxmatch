@@ -231,6 +231,137 @@
     });
   }
 
+  /* ---------- Oversized photos: offer to compress ----------
+     Photos must be IMAGE_MAX_BYTES or smaller (the server's MAX_UPLOAD_MB). When
+     someone picks bigger ones we ask whether to compress them; on yes, each is
+     re-encoded (and if needed scaled down) in the browser until it fits. GIFs
+     can't be shrunk without losing their animation, so those are explained and
+     skipped. */
+  const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+  const fmtMB = (n) => (n / 1048576).toFixed(1) + ' MB';
+
+  // Ask a yes/no question in a modal. Resolves true (yes) / false (no / closed).
+  function askYesNo(title, html, yesLabel, noLabel) {
+    return new Promise((resolve) => {
+      const { card, close } = openModal(title, `
+        <div class="ask-body">${html}</div>
+        <div class="row-actions">
+          <button class="primary" type="button" data-ans="yes">${esc(yesLabel)}</button>
+          ${noLabel ? `<button class="ghost" type="button" data-ans="no">${esc(noLabel)}</button>` : ''}
+        </div>`);
+      let done = false;
+      const finish = (v) => { if (done) return; done = true; close(); resolve(v); };
+      card.querySelector('[data-ans="yes"]').addEventListener('click', () => finish(true));
+      const no = card.querySelector('[data-ans="no"]');
+      if (no) no.addEventListener('click', () => finish(false));
+      // ✕ or a click outside counts as "no".
+      new MutationObserver((_m, obs) => {
+        if (!document.body.contains(card)) { obs.disconnect(); finish(false); }
+      }).observe(document.body, { childList: true });
+    });
+  }
+
+  function canvasBlob(canvas, type, quality) {
+    return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+  }
+
+  // Shrink one photo under `max` bytes: lower the quality step by step, then
+  // scale it down, keeping it as sharp as the limit allows. WebP keeps any
+  // transparency; browsers that can't write WebP get JPEG on white. Resolves
+  // with the smaller File, or null when it can't be brought under the limit.
+  async function compressImage(file, max) {
+    let bitmap;
+    try { bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+    catch (_e) {
+      try { bitmap = await createImageBitmap(file); } catch (_e2) { return null; }
+    }
+    const probe = document.createElement('canvas');
+    probe.width = probe.height = 1;
+    const type = probe.toDataURL('image/webp').startsWith('data:image/webp') ? 'image/webp' : 'image/jpeg';
+    const target = max * 0.95; // a little headroom under the limit
+    let scale = Math.min(1, 4096 / Math.max(bitmap.width, bitmap.height));
+    for (let round = 0; round < 8; round++) {
+      const w = Math.max(1, Math.round(bitmap.width * scale));
+      const h = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (type === 'image/jpeg') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); }
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      for (const q of [0.9, 0.82, 0.74, 0.65]) {
+        const blob = await canvasBlob(canvas, type, q);
+        if (blob && blob.size <= target) {
+          if (bitmap.close) bitmap.close();
+          const name = (file.name || 'photo').replace(/\.[^.]+$/, '') + (type === 'image/webp' ? '.webp' : '.jpg');
+          return new File([blob], name, { type });
+        }
+      }
+      if (Math.max(w, h) <= 640) break; // already small — don't make it unusable
+      scale *= 0.75;
+    }
+    if (bitmap.close) bitmap.close();
+    return null;
+  }
+
+  // Check a set of picked files. Photos over the limit are offered compression
+  // (one question for all of them). Resolves with the files to use: everything
+  // that fits, plus the successfully compressed ones. Videos pass through.
+  async function fitImagesToLimit(files, max) {
+    max = max || IMAGE_MAX_BYTES;
+    const list = Array.from(files || []).filter(Boolean);
+    const big = list.filter((f) => /^image\//.test(f.type) && f.size > max);
+    if (!big.length) return list;
+    const gifs = big.filter((f) => /image\/gif/i.test(f.type));
+    const photos = big.filter((f) => !/image\/gif/i.test(f.type));
+    const limit = fmtMB(max);
+    if (gifs.length) {
+      await askYesNo('GIF too large',
+        `<p>${gifs.length === 1 ? `This GIF is <b>${fmtMB(gifs[0].size)}</b>` : `${gifs.length} GIFs are`} over the ${limit} limit.
+         GIFs can't be compressed without losing their animation, so ${gifs.length === 1 ? 'it' : 'they'} won't be added.
+         Please choose a GIF that's ${limit} or smaller.</p>`, 'OK', '');
+    }
+    const keep = new Map(); // original → file to use
+    if (photos.length) {
+      const what = photos.length === 1
+        ? `This photo is <b>${fmtMB(photos[0].size)}</b>`
+        : `${photos.length} photos are larger than ${limit} (biggest: <b>${fmtMB(Math.max(...photos.map((f) => f.size)))}</b>)`;
+      const yes = await askYesNo('Photo too large',
+        `<p>${what}. Photos must be ${limit} or smaller.</p>
+         <p>Compress ${photos.length === 1 ? 'it' : 'them'} to fit? ${photos.length === 1 ? 'It' : 'They'}'ll look almost the same.</p>`,
+        'Compress', 'Cancel');
+      if (!yes) {
+        notifyToast(photos.length === 1 ? `Photo not added — it must be ${limit} or smaller.` : `${photos.length} photos not added — each must be ${limit} or smaller.`);
+      } else {
+        const busy = openModal('Compressing…', '<p class="hint">Making your photos smaller — this takes a moment.</p>');
+        const failed = [];
+        const shrunk = [];
+        for (const f of photos) {
+          const out = await compressImage(f, max);
+          if (out) { keep.set(f, out); shrunk.push(`${fmtMB(f.size)} → ${fmtMB(out.size)}`); }
+          else failed.push(f);
+        }
+        busy.close();
+        if (failed.length) {
+          await askYesNo('Couldn’t compress',
+            `<p>${failed.length === 1 ? 'One photo' : `${failed.length} photos`} couldn't be brought under ${limit} without ruining the quality, so ${failed.length === 1 ? 'it' : 'they'} won't be added.
+             Please choose a smaller photo${failed.length === 1 ? '' : 's'}.</p>`, 'OK', '');
+        }
+        if (shrunk.length) notifyToast(`Compressed: ${shrunk.join(', ')}`);
+      }
+    }
+    // Keep the picked order; drop what didn't fit.
+    return list
+      .map((f) => (big.includes(f) ? keep.get(f) || null : f))
+      .filter(Boolean);
+  }
+
+  // Single-file version: resolves with a file that fits, or null.
+  async function fitImageToLimit(file, max) {
+    if (!file) return null;
+    const out = await fitImagesToLimit([file], max);
+    return out[0] || null;
+  }
+
   /* ================= Advertisements =================
      Ads are fetched once and rendered into named placement slots. Image ads are
      click-tracked via a redirect; script ads run inside a sandboxed same-origin
@@ -886,8 +1017,9 @@
       const picked = avInput.files[0] || null;
       avInput.value = '';
       if (!picked) return;
-      const cropped = await cropImage(picked); // let the user keep just part of it
-      if (!cropped) return; // cancelled
+      // Let the user keep just part of it, then make sure it fits the 5 MB limit.
+      const cropped = await fitImageToLimit(await cropImage(picked));
+      if (!cropped) return; // cancelled / too large
       avatarFile = cropped;
       wrap.querySelector('#avPreview').src = URL.createObjectURL(avatarFile);
     });
@@ -1784,7 +1916,10 @@
     onStatus = onStatus || function () {};
     if (!file) return false;
     if (!/^image\//.test(file.type)) { onStatus('Please choose an image or GIF.', true); return false; }
-    if (file.size > ACTIVITY_IMG_MAX_BYTES) { onStatus('Image must be 5 MB or smaller.', true); return false; }
+    if (file.size > ACTIVITY_IMG_MAX_BYTES) {
+      file = await fitImageToLimit(file, ACTIVITY_IMG_MAX_BYTES); // offer to compress
+      if (!file) { onStatus(`Not shared — images must be ${fmtMB(ACTIVITY_IMG_MAX_BYTES)} or smaller.`, true); return false; }
+    }
     onStatus('Uploading…', false);
     const fd = new FormData();
     fd.append('image', file);
@@ -2502,8 +2637,10 @@
     btn.textContent = 'Sharing…';
     try {
       const blob = await (await fetch(objectUrl)).blob();
+      const file = await fitImageToLimit(new File([blob], meta.name || 'image', { type: blob.type || meta.mime }));
+      if (!file) { btn.disabled = false; btn.textContent = original; return; }
       const fd = new FormData();
-      fd.append('image', blob, meta.name || 'image');
+      fd.append('image', file, file.name);
       fd.append('originPeer', String(state.peer.id));
       await api.postForm('/api/highway', fd);
       btn.textContent = '✓ Shared to Highway';
@@ -5413,6 +5550,7 @@
       gifIn.value = '';
       if (!picked) return;
       if (!/image\/gif/i.test(picked.type)) { alert('Please choose a GIF file.'); return; }
+      if (!(await fitImageToLimit(picked))) return; // over 5 MB: explained, not added
       const caption = (prompt('Add a short caption for this GIF (optional):', '') || '').trim().slice(0, 80);
       const fd = new FormData();
       fd.append('gif', picked);
@@ -5680,7 +5818,7 @@
         const picked = fileIn.files[0];
         fileIn.value = '';
         if (!picked) return;
-        const cropped = await cropImage(picked);
+        const cropped = await fitImageToLimit(await cropImage(picked));
         if (!cropped) return;
         const url = URL.createObjectURL(cropped);
         const details = await openPostDetails({ kind: 'photo', previewUrl: url });
@@ -5765,7 +5903,7 @@
         const picked = bufIn.files[0];
         bufIn.value = '';
         if (!picked) return;
-        const cropped = await cropImage(picked);
+        const cropped = await fitImageToLimit(await cropImage(picked));
         if (!cropped) return;
         const fd = new FormData();
         fd.append('photo', cropped);
@@ -6167,10 +6305,11 @@
         pickedBox.appendChild(cell);
       });
     };
-    fileInput.addEventListener('change', () => {
+    fileInput.addEventListener('change', async () => {
       const msg = composer.querySelector('#hwMsg'); msg.className = 'msg';
-      const files = Array.from(fileInput.files || []).filter((f) => /^(image|video)\//.test(f.type));
+      let files = Array.from(fileInput.files || []).filter((f) => /^(image|video)\//.test(f.type));
       fileInput.value = '';
+      files = await fitImagesToLimit(files); // offer to compress photos over 5 MB
       const room = MAX_HW_MEDIA - picked.length;
       if (files.length > room) { msg.className = 'msg error'; msg.textContent = `You can add up to ${MAX_HW_MEDIA} photos or videos to one post.`; }
       files.slice(0, Math.max(0, room)).forEach((file) => picked.push({ file, url: URL.createObjectURL(file) }));
