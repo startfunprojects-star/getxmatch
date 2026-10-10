@@ -22,7 +22,15 @@ const { areBlocked, ignoredIds } = require('../relations');
 const { broadcastHighway, notifyHighwayEvent, broadcastLeaderboardChange } = require('../socket');
 const hw = require('../highway');
 
+const moderation = require('../moderation');
+const { disconnectUser } = require('../socket');
+
 const router = express.Router();
+
+// Reporting: a post reported by this many different members is removed and its
+// author is suspended for REPORT_BLOCK_MS.
+const REPORTS_TO_REMOVE = 5;
+const REPORT_BLOCK_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 const BODY_MAX = 2000;
 const COMMENT_MAX = 500;
@@ -56,6 +64,7 @@ function shapeComment(r, viewerId, postAuthorId) {
       avatar: r.avatar ? `/uploads/${r.avatar}` : null,
     },
     canDelete: !!viewerId && (viewerId === r.author_id || viewerId === postAuthorId),
+    parentId: r.parent_id || null,
   };
 }
 
@@ -63,7 +72,7 @@ function shapeComment(r, viewerId, postAuthorId) {
 function postComments(postId, viewerId, postAuthorId) {
   const rows = db
     .prepare(
-      `SELECT c.id, c.author_id, c.body, c.created_at, u.username, p.display_name, p.avatar
+      `SELECT c.id, c.author_id, c.body, c.created_at, c.parent_id, u.username, p.display_name, p.avatar
          FROM highway_comments c
          JOIN users u ON u.id = c.author_id
          LEFT JOIN profiles p ON p.user_id = c.author_id
@@ -72,7 +81,16 @@ function postComments(postId, viewerId, postAuthorId) {
         LIMIT 500`
     )
     .all(postId);
-  return rows.map((r) => shapeComment(r, viewerId, postAuthorId));
+  // Threaded: top-level comments in order, each with its replies (oldest first).
+  const all = rows.map((r) => shapeComment(r, viewerId, postAuthorId));
+  const byId = new Map();
+  const top = [];
+  all.forEach((c) => { c.replies = []; byId.set(c.id, c); });
+  all.forEach((c) => {
+    const parent = c.parentId && byId.get(c.parentId);
+    if (parent) parent.replies.push(c); else top.push(c);
+  });
+  return top;
 }
 
 const postLimiter = rateLimit({
@@ -109,6 +127,7 @@ function shapePost(r, viewerId) {
     pinRank: r.pinned ? (r.pin_rank || null) : null,
     likes: likeState(r.id, viewerId),
     commentCount: db.prepare('SELECT COUNT(*) AS n FROM highway_comments WHERE post_id = ?').get(r.id).n,
+    reported: !!viewerId && !!db.prepare('SELECT 1 FROM highway_reports WHERE post_id = ? AND reporter_id = ?').get(r.id, viewerId),
   };
 }
 
@@ -225,6 +244,32 @@ router.get('/:id/comments', requireAuth, (req, res) => {
   res.json({ comments: postComments(post.id, req.user.id, post.user_id) });
 });
 
+// POST /api/highway/:id/report  { reason? } — report a post (once per member).
+// When REPORTS_TO_REMOVE different members have reported it, the post is
+// removed and its author is suspended for 6 hours.
+router.post('/:id/report', requireAuth, (req, res) => {
+  const post = resolvePost(req, res);
+  if (!post) return;
+  if (post.user_id === req.user.id) return res.status(400).json({ error: 'You cannot report your own post.' });
+  const reason = String((req.body && req.body.reason) || '').trim().slice(0, 300);
+  const info = db
+    .prepare('INSERT INTO highway_reports (post_id, reporter_id, reason, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(post_id, reporter_id) DO NOTHING')
+    .run(post.id, req.user.id, reason, Date.now());
+  if (!info.changes) return res.json({ ok: true, already: true, removed: false });
+
+  const count = db.prepare('SELECT COUNT(*) AS n FROM highway_reports WHERE post_id = ?').get(post.id).n;
+  const pinned = db.prepare('SELECT pinned FROM highway_posts WHERE id = ?').get(post.id);
+  if (count >= REPORTS_TO_REMOVE && !(pinned && pinned.pinned)) {
+    const files = hw.postFiles(post.id);
+    db.prepare('DELETE FROM highway_posts WHERE id = ?').run(post.id);
+    files.forEach(removeUpload);
+    moderation.suspend(post.user_id, 'highway-reported', REPORT_BLOCK_MS);
+    try { disconnectUser(post.user_id); } catch (_e) { /* not online */ }
+    return res.json({ ok: true, removed: true });
+  }
+  res.json({ ok: true, removed: false });
+});
+
 // GET /api/highway/:id/likes — who liked a post, newest first.
 router.get('/:id/likes', requireAuth, (req, res) => {
   const post = resolvePost(req, res);
@@ -293,8 +338,17 @@ router.post('/:id/comment', requireAuth, requireSafeLinks('body'), (req, res) =>
   if (body.length > COMMENT_MAX) return res.status(400).json({ error: `Comment must be ${COMMENT_MAX} characters or fewer.` });
 
   const now = Date.now();
-  const info = db.prepare('INSERT INTO highway_comments (post_id, author_id, body, created_at) VALUES (?, ?, ?, ?)')
-    .run(post.id, req.user.id, body, now);
+  // Optional reply: the parent must be a comment on THIS post. Threads stay one
+  // level deep — replying to a reply attaches to its top-level comment.
+  let parentId = null;
+  const rawParent = parseInt(req.body && req.body.parentId, 10);
+  if (rawParent) {
+    const parent = db.prepare('SELECT id, parent_id FROM highway_comments WHERE id = ? AND post_id = ?').get(rawParent, post.id);
+    if (!parent) return res.status(400).json({ error: 'That comment no longer exists.' });
+    parentId = parent.parent_id || parent.id;
+  }
+  const info = db.prepare('INSERT INTO highway_comments (post_id, author_id, body, created_at, parent_id) VALUES (?, ?, ?, ?, ?)')
+    .run(post.id, req.user.id, body, now, parentId);
   const me = db.prepare('SELECT display_name, avatar FROM profiles WHERE user_id = ?').get(req.user.id);
 
   // Surface the comment inside the conversation the picture was shared from.
@@ -315,6 +369,8 @@ router.post('/:id/comment', requireAuth, requireSafeLinks('body'), (req, res) =>
         avatar: me && me.avatar ? `/uploads/${me.avatar}` : null,
       },
       canDelete: true,
+      parentId,
+      replies: [],
     },
     commentCount: db.prepare('SELECT COUNT(*) AS n FROM highway_comments WHERE post_id = ?').get(post.id).n,
   });

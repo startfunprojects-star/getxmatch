@@ -23,8 +23,8 @@ function suspensionRemaining(user) {
   return remaining > 0 ? remaining : 0;
 }
 
-function suspend(userId, reason) {
-  const until = Date.now() + SUSPEND_MS;
+function suspend(userId, reason, ms) {
+  const until = Date.now() + (ms || SUSPEND_MS);
   db.prepare('UPDATE users SET suspended_until = ?, suspended_reason = ? WHERE id = ?').run(until, reason, userId);
   return until;
 }

@@ -1083,4 +1083,22 @@ db.exec(`
   if (!cols.includes('cover')) db.exec('ALTER TABLE profiles ADD COLUMN cover TEXT;');
 })();
 
+// --- Highway: replies to comments (parent_id = the top-level comment) and
+// post reports (one per member per post; see src/routes/highway.js).
+(function migrateHighwayReplies() {
+  const cols = db.prepare('PRAGMA table_info(highway_comments)').all().map((c) => c.name);
+  if (!cols.includes('parent_id')) {
+    db.exec('ALTER TABLE highway_comments ADD COLUMN parent_id INTEGER REFERENCES highway_comments(id) ON DELETE CASCADE;');
+  }
+})();
+db.exec(`
+  CREATE TABLE IF NOT EXISTS highway_reports (
+    post_id     INTEGER NOT NULL REFERENCES highway_posts(id) ON DELETE CASCADE,
+    reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reason      TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (post_id, reporter_id)
+  );
+`);
+
 module.exports = db;

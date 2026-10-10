@@ -734,6 +734,11 @@
   // Full-screen notice for a suspended account. Shown at boot for a suspended
   // session, or live if a suspension lands mid-session (report-abuse).
   let suspendedShown = false;
+  const SUSPEND_REASONS = {
+    'highway-reported': 'A Highway post of yours was reported by 5 members and has been removed. You can use getxmatch again in 6 hours.',
+    'mass-reported': 'Your profile was reported by many members.',
+    'report-abuse': 'Too many reports were filed from your account in a short time.',
+  };
   function showSuspendedScreen(data) {
     if (suspendedShown) return;
     suspendedShown = true;
@@ -746,7 +751,7 @@
           <div style="font-size:40px">⛔</div>
           <h2>Account suspended</h2>
           <p class="auth-sub">${esc((data && data.error) || 'Your account is temporarily suspended.')}</p>
-          ${data && data.reason ? `<p class="hint">Reason: ${esc(data.reason)}</p>` : ''}
+          ${data && data.reason ? `<p class="hint">Reason: ${esc(SUSPEND_REASONS[data.reason] || data.reason)}</p>` : ''}
           ${until ? `<p class="hint">Access returns on <b>${esc(until)}</b>.</p>` : ''}
           <button class="ghost" id="suspLogout" style="margin-top:14px">Log out</button>
         </div>
@@ -6799,6 +6804,7 @@
         <button class="hw-comment-toggle" type="button" title="Show comments">
           💬 <span class="hw-comment-n">${p.commentCount || ''}</span>
         </button>
+        ${p.mine ? '' : `<button class="hw-report" type="button" title="Report this post"${p.reported ? ' disabled' : ''}>🚩 ${p.reported ? 'Reported' : 'Report'}</button>`}
       </div>
     `);
     card.appendChild(foot);
@@ -6825,6 +6831,20 @@
 
     foot.querySelector('.hw-like-n').addEventListener('click', () => openHighwayLikes(p.id));
 
+    const reportBtn = foot.querySelector('.hw-report');
+    if (reportBtn) reportBtn.addEventListener('click', async () => {
+      const reason = await promptBox('Report this post',
+        'Why are you reporting it? (optional) — a post reported by 5 people is removed and its author is blocked for 6 hours.', '');
+      if (reason === null) return;
+      reportBtn.disabled = true;
+      try {
+        const res = await api.post('/api/highway/' + p.id + '/report', { reason });
+        reportBtn.textContent = '🚩 Reported';
+        if (res.removed) { removeHighwayCard(card); notifyToast('Thanks — this post has been removed.'); }
+        else notifyToast(res.already ? 'You already reported this post.' : 'Thanks — your report was received.');
+      } catch (e) { reportBtn.disabled = false; alert(e.message); }
+    });
+
     const cToggle = foot.querySelector('.hw-comment-toggle');
     let loaded = false;
     cToggle.addEventListener('click', async () => {
@@ -6838,9 +6858,9 @@
   }
 
   // Build one Highway comment row. `onCount(n)` keeps the post's counter in sync.
-  function highwayCommentEl(c, listEl, onCount) {
+  function highwayCommentEl(c, listEl, onCount, post) {
     const item = el(`
-      <div class="hw-comment" data-id="${c.id}">
+      <div class="hw-comment${c.parentId ? ' is-reply' : ''}" data-id="${c.id}">
         <img class="avatar sm" src="${avatarUrl(c.author.avatar)}" alt="" />
         <div class="hw-comment-body">
           <div class="hw-comment-head">
@@ -6868,6 +6888,40 @@
       });
       item.querySelector('.hw-comment-head').appendChild(del);
     }
+
+    // Reply (threads stay one level deep: a reply to a reply joins the thread).
+    if (post) {
+      const body = item.querySelector('.hw-comment-body');
+      const replyBtn = el('<button class="hw-reply-btn" type="button">↩ Reply</button>');
+      body.appendChild(replyBtn);
+      replyBtn.addEventListener('click', () => {
+        const open = body.querySelector(':scope > .hw-reply-form');
+        if (open) { open.remove(); return; }
+        const form = el(`<div class="hw-reply-form"><input maxlength="500" placeholder="Reply to ${esc(c.author.displayName)}…" /><button class="primary small" type="button">Reply</button></div>`);
+        const input = form.querySelector('input');
+        const submit = async () => {
+          const text = input.value.trim();
+          if (!text) return;
+          try {
+            const res = await api.post('/api/highway/' + post.id + '/comment', { body: text, parentId: c.id });
+            form.remove();
+            const threadTop = listEl.querySelector(`.hw-comment[data-id="${res.comment.parentId}"]`);
+            const replies = threadTop && threadTop.querySelector(':scope > .hw-comment-body > .hw-replies');
+            if (replies) replies.appendChild(highwayCommentEl(res.comment, listEl, onCount, post));
+            if (typeof res.commentCount === 'number') onCount(res.commentCount);
+          } catch (e) { alert(e.message); }
+        };
+        form.querySelector('button').addEventListener('click', submit);
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+        replyBtn.after(form);
+        input.focus();
+      });
+      if (!c.parentId) {
+        const replies = el('<div class="hw-replies"></div>');
+        (c.replies || []).forEach((rc) => replies.appendChild(highwayCommentEl(rc, listEl, onCount, post)));
+        body.appendChild(replies);
+      }
+    }
     return item;
   }
 
@@ -6892,7 +6946,7 @@
         input.value = '';
         const hint = list.querySelector('.hint');
         if (hint) hint.remove();
-        list.appendChild(highwayCommentEl(res.comment, list, onCount));
+        list.appendChild(highwayCommentEl(res.comment, list, onCount, p));
         if (typeof res.commentCount === 'number') onCount(res.commentCount);
       } catch (e) { alert(e.message); }
       finally { sendBtn.disabled = false; }
@@ -6904,7 +6958,7 @@
       const { comments } = await api.get('/api/highway/' + p.id + '/comments');
       list.innerHTML = '';
       if (!comments.length) list.appendChild(el('<div class="hint">No comments yet.</div>'));
-      else comments.forEach((c) => list.appendChild(highwayCommentEl(c, list, onCount)));
+      else comments.forEach((c) => list.appendChild(highwayCommentEl(c, list, onCount, p)));
     } catch (e) {
       list.innerHTML = `<div class="hint">${esc(e.message)}</div>`;
     }
