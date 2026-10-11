@@ -85,6 +85,7 @@ app.use('/api/highway', highwayRoutes); // registered users: shared post pool
 app.use('/api/voice', require('./src/routes/voice')); // voice notes: upload + permission-checked playback
 app.use('/api/link-preview', require('./src/routes/linkPreview')); // featured image + title for posted links
 app.use('/api/blogs', require('./src/routes/blogs')); // member blogs: write, search, like, comment
+app.use('/api/suggestions', require('./src/routes/suggestions')); // members send ideas to the admin
 require('./src/referrals').backfill(); // every member gets a fixed referral code
 require('./src/news').start(); // fetch interest-based news for Recent Activity
 require('./src/alerts').start(); // fetch keyword alerts for Recent Activity

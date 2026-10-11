@@ -1147,4 +1147,63 @@ router.post('/highway/:id/pin', requireAdmin, (req, res) => {
   res.json({ ok: true, pinned: true, pinRank: r });
 });
 
+
+/* ---------------- Suggestions from members (src/routes/suggestions.js) ---------------- */
+const suggestions = require('./suggestions');
+
+// GET /api/admin/suggestions — every suggestion, newest first, with who sent it.
+router.get('/suggestions', requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    `SELECT s.*, u.username, u.email, p.display_name, p.avatar
+       FROM suggestions s JOIN users u ON u.id = s.user_id LEFT JOIN profiles p ON p.user_id = s.user_id
+      ORDER BY s.created_at DESC LIMIT 1000`
+  ).all();
+  res.json({
+    statuses: suggestions.STATUSES,
+    categories: suggestions.CATEGORIES,
+    suggestions: rows.map((r) => ({
+      id: r.id,
+      category: r.category,
+      body: r.body,
+      status: r.status,
+      reply: r.reply || '',
+      repliedAt: r.replied_at || null,
+      createdAt: r.created_at,
+      user: {
+        id: r.user_id,
+        username: r.username,
+        displayName: r.display_name || r.username,
+        email: r.email || '',
+        avatar: r.avatar ? `/uploads/${r.avatar}` : null,
+      },
+    })),
+  });
+});
+
+// PUT /api/admin/suggestions/:id  { status?, reply? } — the member sees both.
+router.put('/suggestions/:id', requireAdmin, (req, res) => {
+  const row = db.prepare('SELECT * FROM suggestions WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Suggestion not found.' });
+  const status = suggestions.STATUSES.includes(req.body && req.body.status) ? req.body.status : row.status;
+  let reply = row.reply;
+  let repliedAt = row.replied_at;
+  if (req.body && typeof req.body.reply === 'string') {
+    const next = req.body.reply.trim().slice(0, suggestions.REPLY_MAX);
+    if (next !== (row.reply || '')) { reply = next || null; repliedAt = next ? Date.now() : null; }
+  }
+  db.prepare('UPDATE suggestions SET status = ?, reply = ?, replied_at = ?, updated_at = ? WHERE id = ?')
+    .run(status, reply, repliedAt, Date.now(), row.id);
+  if (status !== row.status || reply !== row.reply) {
+    notifyUser(row.user_id, 'suggestion:update', { id: row.id, status, replied: !!reply && reply !== row.reply });
+  }
+  res.json({ ok: true, status, reply: reply || '', repliedAt });
+});
+
+// DELETE /api/admin/suggestions/:id
+router.delete('/suggestions/:id', requireAdmin, (req, res) => {
+  const info = db.prepare('DELETE FROM suggestions WHERE id = ?').run(req.params.id);
+  if (!info.changes) return res.status(404).json({ error: 'Suggestion not found.' });
+  res.json({ ok: true });
+});
+
 module.exports = router;

@@ -393,6 +393,7 @@
     ['seo', 'Site SEO'],
     ['referrals', 'Referrals'],
     ['leaderboard', 'Leaderboard'],
+    ['suggestions', 'Suggestions'],
   ];
 
   async function renderDashboard() {
@@ -444,6 +445,110 @@
     if (tab === 'seo') return renderSeoTab();
     if (tab === 'leaderboard') return renderLeaderboardTab();
     if (tab === 'referrals') return renderReferralsTab();
+    if (tab === 'suggestions') return renderSuggestionsTab();
+  }
+
+  /* ---- Suggestions tab: ideas and problem reports sent by members ---- */
+  let sgData = null;
+  let sgFilter = 'open';
+  const SG_LABELS = { new: 'New', reviewing: 'Reviewing', planned: 'Planned', done: 'Done', declined: 'Declined' };
+
+  async function renderSuggestionsTab() {
+    const host = tabHost();
+    host.innerHTML = `
+      <div class="admin-card">
+        <h2>Suggestions <span class="count" id="sgSummary"></span></h2>
+        <p class="count">Ideas and problem reports sent by members from the 💡 Suggestions page, with who sent each one. Set a status or write a reply — the member sees both on their Suggestions page and gets a notice.</p>
+        <div class="sg-filters" id="sgFilters"></div>
+        <div id="sgList" class="count">Loading…</div>
+        <div id="sgPager"></div>
+      </div>`;
+    try { sgData = await api.get('/api/admin/suggestions'); }
+    catch (e) {
+      if (e.status === 401) return renderLogin(true);
+      document.getElementById('sgList').textContent = e.message;
+      return;
+    }
+    paintSuggestions();
+  }
+
+  function paintSuggestions() {
+    const list = document.getElementById('sgList');
+    if (!list || !sgData) return;
+    const all = sgData.suggestions;
+    const counts = {};
+    all.forEach((x) => { counts[x.status] = (counts[x.status] || 0) + 1; });
+    document.getElementById('sgSummary').textContent = `(${all.length} total · ${counts.new || 0} new)`;
+    const filters = document.getElementById('sgFilters');
+    const opts = [['open', 'Open', all.filter((x) => x.status !== 'done' && x.status !== 'declined').length], ['all', 'All', all.length]]
+      .concat(sgData.statuses.map((st) => [st, SG_LABELS[st] || st, counts[st] || 0]));
+    filters.innerHTML = '';
+    opts.forEach(([key, label, n]) => {
+      const b = el(`<button type="button" class="${sgFilter === key ? 'primary' : 'ghost'} small">${esc(label)} (${n})</button>`);
+      b.addEventListener('click', () => { sgFilter = key; pageState.suggestions = 0; paintSuggestions(); });
+      filters.appendChild(b);
+    });
+    const items = all.filter((x) => sgFilter === 'all' || (sgFilter === 'open' ? x.status !== 'done' && x.status !== 'declined' : x.status === sgFilter));
+    if (!items.length) { list.innerHTML = '<div class="count">No suggestions here.</div>'; document.getElementById('sgPager').innerHTML = ''; return; }
+    const { slice, pager } = pageFor('suggestions', items, paintSuggestions);
+    list.innerHTML = '';
+    slice.forEach((x) => {
+      const item = el(`
+        <div class="admin-item sg-item sg-${esc(x.status)}">
+          <div class="sg-who">
+            <img class="avatar sm" alt="" />
+            <div>
+              <a class="sg-name" target="_blank" rel="noopener"></a>
+              <div class="count"><span class="sg-handle"></span><span class="sg-email"></span> · ${esc(fmtDate(x.createdAt))}</div>
+            </div>
+            <span class="pill">${esc(x.category)}</span>
+          </div>
+          <p class="sg-body"></p>
+          <div class="sg-controls">
+            <label>Status <select class="sg-status-select">${sgData.statuses.map((st) => `<option value="${st}"${st === x.status ? ' selected' : ''}>${esc(SG_LABELS[st] || st)}</option>`).join('')}</select></label>
+            <label class="sg-reply-label">Reply to the member <span class="count">(optional, they see it on their Suggestions page)</span>
+              <textarea class="sg-reply" rows="2" maxlength="1000"></textarea></label>
+            <div class="admin-item-actions">
+              <button type="button" class="primary small sg-save">Save</button>
+              <button type="button" class="danger small sg-del">Delete</button>
+              <span class="count sg-saved"></span>
+            </div>
+          </div>
+        </div>`);
+      item.querySelector('img').src = x.user.avatar || '/favicon.svg';
+      const name = item.querySelector('.sg-name');
+      name.textContent = x.user.displayName;
+      name.href = '/u/' + encodeURIComponent(x.user.username);
+      name.title = 'Open their public profile';
+      item.querySelector('.sg-handle').textContent = '@' + x.user.username;
+      item.querySelector('.sg-email').textContent = x.user.email ? ' · ' + x.user.email : '';
+      item.querySelector('.sg-body').textContent = x.body;
+      const reply = item.querySelector('.sg-reply');
+      reply.value = x.reply || '';
+      const saved = item.querySelector('.sg-saved');
+      item.querySelector('.sg-save').addEventListener('click', async (e) => {
+        e.target.disabled = true;
+        try {
+          const r = await api.put('/api/admin/suggestions/' + x.id, { status: item.querySelector('.sg-status-select').value, reply: reply.value });
+          Object.assign(x, { status: r.status, reply: r.reply, repliedAt: r.repliedAt });
+          saved.textContent = 'Saved ✓';
+          setTimeout(paintSuggestions, 700);
+        } catch (err) { alert(err.message); }
+        e.target.disabled = false;
+      });
+      item.querySelector('.sg-del').addEventListener('click', async () => {
+        if (!confirm('Delete this suggestion?')) return;
+        try {
+          await api.del('/api/admin/suggestions/' + x.id);
+          sgData.suggestions = sgData.suggestions.filter((y) => y.id !== x.id);
+          paintSuggestions();
+        } catch (err) { alert(err.message); }
+      });
+      list.appendChild(item);
+    });
+    const ph = document.getElementById('sgPager');
+    ph.innerHTML = '';
+    if (pager) ph.appendChild(pager);
   }
 
   function tabHost() { return document.getElementById('tabContent'); }

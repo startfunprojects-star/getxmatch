@@ -2371,3 +2371,35 @@ button.primary, .chat-cta { letter-spacing: .01em; }
   /* The reply banner lines up with the narrower padding. */
   .reply-banner { padding-left: 10px; padding-right: 10px; }
 }
+
+/* ---------- Suggestions to the admin ---------- */
+.suggestion-form { display: flex; flex-direction: column; gap: 12px; max-width: 720px; }
+.suggestion-form label { display: flex; flex-direction: column; gap: 6px; font-weight: 600; }
+.suggestion-form select { width: auto; max-width: 260px; }
+.suggestion-form textarea { resize: vertical; min-height: 120px; }
+.suggestion-form .hint { margin: 0; }
+.suggestion-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.suggestion-list { max-width: 720px; margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }
+.suggestion-list h3 { margin: 0 0 2px; }
+.suggestion-item { padding: 14px 16px; }
+.suggestion-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.suggestion-meta .pill { background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
+.suggestion-body { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.suggestion-reply { margin-top: 10px; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--bg-3); border-radius: 0 8px 8px 0; }
+.suggestion-reply p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sg-status { font-size: 12px; font-weight: 700; border-radius: 999px; padding: 3px 10px; }
+.sg-new { background: var(--bg-3); color: var(--muted); }
+.sg-reviewing { background: color-mix(in srgb, var(--gold) 18%, transparent); color: var(--gold); }
+.sg-planned { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.sg-done { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.sg-declined { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.sg-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 14px; }
+.sg-item.sg-new { border-left: 4px solid var(--accent); }
+.sg-who { display: flex; align-items: center; gap: 10px; }
+.sg-who > div { flex: 1; min-width: 0; }
+.sg-name { font-weight: 700; }
+.sg-who .pill { background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
+.sg-body { margin: 10px 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.sg-controls { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; }
+.sg-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
+.sg-controls select { width: auto; max-width: 200px; }

@@ -1212,6 +1212,7 @@
             <button data-view="blogs">📝 Blogs</button>
             <button data-view="leaderboard">🏆 Leaderboard<span class="ndot"></span></button>
             <button data-view="events">✨ Recent Activity</button>
+            <button data-view="suggestions">💡 Suggestions</button>
           </div>
           <div class="search"><input id="searchInput" placeholder="Search people…" /></div>
           <div class="list" id="list"></div>
@@ -5248,6 +5249,10 @@
 
     // A new Highway post from anyone — prepend it to an open Highway feed.
     s.on('highway:new', (p) => { if (p && p.id) pushHighwayPost(p); });
+    s.on('suggestion:update', (d) => {
+      notifyToast(d.replied ? '💡 The admin replied to your suggestion.' : '💡 Your suggestion’s status was updated.');
+      if (isExploreActive('suggestions')) renderSuggestions();
+    });
     s.on('blog:liked', (d) => notifyToast(`@${d.by} liked your blog post — +1 point.`));
     s.on('blog:comment', (d) => notifyToast(`@${d.by} commented on your blog post.`));
 
@@ -6946,6 +6951,7 @@
     if (view === 'polls') return renderPolls();
     if (view === 'blogs') return renderBlogs();
     if (view === 'leaderboard') return renderLeaderboard();
+    if (view === 'suggestions') return renderSuggestions();
     if (view === 'events') return renderMainHome(true); // activity lives in the chat box now
   }
 
@@ -8561,6 +8567,81 @@
     $('.be-publish').addEventListener('click', () => save('published'));
     body.appendChild(wrap);
     (title.value ? editor : title).focus();
+  }
+
+  /* ---------- Suggestions ----------
+     Send the admin an idea or report a problem. The admin sees who sent it,
+     can set a status and reply; both show up here. */
+  const SUGGESTION_STATUS = {
+    new: ['Sent', 'sg-new'],
+    reviewing: ['Being reviewed', 'sg-reviewing'],
+    planned: ['Planned', 'sg-planned'],
+    done: ['Done', 'sg-done'],
+    declined: ['Not planned', 'sg-declined'],
+  };
+
+  async function renderSuggestions() {
+    const main = openMainView();
+    main.appendChild(sectionShell('Suggestions', 'Tell the getxmatch team how to make it better. The admin reads every suggestion and can reply here.'));
+    const body = main.querySelector('#sectionBody');
+    let data;
+    try { data = await api.get('/api/suggestions'); }
+    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+    body.innerHTML = '';
+    const form = el(`
+      <form class="card suggestion-form">
+        <label>What is it about?
+          <select name="category"></select>
+        </label>
+        <label>Your suggestion
+          <textarea name="body" rows="5" maxlength="${data.max}" placeholder="Describe your idea, what could be better, or a problem you ran into…" dir="auto" required></textarea>
+        </label>
+        <div class="suggestion-foot">
+          <span class="hint sg-count">0 / ${data.max}</span>
+          <button class="primary" type="submit">Send to admin</button>
+        </div>
+        <p class="hint">The admin will see your name and username with your suggestion.</p>
+      </form>`);
+    data.categories.forEach((c) => form.category.appendChild(new Option(c, c)));
+    const count = form.querySelector('.sg-count');
+    form.body.addEventListener('input', () => { count.textContent = `${form.body.value.length} / ${data.max}`; });
+    const list = el('<div class="suggestion-list"></div>');
+    const paint = () => {
+      list.innerHTML = data.suggestions.length ? '<h3>Your suggestions</h3>' : '';
+      data.suggestions.forEach((sg) => {
+        const [label, cls] = SUGGESTION_STATUS[sg.status] || SUGGESTION_STATUS.new;
+        const item = el(`
+          <div class="card suggestion-item">
+            <div class="suggestion-meta">
+              <span class="pill">${esc(sg.category)}</span>
+              <span class="sg-status ${cls}">${esc(label)}</span>
+              <span class="hint">${fmtDate(sg.createdAt)} · ${fmtTime(sg.createdAt)}</span>
+            </div>
+            <p class="suggestion-body"></p>
+            ${sg.reply ? '<div class="suggestion-reply"><b>Reply from the admin</b><p></p></div>' : ''}
+          </div>`);
+        item.querySelector('.suggestion-body').textContent = sg.body;
+        if (sg.reply) item.querySelector('.suggestion-reply p').textContent = sg.reply;
+        list.appendChild(item);
+      });
+    };
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = form.querySelector('button[type=submit]');
+      btn.disabled = true;
+      try {
+        const r = await api.post('/api/suggestions', { category: form.category.value, body: form.body.value });
+        data.suggestions.unshift(r.suggestion);
+        form.body.value = '';
+        count.textContent = `0 / ${data.max}`;
+        paint();
+        notifyToast('Thanks! Your suggestion was sent to the admin.');
+      } catch (err) { alert(err.message); }
+      btn.disabled = false;
+    });
+    body.appendChild(form);
+    body.appendChild(list);
+    paint();
   }
 
   /* ---------- Leaderboard ---------- */
