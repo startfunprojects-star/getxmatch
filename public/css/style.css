@@ -562,6 +562,12 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 
 .composer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg-2); align-items: center; }
 .composer input[type=text] { flex: 1; unicode-bidi: plaintext; text-align: start; }
+/* The field wrapper and ＋ only matter on phones (below). On larger screens the
+   wrapper is layout-transparent and 📎 is ordered first, so the row reads
+   📎 🎁 📊 🧩 🎤 [message] Send exactly as before. */
+.composer-field { display: contents; }
+.composer-more { display: none; }
+.composer #attachBtn { order: -1; }
 .icon-btn { background: var(--bg-3); width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center; flex: none; font-size: 18px; padding: 0; }
 
 /* ---------- Profile (editor bits reused) ---------- */
@@ -2307,3 +2313,61 @@ button.primary, .chat-cta { letter-spacing: .01em; }
 .chip-btn.s-pi { background: #e60023; border-color: #e60023; color: #fff; }
 .poll-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 8px; }
 .poll-foot .poll-share { margin: 0; }
+
+/* ---------- Phone chat composer (WhatsApp-style) ----------
+   Phones only — the same query as isPhone() in app.js. A rounded, growing
+   message field with ＋ and 📎 inside it, a round mic / send button beside it,
+   and the gift / poll / quiz tools in a tray behind ＋. */
+@media (max-width: 600px), (pointer: coarse) and (max-height: 500px) {
+  .composer.phone {
+    position: relative; align-items: flex-end; gap: 6px;
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+    border-top: 0; background: var(--bg);
+  }
+  .composer.phone #attachBtn { order: 0; }
+  .composer.phone .composer-field {
+    display: flex; align-items: flex-end; flex: 1; min-width: 0; gap: 2px;
+    min-height: 48px; padding: 4px 4px; border-radius: 24px;
+    background: var(--bg-elev); border: 1px solid var(--border); box-shadow: var(--shadow-sm);
+  }
+  .composer.phone .composer-field:focus-within { border-color: var(--accent); }
+  .composer.phone .composer-more,
+  .composer.phone .composer-field .icon-btn {
+    display: grid; place-items: center; flex: none; width: 38px; height: 38px; padding: 0;
+    border: 0; border-radius: 50%; background: none; color: var(--muted); font-size: 22px; line-height: 1;
+  }
+  .composer.phone .composer-field .icon-btn { font-size: 20px; }
+  .composer.phone .composer-more { transition: transform .15s ease; }
+  .composer.phone.tools-open .composer-more { transform: rotate(45deg); color: var(--accent); }
+  .composer.phone #msgInput {
+    flex: 1; min-width: 0; align-self: center; margin: 0; padding: 8px 4px;
+    border: 0; background: none; box-shadow: none; outline: none; resize: none;
+    font: inherit; font-size: 16px; line-height: 22px; min-height: 38px; height: 38px; max-height: 132px; overflow-y: auto;
+    color: var(--text); unicode-bidi: plaintext; text-align: start;
+  }
+  /* Round button: 🎤 while the box is empty, ➤ once there's text. */
+  .composer.phone #voiceBtn,
+  .composer.phone #sendBtn {
+    flex: none; width: 48px; height: 48px; padding: 0; border-radius: 50%;
+    display: grid; place-items: center; border: 0;
+    background: var(--accent); color: var(--on-accent); font-size: 20px; box-shadow: var(--shadow-sm);
+  }
+  .composer.phone #voiceBtn { order: 2; }
+  .composer.phone #sendBtn { order: 3; }
+  .composer.phone.has-text #voiceBtn { display: none; }
+  .composer.phone:not(.has-text) #sendBtn { display: none; }
+  .composer.phone .send-label { display: none; }
+  .composer.phone #sendBtn::after { content: '➤'; font-size: 20px; margin-left: 3px; }
+  /* Gift / poll / quiz: hidden until ＋ opens the tray above the field. */
+  .composer.phone #giftBtn, .composer.phone #pollBtn, .composer.phone #quizBtn { display: none; }
+  .composer.phone.tools-open #giftBtn, .composer.phone.tools-open #pollBtn, .composer.phone.tools-open #quizBtn {
+    display: grid; position: absolute; bottom: calc(100% + 4px); z-index: 5;
+    width: 52px; height: 52px; border-radius: 50%; font-size: 24px;
+    background: var(--bg-elev); border: 1px solid var(--border); box-shadow: var(--shadow);
+  }
+  .composer.phone.tools-open #giftBtn { left: 10px; }
+  .composer.phone.tools-open #pollBtn { left: 70px; }
+  .composer.phone.tools-open #quizBtn { left: 130px; }
+  /* The reply banner lines up with the narrower padding. */
+  .reply-banner { padding-left: 10px; padding-right: 10px; }
+}

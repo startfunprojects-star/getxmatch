@@ -1670,13 +1670,16 @@
         <div class="composer-preview hidden" id="composerPreview"></div>
         <div class="composer">
           <input type="file" id="fileInput" class="hidden" />
-          <button class="icon-btn" id="attachBtn" title="Share a file with the group (delivered live to members online, never stored)">📎</button>
           <button class="icon-btn" id="giftBtn" title="Send the group a gift">🎁</button>
           <button class="icon-btn" id="pollBtn" title="Create a poll">📊</button>
           <button class="icon-btn" id="quizBtn" title="Take a quiz together">🧩</button>
           <button class="icon-btn" id="voiceBtn" title="Record a voice note">🎤</button>
-          <input type="text" id="msgInput" placeholder="Message the group…" autocomplete="off" dir="auto" />
-          <button class="primary" id="sendBtn">Send</button>
+          <div class="composer-field">
+            <button type="button" class="composer-more" title="Gift, poll or quiz" aria-label="More: gift, poll or quiz" aria-expanded="false">＋</button>
+            <input type="text" id="msgInput" placeholder="Message the group…" autocomplete="off" dir="auto" />
+            <button class="icon-btn" id="attachBtn" title="Share a file with the group (delivered live to members online, never stored)">📎</button>
+          </div>
+          <button class="primary" id="sendBtn" aria-label="Send"><span class="send-label">Send</span></button>
         </div>
       </div>
     `);
@@ -1716,10 +1719,10 @@
       if (state.tab === 'chats') renderList();
     });
 
-    const input = view.querySelector('#msgInput');
+    const input = phoneComposer(view);
     const send = () => sendGroupMessage(input);
     view.querySelector('#sendBtn').addEventListener('click', send);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !input._multiline) { e.preventDefault(); send(); } });
     input.addEventListener('input', () => updateComposerPreview(input.value));
     // Put the cursor in the composer right away so the user can type at once.
     setTimeout(() => input.focus(), 0);
@@ -2150,13 +2153,16 @@
         <div class="composer-preview hidden" id="composerPreview"></div>
         <div class="composer">
           <input type="file" id="fileInput" class="hidden" />
-          <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
           <button class="icon-btn" id="giftBtn" title="Send a gift">🎁</button>
           <button class="icon-btn" id="pollBtn" title="Create a poll">📊</button>
           <button class="icon-btn" id="quizBtn" title="Take a quiz together">🧩</button>
           <button class="icon-btn" id="voiceBtn" title="Record a voice note">🎤</button>
-          <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" dir="auto" />
-          <button class="primary" id="sendBtn">Send</button>
+          <div class="composer-field">
+            <button type="button" class="composer-more" title="Gift, poll or quiz" aria-label="More: gift, poll or quiz" aria-expanded="false">＋</button>
+            <input type="text" id="msgInput" placeholder="Type a message…" autocomplete="off" dir="auto" />
+            <button class="icon-btn" id="attachBtn" title="Share a file (delivered live, never stored)">📎</button>
+          </div>
+          <button class="primary" id="sendBtn" aria-label="Send"><span class="send-label">Send</span></button>
         </div>
       </div>
     `);
@@ -2182,10 +2188,10 @@
 
     setupActivityBar(view, peer);
 
-    const input = view.querySelector('#msgInput');
+    const input = phoneComposer(view);
     const send = () => sendMessage(input);
     view.querySelector('#sendBtn').addEventListener('click', send);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !input._multiline) { e.preventDefault(); send(); } });
     input.addEventListener('input', () => {
       if (state.socket) state.socket.emit('chat:typing', { to: peer.id });
       updateComposerPreview(input.value);
@@ -3613,6 +3619,71 @@
     bubble._reactions = bubble._reactions.filter((r) => r.userId !== userId);
     if (emoji) bubble._reactions.push({ userId, emoji });
     renderReactions(bubble);
+  }
+
+  /* ---------- Phone composer (WhatsApp-style) ----------
+     On a phone the message box becomes a rounded field that grows with the
+     text (Enter adds a line; the round button sends), the round button is a
+     mic while the box is empty and a send arrow once you type, and the gift /
+     poll / quiz tools sit behind the ＋ button. Larger screens keep the
+     single-line box and the row of tools exactly as before (see style.css). */
+  const PHONE_MQ = '(max-width: 600px), (pointer: coarse) and (max-height: 500px)';
+  function isPhone() { return !!(window.matchMedia && window.matchMedia(PHONE_MQ).matches); }
+
+  // Returns the message box for `view` (a growing <textarea> on phones).
+  function phoneComposer(view) {
+    let input = view.querySelector('#msgInput');
+    const composer = view.querySelector('.composer');
+    if (!composer || !isPhone()) return input;
+    composer.classList.add('phone');
+
+    const ta = document.createElement('textarea');
+    ta.id = 'msgInput';
+    ta.rows = 1;
+    ta.placeholder = input.placeholder;
+    ta.autocomplete = 'off';
+    ta.dir = 'auto';
+    ta.setAttribute('enterkeyhint', 'enter');
+    input.replaceWith(ta);
+    input = ta;
+    input._multiline = true;
+
+    const sync = () => {
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 132) + 'px'; // up to ~6 lines, then scroll
+      composer.classList.toggle('has-text', !!ta.value.trim());
+    };
+    // Sending clears the box in code (no input event), so watch value writes too.
+    const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+    Object.defineProperty(ta, 'value', {
+      configurable: true,
+      get() { return desc.get.call(this); },
+      set(v) { desc.set.call(this, v); sync(); },
+    });
+    ta.addEventListener('input', sync);
+    sync();
+
+    // ＋ opens a small tray with the gift / poll / quiz tools.
+    const more = composer.querySelector('.composer-more');
+    const setOpen = (open) => {
+      composer.classList.toggle('tools-open', open);
+      more.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    more.addEventListener('click', (e) => { e.stopPropagation(); setOpen(!composer.classList.contains('tools-open')); });
+    composer.querySelectorAll('#giftBtn, #pollBtn, #quizBtn').forEach((b) => b.addEventListener('click', () => setOpen(false)));
+    if (!phoneComposer.bound) {
+      // One listener for every chat: a tap outside the composer closes the tray.
+      phoneComposer.bound = true;
+      document.addEventListener('click', (e) => {
+        if (e.target.closest('.composer')) return;
+        document.querySelectorAll('.composer.tools-open').forEach((c) => {
+          c.classList.remove('tools-open');
+          const m = c.querySelector('.composer-more');
+          if (m) m.setAttribute('aria-expanded', 'false');
+        });
+      });
+    }
+    return input;
   }
 
   function startReply(m) {
