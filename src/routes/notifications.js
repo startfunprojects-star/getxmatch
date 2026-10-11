@@ -121,3 +121,4 @@ router.post('/read', requireAuth, (req, res) => {
 
 module.exports = router;
 module.exports.addMatchNotifications = addMatchNotifications;
+module.exports.unreadCount = (userId) => buildItems(userId).unread;

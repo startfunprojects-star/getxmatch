@@ -86,6 +86,7 @@ app.use('/api/voice', require('./src/routes/voice')); // voice notes: upload + p
 app.use('/api/link-preview', require('./src/routes/linkPreview')); // featured image + title for posted links
 app.use('/api/blogs', require('./src/routes/blogs')); // member blogs: write, search, like, comment
 app.use('/api/suggestions', require('./src/routes/suggestions')); // members send ideas to the admin
+app.use('/api/push', require('./src/routes/push')); // installed app: push subscriptions + icon badge count
 require('./src/referrals').backfill(); // every member gets a fixed referral code
 require('./src/news').start(); // fetch interest-based news for Recent Activity
 require('./src/alerts').start(); // fetch keyword alerts for Recent Activity

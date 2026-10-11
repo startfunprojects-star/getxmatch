@@ -13,6 +13,7 @@ const { isValidActivity } = require('./activities');
 const nsfw = require('./nsfw');
 const linkSafety = require('./linkSafety');
 const voiceNotes = require('./voiceNotes');
+const push = require('./push');
 
 // Emoji reactions a user may place on a message/gift. Server-side allow-list so
 // clients can't store arbitrary strings.
@@ -120,6 +121,7 @@ function deliverGroupMessage(io, groupId, senderId, kind, body, opts) {
   };
   groupJoinedIds(groupId).forEach((uid) =>
     io.to(`user:${uid}`).emit('group:message', { ...base, mine: uid === senderId, ...(opts.perUser ? opts.perUser(uid) : {}) }));
+  if (kind !== 'system') pushGroup(groupId, senderId, kind, body);
   return info.lastInsertRowid;
 }
 
@@ -430,6 +432,22 @@ function postDenied(from, { to, groupId }) {
   return dmDenied(from, to, 'You cannot message this user.');
 }
 
+// Push a new message to the recipient's installed app (icon badge + notification).
+const PUSH_PREVIEW = { voice: '🎤 Voice message', gift: '🎁 Sent you a gift', poll: '📊 Sent you a poll', quiz: '🧠 Sent you a quiz', image: '📷 Photo', file: '📎 File' };
+function messagePreview(kind, body) {
+  if (kind === 'text') return String(body || '').slice(0, 140);
+  return PUSH_PREVIEW[kind] || 'New message';
+}
+function pushDm(from, to, kind, body) {
+  push.pushToUser(to, { title: nameOf(from), body: messagePreview(kind, body), url: '/', tag: 'dm-' + from });
+}
+function pushGroup(groupId, from, kind, body) {
+  const g = db.prepare('SELECT name FROM chat_groups WHERE id = ?').get(groupId);
+  const title = `${nameOf(from)} · ${(g && g.name) || 'Group'}`;
+  groupJoinedIds(groupId).filter((uid) => uid !== from).forEach((uid) =>
+    push.pushToUser(uid, { title, body: messagePreview(kind, body), url: '/', tag: 'group-' + groupId }));
+}
+
 // Store and deliver a message. Returns its id.
 function deliverMessage(from, { to, groupId, kind, body, replyTo }) {
   if (groupId) {
@@ -445,6 +463,7 @@ function deliverMessage(from, { to, groupId, kind, body, replyTo }) {
     ioRef.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
     ioRef.to(`user:${from}`).emit('chat:message', { ...msg, mine: true });
   }
+  pushDm(from, to, kind, body);
   return msg.id;
 }
 
@@ -504,6 +523,12 @@ function initSocket(io) {
       if (peer && peer !== me.id) markRead(io, me.id, peer);
     });
 
+    // I have a group chat open and visible → its messages count as read.
+    socket.on('group:read', (payload) => {
+      const gid = parseInt(payload && payload.groupId, 10);
+      if (gid) db.prepare("UPDATE chat_group_members SET read_at = ? WHERE group_id = ? AND user_id = ? AND status = 'joined'").run(Date.now(), gid, me.id);
+    });
+
     // Text message → persisted to history, then delivered live if online.
     socket.on('chat:message', (payload, ack) => {
       try {
@@ -542,6 +567,7 @@ function initSocket(io) {
         // Deliver to recipient's sockets and echo to sender's other tabs.
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
         socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
+        pushDm(me.id, to, 'text', body);
 
         ack && ack({ ok: true, message: { ...msg, mine: true } });
       } catch (e) {
@@ -638,6 +664,7 @@ function initSocket(io) {
           .run(me.id, to, gift.id, now, deliveredNow(to, now));
 
         const msg = { id: info.lastInsertRowid, from: me.id, to, body: gift.id, kind: 'gift', at: now, status: receiptStatus(to) };
+        pushDm(me.id, to, 'gift');
 
         io.to(`user:${to}`).emit('chat:message', { ...msg, mine: false });
         socket.to(`user:${me.id}`).emit('chat:message', { ...msg, mine: true });
@@ -672,6 +699,7 @@ function initSocket(io) {
             .prepare("INSERT INTO group_messages (group_id, sender_id, body, kind, created_at) VALUES (?, ?, ?, 'poll', ?)")
             .run(groupId, me.id, JSON.stringify({ pollId }), now);
           polls.attachMessage(pollId, info.lastInsertRowid);
+        pushDm(me.id, to, 'poll');
 
           const prof = db.prepare('SELECT display_name, avatar FROM profiles WHERE user_id = ?').get(me.id);
           const base = {
@@ -789,6 +817,7 @@ function initSocket(io) {
           .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at, delivered_at) VALUES (?, ?, ?, 'quiz', ?, NULL, ?)")
           .run(me.id, to, JSON.stringify({ chatQuizId }), now, deliveredNow(to, now));
         chatQuiz.attachMessage(chatQuizId, info.lastInsertRowid);
+        pushDm(me.id, to, 'quiz');
 
         const base = { id: info.lastInsertRowid, from: me.id, to, kind: 'quiz', at: now };
         io.to(`user:${to}`).emit('chat:message', { ...base, mine: false, quiz: chatQuiz.sessionPayload(chatQuizId, to) });

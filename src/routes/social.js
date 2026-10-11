@@ -463,6 +463,35 @@ router.delete('/friend/:username', requireAuth, (req, res) => {
 });
 
 // GET /api/social/friends — my accepted friends plus pending requests
+// GET /api/social/chats — everyone I have a 1:1 conversation with, newest
+// first, with when it last had a message and how many I haven't read.
+router.get('/chats', requireAuth, (req, res) => {
+  const me = req.user.id;
+  const rows = db.prepare(
+    `SELECT c.peer AS id, MAX(c.created_at) AS last_at,
+            SUM(CASE WHEN c.sender_id <> ? AND c.read_at IS NULL AND c.kind <> 'hwevent' THEN 1 ELSE 0 END) AS unread,
+            u.username, p.display_name, p.avatar
+       FROM (SELECT CASE WHEN sender_id = ? THEN recipient_id ELSE sender_id END AS peer, sender_id, read_at, kind, created_at
+               FROM messages WHERE sender_id = ? OR recipient_id = ?) c
+       JOIN users u ON u.id = c.peer
+       LEFT JOIN profiles p ON p.user_id = c.peer
+      WHERE c.peer <> ?
+      GROUP BY c.peer
+      ORDER BY last_at DESC
+      LIMIT 200`
+  ).all(me, me, me, me, me);
+  res.json({
+    chats: rows.filter((r) => !areBlocked(me, r.id)).map((r) => ({
+      id: r.id,
+      username: r.username,
+      displayName: r.display_name || r.username,
+      avatar: r.avatar ? `/uploads/${r.avatar}` : null,
+      lastAt: r.last_at,
+      unread: r.unread || 0,
+    })),
+  });
+});
+
 router.get('/friends', requireAuth, (req, res) => {
   const me = req.user.id;
 

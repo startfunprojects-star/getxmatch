@@ -12,6 +12,7 @@ const db = require('../db');
 const config = require('../config');
 const { sendAdminResetLink, smtpReady } = require('../mail');
 const { isOnline, broadcastNotify, disconnectUser, notifyUser } = require('../socket');
+const push = require('../push');
 const { buildFeed, pruneActivity } = require('./events');
 const { leaderboards } = require('../points');
 const { QUIZ_TYPES } = require('../quizTypes');
@@ -677,6 +678,7 @@ router.post('/quizzes', requireAdmin, (req, res) => {
     'INSERT INTO quizzes (title, description, questions, negative_marks, type, category, seo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(title.slice(0, 150), description, JSON.stringify(q.value), neg.value, type.value, category.value, seo, now, now);
   broadcastNotify(); // "new quiz" in members' Notifications
+  push.pushToAll({ title: '🧠 New quiz', body: title.slice(0, 150), url: `/quizzes/${info.lastInsertRowid}`, tag: 'new-quiz' });
   res.status(201).json({ id: info.lastInsertRowid });
 });
 
@@ -748,6 +750,7 @@ router.post('/polls', requireAdmin, (req, res) => {
     'INSERT INTO polls (question, options, closed, seo, created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?)'
   ).run(question.slice(0, 300), JSON.stringify(o.value), seo, now, now);
   broadcastNotify(); // "new poll" in members' Notifications
+  push.pushToAll({ title: '📊 New poll', body: question.slice(0, 150), url: `/polls/${info.lastInsertRowid}`, tag: 'new-poll' });
   res.status(201).json({ id: info.lastInsertRowid });
 });
 

@@ -86,6 +86,22 @@ function serializeGroup(groupId, viewerId) {
   };
 }
 
+// For the Chats list: when the group last had a message (or was created) and
+// how many messages from others I haven't seen.
+function groupActivity(groupId, viewerId) {
+  const last = db.prepare('SELECT MAX(created_at) AS at FROM group_messages WHERE group_id = ?').get(groupId);
+  const g = db.prepare('SELECT created_at FROM chat_groups WHERE id = ?').get(groupId);
+  const unread = db.prepare(
+    `SELECT COUNT(*) AS n FROM group_messages gm JOIN chat_group_members m ON m.group_id = gm.group_id AND m.user_id = ?
+      WHERE gm.group_id = ? AND gm.sender_id <> ? AND gm.created_at > COALESCE(m.read_at, m.created_at)`
+  ).get(viewerId, groupId, viewerId).n;
+  return { lastAt: (last && last.at) || (g && g.created_at) || 0, unread };
+}
+
+function markGroupRead(groupId, userId) {
+  db.prepare('UPDATE chat_group_members SET read_at = ? WHERE group_id = ? AND user_id = ?').run(Date.now(), groupId, userId);
+}
+
 // The user_ids of everyone currently in the group (joined + invited), so the
 // socket layer can notify all of them.
 function memberIds(groupId) {
@@ -139,7 +155,7 @@ router.get('/', requireAuth, (req, res) => {
   rows.forEach((r) => {
     const g = serializeGroup(r.group_id, me);
     if (!g) return;
-    if (r.status === 'joined') groups.push(g);
+    if (r.status === 'joined') groups.push({ ...g, ...groupActivity(r.group_id, me) });
     else if (r.status === 'invited') invites.push(g);
   });
   res.json({ groups, invites });
@@ -153,9 +169,11 @@ router.get('/:id', requireAuth, (req, res) => {
 });
 
 // GET /api/groups/:id/messages — recent group history (joined members only).
+// Opening the group marks it read.
 router.get('/:id/messages', requireAuth, (req, res) => {
   const gid = parseInt(req.params.id, 10);
   if (myStatus(gid, req.user.id) !== 'joined') return res.status(403).json({ error: 'You are not in this group.' });
+  markGroupRead(gid, req.user.id);
   const rows = db
     .prepare(
       `SELECT gm.id, gm.sender_id, gm.body, gm.kind, gm.created_at, gm.reply_to, gm.deleted_at, u.username, p.display_name, p.avatar,

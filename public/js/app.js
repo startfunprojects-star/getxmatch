@@ -1277,6 +1277,7 @@
     renderMainHome(); // chat box shows the recent-activity feed by default
     refreshRequestBadge();
     refreshNotifBadge();
+    initPush(); // installed app: icon badge + push notifications
     loadGifts(); // preload so live gifts render with the right emoji/name
     loadIgnored(); // so live Highway pushes from ignored users are filtered
 
@@ -1349,6 +1350,89 @@
       badge.classList.toggle('hidden', !unread || isExploreActive('notifications'));
       if (unread && !isExploreActive('notifications')) markNav('notifications', true);
     } catch (_e) { /* ignore */ }
+    syncAppBadge();
+  }
+
+  /* ---------- installed app: icon badge + push notifications ---------- */
+  // The badge on the home-screen icon = unread messages + unread Notifications.
+  // While the app is closed the service worker (sw.js) keeps it up to date
+  // from push messages; while it's open we set it here.
+  const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  let swReady = null;
+  function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return null;
+    if (!swReady) swReady = navigator.serviceWorker.register('/sw.js').then(() => navigator.serviceWorker.ready).catch(() => null);
+    return swReady;
+  }
+  function b64ToBytes(b64) {
+    const raw = atob((b64 + '='.repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+  }
+  async function subscribePush() {
+    const reg = await registerServiceWorker();
+    if (!reg || !reg.pushManager) throw new Error('Notifications aren’t supported here.');
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      const { key } = await api.get('/api/push/key');
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+    }
+    await api.post('/api/push/subscribe', { subscription: sub.toJSON() });
+  }
+  async function pushEnabled() {
+    if (!pushSupported || Notification.permission !== 'granted') return false;
+    const reg = await registerServiceWorker();
+    return !!(reg && reg.pushManager && await reg.pushManager.getSubscription());
+  }
+  // Called once after sign-in: keep this device's subscription fresh.
+  function initPush() {
+    registerServiceWorker();
+    if (pushSupported && Notification.permission === 'granted') subscribePush().catch(() => {});
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncAppBadge(); });
+    syncAppBadge();
+  }
+  let badgeTimer = null;
+  function syncAppBadge() {
+    clearTimeout(badgeTimer);
+    badgeTimer = setTimeout(async () => {
+      try {
+        const { count } = await api.get('/api/push/badge');
+        if (navigator.setAppBadge) {
+          if (count > 0) await navigator.setAppBadge(count);
+          else await navigator.clearAppBadge();
+        }
+        // Nothing left unread: tidy away notifications already on the phone.
+        if (!count && swReady) {
+          const reg = await swReady;
+          if (reg && reg.getNotifications) (await reg.getNotifications()).forEach((n) => n.close());
+        }
+      } catch (_e) { /* badge is best-effort */ }
+    }, 800);
+  }
+  // Card at the top of Notifications offering to switch them on (it needs a tap:
+  // browsers only ask for permission after one).
+  async function pushPromptEl() {
+    if (!pushSupported || await pushEnabled()) return null;
+    if (Notification.permission === 'denied') {
+      return el(`<div class="card push-prompt"><div class="hint">🔕 Notifications are blocked for getxmatch on this device.
+        To see a dot on the app icon for new messages, quizzes and polls, allow notifications for getxmatch in your phone or browser settings.</div></div>`);
+    }
+    const card = el(`
+      <div class="card push-prompt">
+        <div><strong>📲 Get a dot on the app icon</strong><br>
+        <span class="hint">See new messages, quizzes and polls on your phone even when getxmatch is closed.</span></div>
+        <button type="button" class="primary">Turn on</button>
+      </div>`);
+    card.querySelector('button').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      try {
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') { card.remove(); return; }
+        await subscribePush();
+        card.innerHTML = '<div class="hint">✅ Notifications are on for this device.</div>';
+        syncAppBadge();
+      } catch (err) { e.target.disabled = false; notify(err.message || 'Could not turn on notifications.'); }
+    });
+    return card;
   }
 
   async function refreshRequestBadge() {
@@ -1406,10 +1490,17 @@
         items = users;
       } catch (_e) { items = []; }
     } else {
+      // Every conversation from the server (newest first, with unread counts),
+      // plus anyone chatted with this session who isn't on it yet.
+      const [chats, gs] = await Promise.all([
+        api.get('/api/social/chats').then((r) => r.chats || []).catch(() => null),
+        api.get('/api/groups').then((r) => r.groups || []).catch(() => []),
+      ]);
+      (chats || []).forEach((c) => { state.chatPeers[c.id] = { ...(state.chatPeers[c.id] || {}), ...c }; });
       items = Object.values(state.chatPeers).filter((p) =>
         !q || (p.displayName || '').toLowerCase().includes(q.toLowerCase()) ||
         p.username.toLowerCase().includes(q.toLowerCase()));
-      try { groups = (await api.get('/api/groups')).groups || []; } catch (_e) { groups = []; }
+      groups = gs;
       if (q) groups = groups.filter((g) => g.name.toLowerCase().includes(q.toLowerCase()));
     }
 
@@ -1418,35 +1509,45 @@
       listEl.appendChild(el(`<div style="padding:20px;color:var(--muted)">${state.tab === 'people' ? 'No people found yet.' : 'No conversations yet.'}</div>`));
       return;
     }
-    // Group chats first (Chats tab only).
-    groups.forEach((g) => {
-      const joined = (g.members || []).filter((m) => m.status === 'joined');
-      const row = el(`
-        <div class="list-item" data-id="g${g.id}">
-          <div class="list-gicon">👥</div>
-          <div style="min-width:0">
-            <div class="name">${esc(g.name)}</div>
-            <div class="handle">${joined.length}/${g.max} members</div>
+    // Chats tab: people and groups together, the latest conversation on top,
+    // each with how many messages are waiting. People tab: search results.
+    const rows = [
+      ...groups.map((g) => ({ g, at: g.lastAt || 0, unread: state.group && state.group.gid === g.id ? 0 : (g.unread || 0) })),
+      ...items.map((u) => ({ u, at: u.lastAt || 0, unread: state.peer && state.peer.id === u.id ? 0 : (u.unread || 0) })),
+    ];
+    if (state.tab !== 'people') rows.sort((a, b) => b.at - a.at);
+    const unreadPill = (n) => (n ? `<span class="list-unread" title="${n} unread">${n > 99 ? '99+' : n}</span>` : '');
+    rows.forEach(({ g, u, unread }) => {
+      let row;
+      if (g) {
+        const joined = (g.members || []).filter((m) => m.status === 'joined');
+        row = el(`
+          <div class="list-item${unread ? ' has-unread' : ''}" data-id="g${g.id}">
+            <div class="list-gicon">👥</div>
+            <div style="min-width:0">
+              <div class="name">${esc(g.name)}</div>
+              <div class="handle">${joined.length}/${g.max} members</div>
+            </div>
+            ${unreadPill(unread)}
           </div>
-        </div>
-      `);
-      if (state.group && state.group.gid === g.id) row.classList.add('active');
-      row.addEventListener('click', () => openGroup(g.id));
-      listEl.appendChild(row);
-    });
-    items.forEach((u) => {
-      const row = el(`
-        <div class="list-item" data-id="${u.id}">
-          ${avatarWithPresence(u.id, u.avatar, '')}
-          <div style="min-width:0">
-            <div class="name">${esc(u.displayName || u.username)}</div>
-            <div class="handle">@${esc(u.username)}</div>
+        `);
+        if (state.group && state.group.gid === g.id) row.classList.add('active');
+        row.addEventListener('click', () => openGroup(g.id));
+      } else {
+        row = el(`
+          <div class="list-item${unread ? ' has-unread' : ''}" data-id="${u.id}">
+            ${avatarWithPresence(u.id, u.avatar, '')}
+            <div style="min-width:0">
+              <div class="name">${esc(u.displayName || u.username)}</div>
+              <div class="handle">@${esc(u.username)}</div>
+            </div>
+            ${unreadPill(unread)}
           </div>
-        </div>
-      `);
-      if (state.peer && state.peer.id === u.id) row.classList.add('active');
-      // Only friends can chat: searching for anyone else opens their profile.
-      row.addEventListener('click', () => (state.tab === 'people' && !u.isFriend ? showProfile(u.username) : openChat(u)));
+        `);
+        if (state.peer && state.peer.id === u.id) row.classList.add('active');
+        // Only friends can chat: searching for anyone else opens their profile.
+        row.addEventListener('click', () => (state.tab === 'people' && !u.isFriend ? showProfile(u.username) : openChat(u)));
+      }
       listEl.appendChild(row);
     });
   }
@@ -1455,9 +1556,17 @@
   // Each opens a chat when clicked. Search still finds anyone to message.
   async function renderFriendsList(listEl) {
     let friends = [];
-    try { friends = (await api.get('/api/social/friends')).friends || []; }
-    catch (_e) { /* fall through to empty state */ }
+    let chats = [];
+    try {
+      [friends, chats] = await Promise.all([
+        api.get('/api/social/friends').then((r) => r.friends || []),
+        api.get('/api/social/chats').then((r) => r.chats || []).catch(() => []),
+      ]);
+    } catch (_e) { /* fall through to empty state */ }
     if (!document.body.contains(listEl)) return; // navigated away while loading
+    // Friends I've chatted with most recently first, with unread counts.
+    const chatOf = new Map(chats.map((c) => [c.id, c]));
+    friends.sort((a, b) => ((chatOf.get(b.id) || {}).lastAt || 0) - ((chatOf.get(a.id) || {}).lastAt || 0));
 
     listEl.innerHTML = '';
     if (!friends.length) {
@@ -1468,13 +1577,15 @@
     }
     seedOnline(friends);
     friends.forEach((u) => {
+      const n = state.peer && state.peer.id === u.id ? 0 : ((chatOf.get(u.id) || {}).unread || 0);
       const row = el(`
-        <div class="list-item" data-id="${u.id}">
+        <div class="list-item${n ? ' has-unread' : ''}" data-id="${u.id}">
           ${avatarWithPresence(u.id, u.avatar, '')}
           <div style="min-width:0">
             <div class="name">${esc(u.displayName || u.username)}</div>
             <div class="handle">@${esc(u.username)}</div>
           </div>
+          ${n ? `<span class="list-unread" title="${n} unread">${n > 99 ? '99+' : n}</span>` : ''}
         </div>
       `);
       if (state.peer && state.peer.id === u.id) row.classList.add('active');
@@ -1639,7 +1750,9 @@
     state.group = { gid, name: group.name, members: group.members, max: group.max };
     closeReactionPalette();
     registerGroupTab({ gid, name: group.name });
-    document.querySelectorAll('.list-item').forEach((r) => r.classList.remove('active'));
+    document.querySelectorAll('.list-item').forEach((r) => r.classList.toggle('active', r.dataset.id === 'g' + gid));
+    clearListUnread('g' + gid);
+    syncAppBadge(); // opening it marked it read
     document.getElementById('shell').classList.add('viewing-main');
 
     const joined = group.members.filter((m) => m.status === 'joined');
@@ -2109,8 +2222,9 @@
     state.replyTo = null; // clear any half-composed reply from a previous chat
     cancelVoiceRecorder(); // a recording never follows you into another chat
     closeReactionPalette();
-    state.chatPeers[peer.id] = peer;
+    state.chatPeers[peer.id] = { ...(state.chatPeers[peer.id] || {}), ...peer, unread: 0 };
     delete state.unread[peer.id];
+    clearListUnread(String(peer.id));
     // Register (or refresh) this conversation as an open tab.
     const existing = state.openChats.findIndex((p) => p.id === peer.id);
     if (existing === -1) state.openChats.push(peer);
@@ -2455,9 +2569,25 @@
     if (!state.socket || !state.peer || !chatBody()) return;
     if (document.visibilityState !== 'visible') return;
     state.socket.emit('chat:read', { peer: state.peer.id });
+    syncAppBadge();
+  }
+  // Drop the unread count from a Chats-list row ('12' for a person, 'g3' for a group).
+  function clearListUnread(id) {
+    const row = document.querySelector(`#list .list-item[data-id="${id}"]`);
+    if (!row) return;
+    row.classList.remove('has-unread');
+    const pill = row.querySelector('.list-unread');
+    if (pill) pill.remove();
   }
   document.addEventListener('visibilitychange', markChatRead);
   window.addEventListener('focus', markChatRead);
+  // Same for an open group chat (unread counts in the Chats list).
+  function markGroupRead() {
+    if (!state.socket || !state.group || document.visibilityState !== 'visible') return;
+    state.socket.emit('group:read', { groupId: state.group.gid });
+  }
+  document.addEventListener('visibilitychange', markGroupRead);
+  window.addEventListener('focus', markGroupRead);
 
   /* ---------- rich message bodies: clickable links + inline media ---------- */
   const URL_RE = /(https?:\/\/[^\s<]+)/gi;
@@ -5067,7 +5197,15 @@
       // Blink the "Chats" nav button for an incoming message the user isn't
       // actively reading (someone else's, and not the open conversation/tab).
       if (!relevant && m.from !== state.me.id && state.tab !== 'chats') markNav('chats', true);
-      if (state.tab === 'chats') renderList();
+      // Move the conversation to the top of Chats (and count it if unseen).
+      const otherId = m.from === state.me.id ? m.to : m.from;
+      const cp = state.chatPeers[otherId];
+      if (cp) {
+        cp.lastAt = m.at || Date.now();
+        if (!relevant && !m.mine && m.from !== state.me.id) cp.unread = (cp.unread || 0) + 1;
+      }
+      if (state.tab === 'chats' || !document.getElementById('searchInput').value.trim()) renderList();
+      syncAppBadge();
     });
 
     s.on('chat:file', (meta) => {
@@ -5117,7 +5255,7 @@
     });
 
     s.on('group:message', (m) => {
-      if (state.group && state.group.gid === m.groupId) appendGroupMessage(m);
+      if (state.group && state.group.gid === m.groupId) { appendGroupMessage(m); markGroupRead(); }
       else if (!m.mine) {
         const tabId = 'g' + m.groupId;
         if (state.openChats.some((p) => p.id === tabId)) { state.unread[tabId] = true; renderChatTabs(); }
@@ -5125,6 +5263,8 @@
         // Blink the "Chats" nav button for an unread group message elsewhere.
         if (state.tab !== 'chats') markNav('chats', true);
       }
+      if (state.tab === 'chats') renderList();
+      syncAppBadge();
     });
 
     // Video calls.
@@ -7441,10 +7581,11 @@
     catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
 
     // Opening the section marks everything as read.
-    api.post('/api/notifications/read', {}).catch(() => {});
+    api.post('/api/notifications/read', {}).then(syncAppBadge, () => {});
     const badge = document.getElementById('notifBadge');
     if (badge) badge.classList.add('hidden');
     markNav('notifications', false);
+    pushPromptEl().then((card) => { if (card && body.isConnected) body.prepend(card); });
 
     const items = data.items || [];
     if (!items.length) {

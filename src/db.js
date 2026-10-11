@@ -1136,4 +1136,11 @@ db.exec(`
   );
 `);
 
+// When each member last looked at a group chat (unread counts in the Chats
+// list). NULL = never opened: counts from when they joined.
+(function migrateGroupReadAt() {
+  const cols = db.prepare('PRAGMA table_info(chat_group_members)').all().map((c) => c.name);
+  if (!cols.includes('read_at')) db.exec('ALTER TABLE chat_group_members ADD COLUMN read_at INTEGER;');
+})();
+
 module.exports = db;

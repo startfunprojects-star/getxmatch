@@ -238,6 +238,11 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .list-item.active::before { opacity: 1; }
 .list-item .name { font-weight: 600; }
 .list-item .handle { color: var(--muted); font-size: 13px; }
+.list-item .list-unread { margin-left: auto; flex: none; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; background: #2f80ed; color: #fff; font-size: 12px; font-weight: 700; line-height: 22px; text-align: center; box-shadow: 0 0 0 2px var(--bg-2, transparent); }
+.list-item.has-unread .name { font-weight: 800; }
+.list-item.has-unread .handle { color: var(--text); }
+.push-prompt { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin-bottom: 12px; }
+.push-prompt button { flex: none; }
 
 .main { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 /* Column holding the main pane, with the phone-only "back to dashboard" bar on top. */
