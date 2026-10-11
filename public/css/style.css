@@ -1240,6 +1240,11 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
 .btn-link { display: inline-flex; align-items: center; text-decoration: none; }
 .follow-counts { color: var(--muted); font-size: 13px; margin-top: 4px; }
 .follow-counts strong { color: var(--text); }
+.follow-counts .link-btn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.follow-counts .link-btn:hover { text-decoration: underline; }
+.follow-search { width: 100%; margin-bottom: 6px; }
+.follow-row { border-radius: 10px; }
+.follow-row-btn { margin-left: auto; flex: none; }
 .following-btn { border-color: var(--accent); color: var(--accent); }
 .follow-fee-box { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-3); }
 .follow-fee-box:empty { display: none; }

@@ -6443,11 +6443,59 @@
   // point. Friend requests cost the sender the member's friend fee once
   // accepted; the member earns double. The fee is fixed on each request when
   // it's sent, so changing it never touches earlier requests.
+  // Who follows a member / who they follow, in a modal. Each row opens that
+  // member's profile; members you don't follow yet get a Follow button.
+  async function showFollowList(profile, which) {
+    const name = profile.displayName || '@' + profile.username;
+    const title = which === 'followers' ? `${name}’s followers` : `${name} follows`;
+    const { card, close } = openModal(title, '<div class="hint">Loading…</div>');
+    const body = card.querySelector('.modal-body');
+    let users;
+    try { users = (await api.get(`/api/follow/${encodeURIComponent(profile.username)}/${which}`)).users || []; }
+    catch (e) { body.innerHTML = `<div class="msg error">${esc(e.message)}</div>`; return; }
+    if (!users.length) {
+      body.innerHTML = `<div class="hint">${which === 'followers' ? 'No followers yet.' : 'Not following anyone yet.'}</div>`;
+      return;
+    }
+    body.innerHTML = '<input type="search" class="follow-search" placeholder="Search…" aria-label="Search" /><div class="pick-list follow-list"></div>';
+    const list = body.querySelector('.follow-list');
+    users.forEach((u) => {
+      const row = el(`
+        <div class="list-item follow-row" data-q="${esc((u.displayName + ' ' + u.username).toLowerCase())}">
+          <img class="avatar" src="${avatarUrl(u.avatar)}" alt="" />
+          <div style="min-width:0">
+            <div class="name">${esc(u.displayName)}${u.isMe ? ' <span class="hint">(you)</span>' : ''}</div>
+            <div class="handle">@${esc(u.username)} · since ${fmtDate(u.since)}</div>
+          </div>
+        </div>`);
+      if (!u.isMe && !u.iFollow) {
+        const btn = el('<button type="button" class="ghost small follow-row-btn">➕ Follow</button>');
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          btn.disabled = true;
+          try { await api.post('/api/follow/' + encodeURIComponent(u.username), {}); btn.textContent = '✓ Following'; }
+          catch (err) { btn.disabled = false; alert(err.message); }
+        });
+        row.appendChild(btn);
+      }
+      row.addEventListener('click', () => { close(); showProfile(u.username); });
+      list.appendChild(row);
+    });
+    const search = body.querySelector('.follow-search');
+    if (users.length < 8) search.remove();
+    else search.addEventListener('input', () => {
+      const q = search.value.trim().toLowerCase();
+      list.querySelectorAll('.follow-row').forEach((r) => r.classList.toggle('hidden', !!q && !r.dataset.q.includes(q)));
+    });
+  }
+
   function renderFollow(view, profile, isMe) {
     let f = profile.follow || { followers: 0, following: 0, isFollowing: false };
     const counts = view.querySelector('#pvFollowCounts');
     const paintCounts = () => {
-      counts.innerHTML = `<strong>${f.followers}</strong> follower${f.followers === 1 ? '' : 's'} · <strong>${f.following}</strong> following`;
+      counts.innerHTML = `<button type="button" class="link-btn" data-list="followers"><strong>${f.followers}</strong> follower${f.followers === 1 ? '' : 's'}</button> · <button type="button" class="link-btn" data-list="following"><strong>${f.following}</strong> following</button>`;
+      counts.querySelectorAll('[data-list]').forEach((b) =>
+        b.addEventListener('click', () => showFollowList(profile, b.dataset.list)));
     };
     paintCounts();
 

@@ -30,6 +30,36 @@ router.get('/me', requireAuth, (req, res) => {
   res.json({ ...summary, earned: summary.followers * FOLLOWER_POINTS });
 });
 
+// GET /api/follow/:username/followers and /following — who follows a member,
+// and who they follow, newest first. Members blocked either way with the
+// viewer are left out.
+const LIST_LIMIT = 500;
+function followList(column, other) {
+  return (req, res) => {
+    const target = resolveTarget(req, res);
+    if (!target) return;
+    const rows = db.prepare(
+      `SELECT u.id, u.username, p.display_name, p.avatar, f.created_at
+         FROM follows f JOIN users u ON u.id = f.${other} JOIN profiles p ON p.user_id = u.id
+        WHERE f.${column} = ? ORDER BY f.created_at DESC LIMIT ?`
+    ).all(target.id, LIST_LIMIT);
+    const mine = new Set(db.prepare('SELECT followee_id FROM follows WHERE follower_id = ?').all(req.user.id).map((r) => r.followee_id));
+    res.json({
+      users: rows.filter((r) => r.id === req.user.id || !areBlocked(req.user.id, r.id)).map((r) => ({
+        id: r.id,
+        username: r.username,
+        displayName: r.display_name || r.username,
+        avatar: r.avatar ? `/uploads/${r.avatar}` : null,
+        since: r.created_at,
+        isMe: r.id === req.user.id,
+        iFollow: mine.has(r.id),
+      })),
+    });
+  };
+}
+router.get('/:username/followers', requireAuth, followList('followee_id', 'follower_id'));
+router.get('/:username/following', requireAuth, followList('follower_id', 'followee_id'));
+
 // POST /api/follow/:username — follow (free; they earn a point).
 router.post('/:username', requireAuth, (req, res) => {
   const target = resolveTarget(req, res);
