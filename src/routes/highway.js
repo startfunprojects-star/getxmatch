@@ -21,6 +21,7 @@ const { friendState } = require('../profileData');
 const { areBlocked, ignoredIds } = require('../relations');
 const { broadcastHighway, notifyHighwayEvent, broadcastLeaderboardChange } = require('../socket');
 const hw = require('../highway');
+const { blogCard } = require('./blogs');
 
 const moderation = require('../moderation');
 const { disconnectUser } = require('../socket');
@@ -128,6 +129,7 @@ function shapePost(r, viewerId) {
     likes: likeState(r.id, viewerId),
     commentCount: db.prepare('SELECT COUNT(*) AS n FROM highway_comments WHERE post_id = ?').get(r.id).n,
     reported: !!viewerId && !!db.prepare('SELECT 1 FROM highway_reports WHERE post_id = ? AND reporter_id = ?').get(r.id, viewerId),
+    blog: r.origin_kind === 'blog' ? blogCard(r.origin_a) : undefined, // a blog post listed on the Highway
   };
 }
 
@@ -139,7 +141,8 @@ router.get('/', requireAuth, (req, res) => {
   const canSee = hw.audienceFilter(req.user.id);
   const posts = hw.allOrdered()
     .filter((r) => !muted.has(r.user_id) && (r.pinned || canSee(r.user_id)))
-    .map((r) => shapePost(r, req.user.id));
+    .map((r) => shapePost(r, req.user.id))
+    .filter((p) => p.blog !== null); // a listed blog that was unpublished
   res.json({ posts, max: hw.MAX_POSTS });
 });
 
@@ -229,7 +232,7 @@ function resolvePost(req, res) {
 // Build the { postId, image, origin } context for a like/comment notification,
 // or null when the post isn't linked to a conversation.
 function originContext(post) {
-  if (!post.origin_a || !post.origin_b) return null;
+  if (post.origin_kind !== 'chat' || !post.origin_a || !post.origin_b) return null;
   return {
     postId: post.id,
     image: post.image ? `/uploads/${post.image}` : null,

@@ -18,6 +18,7 @@ const seo = require('../seo');
 const settings = require('../settings');
 const ads = require('../ads');
 const hw = require('../highway');
+const blogs = require('../blogs');
 const ogImage = require('../ogImage');
 const { quizStats, timeLabel, fmtDuration } = require('../quizStats');
 const { typeLabel, isShareable, isOpen } = require('../quizTypes');
@@ -627,11 +628,14 @@ ${ATTEMPT_SCRIPT}`;
 =========================================================================== */
 
 router.get('/blog', (req, res) => {
-  const rows = db.prepare('SELECT id, title, author, excerpt, cover, seo, created_at FROM blogs ORDER BY created_at DESC').all();
+  const rows = db.prepare(`SELECT b.id, b.title, COALESCE(NULLIF(pr.display_name, ''), u.username, b.author) AS author, b.excerpt, b.body, b.format,
+            b.cover, b.seo, COALESCE(b.published_at, b.created_at) AS created_at, b.updated_at
+       FROM blogs b LEFT JOIN users u ON u.id = b.user_id LEFT JOIN profiles pr ON pr.user_id = b.user_id
+      WHERE b.status = 'published' ORDER BY created_at DESC`).all();
   const items = rows.map((r) => {
     const s = parseJson(r.seo, {});
     return {
-      id: r.id, title: r.title, author: r.author, excerpt: r.excerpt,
+      id: r.id, title: r.title, author: r.author, excerpt: r.excerpt || summarize(blogs.textOf(r.body, r.format), 180),
       cover: r.cover ? `/uploads/${r.cover}` : null, createdAt: r.created_at,
       path: itemPath('blog', r.id, s.slug || r.title),
     };
@@ -648,7 +652,7 @@ router.get('/blog', (req, res) => {
   const seoDescriptor = resolveSeo({}, {
     canonicalPath: '/blog',
     title: 'Blog',
-    description: 'Stories, tips and news from the getxmatch team.',
+    description: 'Stories, tips and ideas written by getxmatch members.',
   });
   const jsonLd = [
     breadcrumbLd([{ name: 'Home', path: '/' }, { name: 'Blog', path: '/blog' }]),
@@ -661,20 +665,24 @@ router.get('/blog', (req, res) => {
   const bodyHtml = `
 ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Blog', path: '/blog' }])}
 <h1>Blog</h1>
-<p class="lede">Stories, tips and news from the getxmatch team.</p>
+<p class="lede">Stories, tips and ideas written by getxmatch members.</p>
 ${cards}`;
   sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });
 
 router.get('/blog/:id/:slug?', (req, res, next) => {
-  const r = db.prepare('SELECT id, title, author, excerpt, body, cover, seo, created_at, updated_at FROM blogs WHERE id = ?').get(req.params.id);
+  const r = db.prepare(`SELECT b.id, b.title, COALESCE(NULLIF(pr.display_name, ''), u.username, b.author) AS author, b.excerpt, b.body, b.format,
+            b.cover, b.seo, COALESCE(b.published_at, b.created_at) AS created_at, b.updated_at
+       FROM blogs b LEFT JOIN users u ON u.id = b.user_id LEFT JOIN profiles pr ON pr.user_id = b.user_id
+      WHERE b.id = ? AND b.status = 'published'`).get(req.params.id);
   if (!r) return notFound(res, 'post');
   const s = parseJson(r.seo, {});
   const chk = canonicalCheck('blog', req, r.id, s.slug || r.title);
   if (chk.redirect) return res.redirect(301, chk.redirect);
 
   const cover = r.cover ? `/uploads/${r.cover}` : null;
-  const paras = String(r.body || '')
+  const plain = blogs.textOf(r.body, r.format);
+  const paras = r.format === 'html' ? r.body : String(r.body || '')
     .split(/\n{2,}/)
     .map((p) => p.trim())
     .filter(Boolean)
@@ -684,7 +692,7 @@ router.get('/blog/:id/:slug?', (req, res, next) => {
   const seoDescriptor = resolveSeo(s, {
     canonicalPath: chk.canonical,
     title: r.title,
-    description: r.excerpt || summarize(r.body, 160),
+    description: r.excerpt || summarize(plain, 160),
     image: cover,
     type: 'article',
   });
@@ -693,7 +701,7 @@ router.get('/blog/:id/:slug?', (req, res, next) => {
     {
       '@context': 'https://schema.org', '@type': 'BlogPosting',
       headline: r.title,
-      description: r.excerpt || summarize(r.body, 160),
+      description: r.excerpt || summarize(plain, 160),
       image: cover ? absUrl(cover) : undefined,
       datePublished: isoDate(r.created_at),
       dateModified: isoDate(r.updated_at || r.created_at),
@@ -718,6 +726,19 @@ ${ads.slotHtml('content_inline')}
    visitors can browse posts; posting and connecting happen in the app.
 =========================================================================== */
 
+// A blog post listed on the Highway: its cover, title and opening, linking to it.
+function highwayBlogHtml(blogId) {
+  const b = db.prepare("SELECT id, title, excerpt, body, format, cover, seo FROM blogs WHERE id = ? AND status = 'published'").get(blogId);
+  if (!b) return '';
+  const s = parseJson(b.seo, {});
+  const href = itemPath('blog', b.id, s.slug || b.title);
+  return `<a class="hw-blog" href="${escAttr(href)}">
+        ${b.cover ? `<img class="hw-card-img" src="/uploads/${escAttr(b.cover)}" alt="" loading="lazy" />` : ''}
+        <strong>📝 ${esc(b.title)}</strong>
+        <span>${esc(summarize(b.excerpt || blogs.textOf(b.body, b.format), 180))}</span>
+      </a>`;
+}
+
 function highwayCard(p) {
   const avatar = p.avatar ? `/uploads/${p.avatar}` : null;
   const who = esc(p.display_name || p.username);
@@ -728,6 +749,7 @@ function highwayCard(p) {
         ${p.pinned ? '<span class="hw-pin">📌 Pinned</span>' : ''}
       </header>
       ${p.body ? renderUserText(p.body) : ''}
+      ${p.origin_kind === 'blog' ? highwayBlogHtml(p.origin_a) : ''}
       ${hw.postMedia(p.id, p.image).map((m) => m.kind === 'video'
         ? `<video class="hw-card-img" src="/uploads/${escAttr(m.filename)}" controls preload="metadata" playsinline></video>`
         : `<a href="/uploads/${escAttr(m.filename)}" target="_blank" rel="noopener"><img class="hw-card-img" src="/uploads/${escAttr(m.filename)}" alt="" loading="lazy" /></a>`).join('')}
@@ -1170,7 +1192,7 @@ router.get('/search', (req, res) => {
     db.prepare("SELECT id, question, seo FROM polls WHERE question LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT 20")
       .all(like)
       .forEach((r) => { const s = parseJson(r.seo, {}); results.push({ kind: 'Poll', title: r.question, excerpt: '', path: itemPath('polls', r.id, s.slug || r.question) }); });
-    db.prepare("SELECT id, title, excerpt, seo FROM blogs WHERE title LIKE ? ESCAPE '\\' OR excerpt LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT 20")
+    db.prepare("SELECT id, title, excerpt, seo FROM blogs WHERE status = 'published' AND (title LIKE ? ESCAPE '\\' OR excerpt LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\') ORDER BY created_at DESC LIMIT 20")
       .all(like, like, like)
       .forEach((r) => { const s = parseJson(r.seo, {}); results.push({ kind: 'Blog', title: r.title, excerpt: r.excerpt, path: itemPath('blog', r.id, s.slug || r.title) }); });
   }
@@ -1248,7 +1270,7 @@ router.get('/sitemap.xml', (req, res) => {
   db.prepare('SELECT id, question, seo, created_at FROM polls ORDER BY created_at DESC').all().forEach((r) => {
     if (notNoindex(r.seo)) add(itemPath('polls', r.id, parseJson(r.seo, {}).slug || r.question), r.created_at, 'weekly', '0.6');
   });
-  db.prepare('SELECT id, title, seo, updated_at FROM blogs ORDER BY created_at DESC').all().forEach((r) => {
+  db.prepare("SELECT id, title, seo, updated_at FROM blogs WHERE status = 'published' ORDER BY created_at DESC").all().forEach((r) => {
     if (notNoindex(r.seo)) add(itemPath('blog', r.id, parseJson(r.seo, {}).slug || r.title), r.updated_at, 'monthly', '0.7');
   });
 

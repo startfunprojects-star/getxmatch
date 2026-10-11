@@ -23,6 +23,7 @@ const { getSiteSeo, setSiteSeo } = require('../settings');
 const seo = require('../seo');
 const ads = require('../ads');
 const hw = require('../highway');
+const blogs = require('../blogs');
 const {
   ADMIN_COOKIE,
   signAdminToken,
@@ -812,11 +813,12 @@ router.post('/blogs', requireAdmin, imageUpload.single('cover'), (req, res) => {
 
 // PUT /api/admin/blogs/:id  (multipart, optional new cover)
 router.put('/blogs/:id', requireAdmin, imageUpload.single('cover'), (req, res) => {
-  const row = db.prepare('SELECT id, cover FROM blogs WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, cover, format FROM blogs WHERE id = ?').get(req.params.id);
   if (!row) { removeUpload(req.file && req.file.filename); return res.status(404).json({ error: 'Blog post not found.' }); }
   const title = ((req.body && req.body.title) || '').trim();
   if (!title) { removeUpload(req.file && req.file.filename); return res.status(400).json({ error: 'Title is required.' }); }
-  const body = ((req.body && req.body.body) || '').trim();
+  let body = ((req.body && req.body.body) || '').trim();
+  if (row.format === 'html') body = blogs.cleanHtml(body); // a member's post: same cleaning as theirs
   if (!body) { removeUpload(req.file && req.file.filename); return res.status(400).json({ error: 'Body is required.' }); }
   const author = ((req.body && req.body.author) || 'getxmatch').trim().slice(0, 80) || 'getxmatch';
   const excerpt = ((req.body && req.body.excerpt) || body.slice(0, 160)).trim().slice(0, 300);
@@ -836,6 +838,7 @@ router.put('/blogs/:id', requireAdmin, imageUpload.single('cover'), (req, res) =
 router.delete('/blogs/:id', requireAdmin, (req, res) => {
   const row = db.prepare('SELECT id, cover FROM blogs WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Blog post not found.' });
+  db.prepare("DELETE FROM highway_posts WHERE origin_kind = 'blog' AND origin_a = ?").run(row.id);
   db.prepare('DELETE FROM blogs WHERE id = ?').run(row.id);
   removeUpload(row.cover);
   res.json({ ok: true });

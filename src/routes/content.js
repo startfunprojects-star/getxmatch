@@ -448,45 +448,6 @@ router.post('/polls/:id/vote', requireAuth, (req, res) => {
   res.json({ poll: pollPayload(row, req.user.id) });
 });
 
-/* ===========================================================================
-   Blogs
-=========================================================================== */
-
-// GET /api/content/blogs — list (excerpt only).
-router.get('/blogs', requireAuth, (req, res) => {
-  const rows = db
-    .prepare('SELECT id, title, author, excerpt, cover, seo, created_at FROM blogs ORDER BY created_at DESC')
-    .all();
-  res.json({
-    blogs: rows.map((r) => ({
-      id: r.id,
-      title: r.title,
-      author: r.author,
-      excerpt: r.excerpt,
-      cover: r.cover ? `/uploads/${r.cover}` : null,
-      seo: parseJson(r.seo, {}),
-      createdAt: r.created_at,
-    })),
-  });
-});
-
-// GET /api/content/blogs/:id — full post.
-router.get('/blogs/:id', requireAuth, (req, res) => {
-  const r = db.prepare('SELECT id, title, author, excerpt, body, cover, seo, created_at, updated_at FROM blogs WHERE id = ?').get(req.params.id);
-  if (!r) return res.status(404).json({ error: 'Blog post not found.' });
-  res.json({
-    blog: {
-      id: r.id,
-      title: r.title,
-      author: r.author,
-      excerpt: r.excerpt,
-      body: r.body,
-      cover: r.cover ? `/uploads/${r.cover}` : null,
-      seo: parseJson(r.seo, {}),
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-    },
-  });
-});
+// Blogs moved to src/routes/blogs.js (/api/blogs).
 
 module.exports = router;

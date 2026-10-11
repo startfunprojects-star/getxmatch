@@ -5177,6 +5177,8 @@
 
     // A new Highway post from anyone — prepend it to an open Highway feed.
     s.on('highway:new', (p) => { if (p && p.id) pushHighwayPost(p); });
+    s.on('blog:liked', (d) => notifyToast(`@${d.by} liked your blog post — +1 point.`));
+    s.on('blog:comment', (d) => notifyToast(`@${d.by} commented on your blog post.`));
 
     s.on('chat:receipt', (r) => applyReceipt(r));
     s.on('chat:unsent', (e) => {
@@ -6988,6 +6990,24 @@
     } catch (e) { feed.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; }
   }
 
+  // A blog post listed on the Highway: cover, title and opening; opens the post.
+  function highwayBlogEl(b) {
+    const box = el(`
+      <button type="button" class="hw-blog">
+        ${b.cover ? `<img class="hw-blog-cover" src="${esc(b.cover)}" alt="" loading="lazy" />` : ''}
+        <span class="hw-blog-text">
+          <span class="hw-blog-kicker">📝 New blog post${b.category ? ' · ' + esc(b.category) : ''} · ${b.readMinutes} min read</span>
+          <strong class="hw-blog-title"></strong>
+          <span class="hw-blog-excerpt"></span>
+          <span class="hw-blog-cta">Read the post →</span>
+        </span>
+      </button>`);
+    box.querySelector('.hw-blog-title').textContent = b.title;
+    box.querySelector('.hw-blog-excerpt').textContent = b.excerpt || '';
+    box.addEventListener('click', () => openBlog(b.id));
+    return box;
+  }
+
   // Build one Highway post card.
   function highwayPostEl(p) {
     const card = el(`
@@ -7013,6 +7033,7 @@
 
     const bodyEl = card.querySelector('.hw-body');
     if (p.body) appendRichText(bodyEl, p.body); else bodyEl.remove();
+    if (p.blog) card.appendChild(highwayBlogEl(p.blog));
     const media = (p.media && p.media.length) ? p.media : (p.image ? [{ url: p.image, kind: 'image' }] : []);
     if (media.length) card.appendChild(highwayMediaEl(media));
 
@@ -7324,7 +7345,7 @@
     if (payload.author && state.ignored[payload.author.id]) return; // muted author
     const mine = !!(state.me && payload.author && payload.author.id === state.me.id);
     prependHighwayPost(highwayFeed, {
-      id: payload.id, body: payload.body, image: payload.image, media: payload.media,
+      id: payload.id, body: payload.body, image: payload.image, media: payload.media, blog: payload.blog,
       createdAt: payload.createdAt, author: payload.author, mine, friendState: mine ? 'self' : 'none',
     });
     trimHighwayFeed(highwayFeed);
@@ -7775,32 +7796,180 @@
     return card;
   }
 
-  /* ---------- Blogs ---------- */
+  /* ---------- Blogs ----------
+     Any member can write a post (rich editor, drafts, cover, category, tags).
+     Published posts are shown to everyone here, can be searched / filtered /
+     sorted, liked (1 point to the writer per like) and commented on, and are
+     listed on the Highway when first published. */
+  const blogFilter = { q: '', category: '', tag: '', author: '', sort: 'new', period: '', mine: false };
+  let blogMeta = null;
+
+  function blogQuery(offset) {
+    const p = new URLSearchParams();
+    Object.entries(blogFilter).forEach(([k, v]) => {
+      if (k === 'mine') { if (v) p.set('mine', '1'); }
+      else if (v) p.set(k, v);
+    });
+    if (offset) p.set('offset', offset);
+    return '/api/blogs?' + p.toString();
+  }
+
+  function blogAuthorHtml(b) {
+    return `<span class="blog-by"><img class="avatar xs" src="${avatarUrl(b.author.avatar)}" alt="" /><span class="blog-by-name"></span></span>`;
+  }
+
+  function blogCardEl(b) {
+    const card = el(`
+      <article class="tile blog-card${b.cover ? '' : ' no-cover'}" tabindex="0">
+        ${b.cover ? `<img class="blog-cover" src="${esc(b.cover)}" loading="lazy" alt="" />` : ''}
+        <div class="blog-card-top">
+          ${b.category ? `<button type="button" class="blog-cat" data-cat></button>` : ''}
+          ${b.status === 'draft' ? '<span class="blog-draft">Draft</span>' : ''}
+        </div>
+        <h3></h3>
+        <p class="blog-excerpt"></p>
+        <div class="blog-card-foot">
+          ${blogAuthorHtml(b)}
+          <span class="hint">${fmtDate(b.publishedAt || b.createdAt)} · ${b.readMinutes} min read</span>
+          <span class="blog-stats hint">❤ ${b.likes} · 💬 ${b.comments}</span>
+        </div>
+      </article>`);
+    card.querySelector('h3').textContent = b.title;
+    card.querySelector('.blog-excerpt').textContent = b.excerpt || '';
+    card.querySelector('.blog-by-name').textContent = b.author.displayName;
+    const cat = card.querySelector('[data-cat]');
+    if (cat) {
+      cat.textContent = b.category;
+      cat.addEventListener('click', (e) => { e.stopPropagation(); blogFilter.category = b.category; blogFilter.mine = false; renderBlogs(); });
+    }
+    if (b.author.username) {
+      const by = card.querySelector('.blog-by');
+      by.title = 'More posts by ' + b.author.displayName;
+      by.addEventListener('click', (e) => { e.stopPropagation(); Object.assign(blogFilter, { author: b.author.username, mine: false }); renderBlogs(); });
+    }
+    const open = () => (b.status === 'draft' ? openBlogEditor(b.id) : openBlog(b.id));
+    card.addEventListener('click', open);
+    card.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+    return card;
+  }
+
   async function renderBlogs() {
     const main = openMainView();
-    main.appendChild(sectionShell('Blogs', 'Stories, tips and news from getxmatch.'));
+    main.appendChild(sectionShell('Blogs', 'Stories, tips and ideas written by members. Every like earns the writer a point.'));
     const body = main.querySelector('#sectionBody');
-    let blogs;
-    try { blogs = (await api.get('/api/content/blogs')).blogs; }
-    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
-    if (!blogs.length) { body.innerHTML = '<div class="empty-main">No blog posts yet.</div>'; return; }
+    if (!blogMeta) {
+      try { blogMeta = await api.get('/api/blogs/meta'); } catch (_e) { blogMeta = { categories: [], tags: [] }; }
+    }
     body.innerHTML = '';
-    const grid = el('<div class="card-grid"></div>');
-    blogs.forEach((b) => {
-      const card = el(`
-        <div class="tile blog-card">
-          ${b.cover ? `<img class="blog-cover" src="${esc(b.cover)}" loading="lazy" />` : ''}
-          <h3>${esc(b.title)}</h3>
-          <div class="hint">By ${esc(b.author)} · ${fmtDate(b.createdAt)}</div>
-          <p class="rich">${esc(b.excerpt || '')}</p>
-          <button class="ghost small" data-read="${b.id}">Read more →</button>
+    const bar = el(`
+      <div class="blog-toolbar">
+        <div class="blog-tabs" role="tablist">
+          <button type="button" data-tab="all" role="tab">All posts</button>
+          <button type="button" data-tab="mine" role="tab">My posts</button>
         </div>
-      `);
-      card.querySelector('[data-read]').addEventListener('click', () => openBlog(b.id));
-      grid.appendChild(card);
+        <button type="button" class="primary blog-write">✍️ Write a post</button>
+        <form class="blog-filters" role="search">
+          <input type="search" name="q" placeholder="Search posts, writers, tags…" aria-label="Search blog posts" />
+          <select name="category" aria-label="Category"><option value="">All categories</option></select>
+          <select name="period" aria-label="Published">
+            <option value="">Any time</option><option value="week">This week</option>
+            <option value="month">This month</option><option value="year">This year</option>
+          </select>
+          <select name="sort" aria-label="Sort by">
+            <option value="new">Newest</option><option value="liked">Most liked</option>
+            <option value="commented">Most commented</option><option value="read">Most read</option>
+            <option value="old">Oldest</option>
+          </select>
+        </form>
+        <div class="blog-active"></div>
+        <div class="blog-tags chip-row"></div>
+      </div>`);
+    const form = bar.querySelector('.blog-filters');
+    blogMeta.categories.forEach((c) => form.category.appendChild(new Option(c, c)));
+    form.q.value = blogFilter.q;
+    form.category.value = blogFilter.category;
+    form.period.value = blogFilter.period;
+    form.sort.value = blogFilter.sort;
+    bar.querySelectorAll('[data-tab]').forEach((t) => {
+      const on = (t.dataset.tab === 'mine') === blogFilter.mine;
+      t.classList.toggle('on', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.addEventListener('click', () => { blogFilter.mine = t.dataset.tab === 'mine'; renderBlogs(); });
     });
+    bar.querySelector('.blog-write').addEventListener('click', () => openBlogEditor(null));
+    let typing = null;
+    const apply = () => {
+      Object.assign(blogFilter, { q: form.q.value.trim(), category: form.category.value, period: form.period.value, sort: form.sort.value });
+      loadList(true);
+    };
+    form.addEventListener('submit', (e) => { e.preventDefault(); apply(); });
+    form.q.addEventListener('input', () => { clearTimeout(typing); typing = setTimeout(apply, 350); });
+    ['category', 'period', 'sort'].forEach((n) => form[n].addEventListener('change', apply));
+
+    const tags = bar.querySelector('.blog-tags');
+    blogMeta.tags.forEach((t) => {
+      const chip = el('<button type="button" class="chip"></button>');
+      chip.textContent = '#' + t;
+      chip.classList.toggle('on', blogFilter.tag.toLowerCase() === t.toLowerCase());
+      chip.addEventListener('click', () => { blogFilter.tag = blogFilter.tag.toLowerCase() === t.toLowerCase() ? '' : t; renderBlogs(); });
+      tags.appendChild(chip);
+    });
+
+    // "Showing: posts by X · #tag" with ✕ to clear each.
+    const active = bar.querySelector('.blog-active');
+    const pills = [];
+    if (blogFilter.author) pills.push(['author', 'Writer: @' + blogFilter.author]);
+    if (blogFilter.tag) pills.push(['tag', '#' + blogFilter.tag]);
+    pills.forEach(([key, label]) => {
+      const p = el('<button type="button" class="chip on"></button>');
+      p.textContent = label + ' ✕';
+      p.addEventListener('click', () => { blogFilter[key] = ''; renderBlogs(); });
+      active.appendChild(p);
+    });
+
+    body.appendChild(bar);
+    const grid = el('<div class="card-grid blog-grid"></div>');
+    const more = el('<button type="button" class="ghost blog-more hidden">Load more</button>');
     body.appendChild(grid);
+    body.appendChild(more);
+    let next = 0;
+    let seq = 0;
+    async function loadList(reset) {
+      const mySeq = ++seq;
+      if (reset) { next = 0; grid.innerHTML = '<div class="empty-main">Loading…</div>'; }
+      let data;
+      try { data = await api.get(blogQuery(next)); }
+      catch (e) { grid.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+      if (mySeq !== seq) return; // a newer search has started
+      if (reset) grid.innerHTML = '';
+      data.blogs.forEach((b) => grid.appendChild(blogCardEl(b)));
+      if (!grid.children.length) {
+        const filtered = blogFilter.q || blogFilter.category || blogFilter.tag || blogFilter.author || blogFilter.period;
+        grid.innerHTML = `<div class="empty-main">${blogFilter.mine
+          ? 'You haven’t written anything yet. Tap “Write a post” to start.'
+          : filtered ? 'No posts match. Try other words or clear a filter.' : 'No posts yet. Be the first to write one!'}</div>`;
+      }
+      next = data.nextOffset;
+      more.classList.toggle('hidden', !data.more);
+    }
+    more.addEventListener('click', () => loadList(false));
+    loadList(true);
     decorateSectionWithAds(main);
+  }
+
+  // The body of a post: member posts are HTML (cleaned on the server with an
+  // allowlist); older admin posts are plain text.
+  function fillBlogBody(target, blog) {
+    if (blog.format === 'html') {
+      target.innerHTML = blog.body;
+      target.querySelectorAll('a[href]').forEach((a) => { a.target = '_blank'; a.rel = 'noopener noreferrer nofollow ugc'; });
+      target.querySelectorAll('img').forEach((img) => {
+        img.loading = 'lazy';
+        img.addEventListener('click', () => openLightbox(img.src));
+      });
+    } else {
+      appendRichText(target, blog.body);
+    }
   }
 
   async function openBlog(id) {
@@ -7808,21 +7977,445 @@
     main.appendChild(sectionShell('Blog', ''));
     const body = main.querySelector('#sectionBody');
     let blog;
-    try { blog = (await api.get('/api/content/blogs/' + id)).blog; }
+    try { blog = (await api.get('/api/blogs/' + id)).blog; }
     catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
-    main.querySelector('.section-h1').textContent = blog.title;
+    main.querySelector('.section-head').remove();
     body.innerHTML = '';
     const article = el(`
       <article class="card blog-full">
-        ${blog.cover ? `<img class="blog-cover-full" src="${esc(blog.cover)}" />` : ''}
-        <div class="hint">By ${esc(blog.author)} · ${fmtDate(blog.createdAt)}</div>
-        <div class="blog-body rich"></div>
-        <div class="row-actions"><button class="ghost" id="blogBack">← Back to blogs</button></div>
-      </article>
-    `);
-    appendRichText(article.querySelector('.blog-body'), blog.body);
-    article.querySelector('#blogBack').addEventListener('click', renderBlogs);
+        <button class="ghost small blog-back" type="button">← All posts</button>
+        ${blog.cover ? `<img class="blog-cover-full" src="${esc(blog.cover)}" alt="" />` : ''}
+        <div class="blog-card-top">
+          ${blog.category ? '<button type="button" class="blog-cat" data-cat></button>' : ''}
+          ${blog.status === 'draft' ? '<span class="blog-draft">Draft — only you can see this</span>' : ''}
+        </div>
+        <h1 class="blog-title"></h1>
+        ${blog.excerpt ? '<p class="blog-lede"></p>' : ''}
+        <div class="blog-meta">
+          ${blogAuthorHtml(blog)}
+          <span class="hint">${fmtDate(blog.publishedAt || blog.createdAt)} · ${blog.readMinutes} min read · ${blog.views} read${blog.views === 1 ? '' : 's'}${blog.updatedAt && blog.publishedAt && blog.updatedAt - blog.publishedAt > 60000 ? ' · edited' : ''}</span>
+          <span class="blog-own"></span>
+        </div>
+        <div class="blog-body"></div>
+        <div class="blog-tags chip-row"></div>
+        <div class="blog-actions">
+          <button type="button" class="blog-like"></button>
+          <button type="button" class="ghost small blog-share">🔗 Copy link</button>
+        </div>
+        <section class="blog-comments">
+          <h3>Comments</h3>
+          <form class="blog-comment-form">
+            <textarea maxlength="1000" rows="2" placeholder="Write a comment…" aria-label="Write a comment" dir="auto"></textarea>
+            <button class="primary small" type="submit">Comment</button>
+          </form>
+          <div class="blog-comment-list"></div>
+        </section>
+      </article>`);
+    article.querySelector('.blog-title').textContent = blog.title;
+    if (blog.excerpt) article.querySelector('.blog-lede').textContent = blog.excerpt;
+    article.querySelector('.blog-by-name').textContent = blog.author.displayName;
+    if (blog.author.username) {
+      article.querySelector('.blog-by').addEventListener('click', () => showProfile(blog.author.username));
+      article.querySelector('.blog-by').title = 'View profile';
+    }
+    article.querySelector('.blog-back').addEventListener('click', renderBlogs);
+    const cat = article.querySelector('[data-cat]');
+    if (cat) {
+      cat.textContent = blog.category;
+      cat.addEventListener('click', () => { Object.assign(blogFilter, { category: blog.category, mine: false }); renderBlogs(); });
+    }
+    fillBlogBody(article.querySelector('.blog-body'), blog);
+    const tagRow = article.querySelector('.blog-tags');
+    blog.tags.forEach((t) => {
+      const chip = el('<button type="button" class="chip"></button>');
+      chip.textContent = '#' + t;
+      chip.addEventListener('click', () => { Object.assign(blogFilter, { tag: t, mine: false }); renderBlogs(); });
+      tagRow.appendChild(chip);
+    });
+
+    if (blog.mine) {
+      const own = article.querySelector('.blog-own');
+      const edit = el('<button type="button" class="ghost small">✏️ Edit</button>');
+      const del = el('<button type="button" class="ghost small">Delete</button>');
+      edit.addEventListener('click', () => openBlogEditor(blog.id));
+      del.addEventListener('click', async () => {
+        if (!(await confirmBox('Delete this post? Its likes, comments and Highway listing go too.', 'Delete'))) return;
+        try { await api.del('/api/blogs/' + blog.id); notifyToast('Post deleted.'); renderBlogs(); }
+        catch (e) { alert(e.message); }
+      });
+      own.append(edit, del);
+    }
+
+    const likeBtn = article.querySelector('.blog-like');
+    const paintLike = () => {
+      likeBtn.className = 'blog-like' + (blog.liked ? ' on' : '');
+      likeBtn.textContent = `${blog.liked ? '❤️' : '🤍'} ${blog.likes} like${blog.likes === 1 ? '' : 's'}`;
+      likeBtn.title = blog.mine ? 'Likes on your post (each one is a point for you)' : blog.liked ? 'Unlike' : 'Like — gives the writer 1 point';
+      likeBtn.disabled = blog.mine || blog.status !== 'published';
+    };
+    paintLike();
+    likeBtn.addEventListener('click', async () => {
+      likeBtn.disabled = true;
+      try { const r = await api.post('/api/blogs/' + blog.id + '/like', {}); blog.liked = r.liked; blog.likes = r.likes; }
+      catch (e) { alert(e.message); }
+      paintLike();
+    });
+    article.querySelector('.blog-share').addEventListener('click', async () => {
+      const url = location.origin + '/blog/' + blog.id;
+      try { await navigator.clipboard.writeText(url); notifyToast('Link copied.'); }
+      catch (_e) { promptBox('Link to this post', '', url); }
+    });
+
+    // Comments (one level of replies).
+    const list = article.querySelector('.blog-comment-list');
+    const form = article.querySelector('.blog-comment-form');
+    if (blog.status !== 'published') form.remove();
+    const paintComments = (comments) => {
+      list.innerHTML = '';
+      if (!comments.length) { list.innerHTML = '<p class="hint">No comments yet. Start the conversation.</p>'; return; }
+      const one = (c, isReply) => {
+        const item = el(`
+          <div class="comment${isReply ? ' is-reply' : ''}">
+            <img class="avatar sm" src="${avatarUrl(c.author.avatar)}" alt="" />
+            <div class="c-body">
+              <div class="c-head"><b class="c-author"></b> <span class="hint">${fmtDate(c.at)} · ${fmtTime(c.at)}</span></div>
+              <div class="c-text"></div>
+              <div class="c-actions"></div>
+              ${isReply ? '' : '<div class="c-replies"></div>'}
+            </div>
+          </div>`);
+        item.querySelector('.c-author').textContent = c.author.displayName;
+        item.querySelector('.c-author').addEventListener('click', () => showProfile(c.author.username));
+        appendRichText(item.querySelector('.c-text'), c.body);
+        const actions = item.querySelector('.c-actions');
+        if (!isReply && form.isConnected) {
+          const reply = el('<button type="button" class="link-btn">Reply</button>');
+          reply.addEventListener('click', () => {
+            if (item.querySelector('.blog-reply-form')) return;
+            const rf = el(`<form class="blog-comment-form blog-reply-form"><textarea maxlength="1000" rows="1" placeholder="Write a reply…" dir="auto"></textarea><button class="primary small" type="submit">Reply</button></form>`);
+            rf.addEventListener('submit', (e) => { e.preventDefault(); send(rf, c.id); });
+            item.querySelector('.c-replies').appendChild(rf);
+            rf.querySelector('textarea').focus();
+          });
+          actions.appendChild(reply);
+        }
+        if (c.canDelete) {
+          const del = el('<button type="button" class="link-btn">Delete</button>');
+          del.addEventListener('click', async () => {
+            if (!(await confirmBox('Delete this comment?', 'Delete'))) return;
+            try { paintComments((await api.del('/api/blogs/comments/' + c.id)).comments); } catch (e) { alert(e.message); }
+          });
+          actions.appendChild(del);
+        }
+        if (!isReply) c.replies.forEach((r) => item.querySelector('.c-replies').appendChild(one(r, true)));
+        return item;
+      };
+      comments.forEach((c) => list.appendChild(one(c, false)));
+    };
+    async function send(f, parentId) {
+      const ta = f.querySelector('textarea');
+      const text = ta.value.trim();
+      if (!text) return;
+      f.querySelector('button').disabled = true;
+      try {
+        paintComments((await api.post('/api/blogs/' + blog.id + '/comments', { body: text, parentId })).comments);
+        ta.value = '';
+      } catch (e) { alert(e.message); }
+      f.querySelector('button').disabled = false;
+    }
+    form.addEventListener('submit', (e) => { e.preventDefault(); send(form, null); });
     body.appendChild(article);
+    api.get('/api/blogs/' + blog.id + '/comments').then((r) => paintComments(r.comments)).catch(() => {});
+  }
+
+  /* ---------- Blog editor ----------
+     A contenteditable editor with a formatting toolbar. Whatever it produces
+     is cleaned again on the server, so the toolbar is a convenience, not a
+     security boundary. New posts keep an unsaved copy in this browser. */
+  const BLOG_DRAFT_KEY = 'gx-blog-unsaved';
+
+  async function openBlogEditor(id) {
+    const main = openMainView();
+    main.appendChild(sectionShell(id ? 'Edit post' : 'Write a post', 'Write it your way: headings, lists, quotes, pictures, videos and links. Save a draft any time.'));
+    const body = main.querySelector('#sectionBody');
+    if (!blogMeta) {
+      try { blogMeta = await api.get('/api/blogs/meta'); } catch (_e) { blogMeta = { categories: ['Other'], tags: [] }; }
+    }
+    let blog = null;
+    if (id) {
+      try { blog = (await api.get('/api/blogs/' + id)).blog; }
+      catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+    }
+    body.innerHTML = '';
+    const wrap = el(`
+      <div class="blog-editor card">
+        <div class="be-cover">
+          <img class="be-cover-img hidden" alt="" />
+          <div class="be-cover-actions">
+            <label class="ghost small be-btn">🖼️ <span class="be-cover-label">Add a cover picture</span><input type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden /></label>
+            <button type="button" class="ghost small be-cover-remove hidden">Remove cover</button>
+          </div>
+        </div>
+        <input class="be-title" type="text" maxlength="150" placeholder="Title" aria-label="Title" dir="auto" />
+        <textarea class="be-excerpt" maxlength="300" rows="2" placeholder="A short summary (shown in the list and on the Highway)" aria-label="Summary" dir="auto"></textarea>
+        <div class="be-row">
+          <label>Category <select class="be-category"></select></label>
+          <label class="be-tags-label">Tags <input class="be-tags" type="text" placeholder="e.g. travel, india, food (up to 8)" /></label>
+        </div>
+        <div class="be-toolbar" role="toolbar" aria-label="Formatting">
+          <select data-block aria-label="Text style">
+            <option value="p">Paragraph</option><option value="h2">Heading</option>
+            <option value="h3">Subheading</option><option value="h4">Small heading</option>
+            <option value="blockquote">Quote</option><option value="pre">Code</option>
+          </select>
+          <span class="be-sep"></span>
+          <button type="button" data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+          <button type="button" data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+          <button type="button" data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+          <button type="button" data-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
+          <button type="button" data-cmd="superscript" title="Superscript">x²</button>
+          <button type="button" data-cmd="subscript" title="Subscript">x₂</button>
+          <label class="be-color" title="Text colour">A<input type="color" data-color="foreColor" value="#8c2f39" /></label>
+          <label class="be-color be-mark" title="Highlight">🖍<input type="color" data-color="hiliteColor" value="#fff3a3" /></label>
+          <span class="be-sep"></span>
+          <button type="button" data-cmd="insertUnorderedList" title="Bulleted list">• List</button>
+          <button type="button" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
+          <button type="button" data-cmd="outdent" title="Outdent list item">⇤</button>
+          <button type="button" data-cmd="indent" title="Indent list item">⇥</button>
+          <span class="be-sep"></span>
+          <button type="button" data-cmd="justifyLeft" title="Align left">⯇</button>
+          <button type="button" data-cmd="justifyCenter" title="Centre">≡</button>
+          <button type="button" data-cmd="justifyRight" title="Align right">⯈</button>
+          <button type="button" data-cmd="justifyFull" title="Justify">☰</button>
+          <span class="be-sep"></span>
+          <button type="button" data-act="link" title="Add a link (Ctrl+K)">🔗</button>
+          <button type="button" data-cmd="unlink" title="Remove link">⛓️‍💥</button>
+          <label class="be-btn" title="Insert pictures">🖼️<input type="file" data-act="image" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden /></label>
+          <button type="button" data-act="video" title="Embed a YouTube video">▶️</button>
+          <button type="button" data-act="table" title="Insert a table">▦</button>
+          <button type="button" data-cmd="insertHorizontalRule" title="Divider">―</button>
+          <span class="be-sep"></span>
+          <button type="button" data-cmd="removeFormat" title="Clear formatting">⌫ Format</button>
+          <button type="button" data-cmd="undo" title="Undo (Ctrl+Z)">↶</button>
+          <button type="button" data-cmd="redo" title="Redo (Ctrl+Y)">↷</button>
+        </div>
+        <div class="be-body blog-body" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Your post" data-placeholder="Tell your story…" dir="auto"></div>
+        <div class="be-preview blog-body hidden"></div>
+        <div class="be-foot">
+          <span class="hint be-count"></span>
+          <span class="hint be-saved"></span>
+          <span class="be-spacer"></span>
+          <button type="button" class="ghost be-cancel">Cancel</button>
+          <button type="button" class="ghost be-preview-btn">👁 Preview</button>
+          <button type="button" class="ghost be-draft">Save draft</button>
+          <button type="button" class="primary be-publish"></button>
+        </div>
+      </div>`);
+    const $ = (s) => wrap.querySelector(s);
+    const title = $('.be-title');
+    const excerpt = $('.be-excerpt');
+    const category = $('.be-category');
+    const tags = $('.be-tags');
+    const editor = $('.be-body');
+    const preview = $('.be-preview');
+    blogMeta.categories.forEach((c) => category.appendChild(new Option(c, c)));
+    $('.be-publish').textContent = blog && blog.status === 'published' ? 'Update post' : 'Publish';
+    if (blog && blog.status === 'published') $('.be-draft').textContent = 'Unpublish to draft';
+
+    // Cover picture.
+    let coverFile = null;
+    let removeCover = false;
+    const coverImg = $('.be-cover-img');
+    const showCover = (src) => {
+      coverImg.classList.toggle('hidden', !src);
+      if (src) coverImg.src = src;
+      $('.be-cover-remove').classList.toggle('hidden', !src);
+      $('.be-cover-label').textContent = src ? 'Change cover' : 'Add a cover picture';
+    };
+    $('.be-cover input').addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      coverFile = f; removeCover = false;
+      showCover(URL.createObjectURL(f));
+    });
+    $('.be-cover-remove').addEventListener('click', () => { coverFile = null; removeCover = true; showCover(null); });
+
+    // Fill from the saved post, or from an unsaved copy of a new one.
+    let unsaved = null;
+    if (!blog) { try { unsaved = JSON.parse(localStorage.getItem(BLOG_DRAFT_KEY) || 'null'); } catch (_e) { unsaved = null; } }
+    const src = blog || unsaved || {};
+    title.value = src.title || '';
+    excerpt.value = blog ? (blog.excerpt || '') : (src.excerpt || '');
+    category.value = src.category || 'Other';
+    tags.value = (src.tags || []).join(', ');
+    if (blog) {
+      if (blog.format === 'html') editor.innerHTML = blog.body;
+      else editor.innerText = blog.body;
+    } else if (unsaved && unsaved.body) {
+      editor.innerHTML = unsaved.body;
+      $('.be-saved').textContent = 'Restored your unsaved post.';
+    }
+    if (blog && blog.cover) showCover(blog.cover);
+
+    try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch (_e) { /* older browsers */ }
+
+    // Keep the caret's place so toolbar dialogs can insert where it was.
+    let savedRange = null;
+    const saveRange = () => {
+      const sel = window.getSelection();
+      if (sel.rangeCount && editor.contains(sel.anchorNode)) savedRange = sel.getRangeAt(0).cloneRange();
+    };
+    const restoreRange = () => {
+      editor.focus();
+      if (!savedRange) return;
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(savedRange);
+    };
+    editor.addEventListener('keyup', saveRange);
+    editor.addEventListener('mouseup', saveRange);
+    editor.addEventListener('blur', saveRange);
+    const exec = (cmd, val) => {
+      restoreRange();
+      // Colours as inline style; everything else as plain tags (<strong>, <em>…),
+      // which is what the server keeps.
+      try { document.execCommand('styleWithCSS', false, cmd === 'foreColor' || cmd === 'hiliteColor'); } catch (_e) { /* older browsers */ }
+      document.execCommand(cmd, false, val == null ? null : val);
+      saveRange();
+      changed();
+    };
+    const insertHtml = (html) => exec('insertHTML', html);
+
+    // Word count, reading time and the browser-side unsaved copy.
+    let saveTimer = null;
+    const changed = () => {
+      const words = (editor.innerText.match(/\S+/g) || []).length;
+      $('.be-count').textContent = `${words} word${words === 1 ? '' : 's'} · ${Math.max(1, Math.round(words / 200))} min read`;
+      editor.classList.toggle('empty', !editor.textContent.trim() && !editor.querySelector('img,iframe'));
+      if (blog) return;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        try {
+          localStorage.setItem(BLOG_DRAFT_KEY, JSON.stringify({
+            title: title.value, excerpt: excerpt.value, category: category.value,
+            tags: tags.value.split(',').map((t) => t.trim()).filter(Boolean), body: editor.innerHTML,
+          }));
+          $('.be-saved').textContent = 'Saved in this browser.';
+        } catch (_e) { /* storage unavailable */ }
+      }, 600);
+    };
+    [title, excerpt, tags].forEach((i) => i.addEventListener('input', changed));
+    category.addEventListener('change', changed);
+    editor.addEventListener('input', changed);
+    changed();
+
+    // Toolbar.
+    const toolbar = $('.be-toolbar');
+    toolbar.addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); }); // keep the selection
+    toolbar.querySelectorAll('[data-cmd]').forEach((b) => b.addEventListener('click', () => exec(b.dataset.cmd)));
+    toolbar.querySelector('[data-block]').addEventListener('change', (e) => { exec('formatBlock', '<' + e.target.value + '>'); e.target.value = 'p'; });
+    toolbar.querySelectorAll('[data-color]').forEach((inp) => {
+      inp.addEventListener('input', () => exec(inp.dataset.color, inp.value));
+    });
+    toolbar.querySelector('[data-act="link"]').addEventListener('click', addLink);
+    async function addLink() {
+      saveRange();
+      const url = await promptBox('Add a link', 'Web address (https://…)', 'https://');
+      if (!url || url === 'https://') return;
+      const href = /^(https?:|mailto:)/i.test(url) ? url : 'https://' + url;
+      const sel = savedRange && !savedRange.collapsed;
+      if (sel) exec('createLink', href);
+      else insertHtml(`<a href="${esc(href)}">${esc(url)}</a>&nbsp;`);
+    }
+    toolbar.querySelector('[data-act="video"]').addEventListener('click', async () => {
+      saveRange();
+      const url = await promptBox('Embed a YouTube video', 'Paste the YouTube link', '');
+      if (!url) return;
+      const m = String(url).match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/))([\w-]{6,20})/);
+      if (!m) return alert('That doesn’t look like a YouTube link.');
+      insertHtml(`<iframe src="https://www.youtube-nocookie.com/embed/${m[1]}" title="YouTube video" allowfullscreen></iframe><p><br></p>`);
+    });
+    toolbar.querySelector('[data-act="table"]').addEventListener('click', () => {
+      const cell = '<td><br></td>';
+      const row = `<tr>${cell.repeat(3)}</tr>`;
+      insertHtml(`<table><thead><tr><th>Heading</th><th>Heading</th><th>Heading</th></tr></thead><tbody>${row}${row}</tbody></table><p><br></p>`);
+    });
+
+    // Pictures: chosen from the toolbar, pasted or dropped. Each is uploaded
+    // (and checked) first, then placed at the caret.
+    async function uploadImages(files) {
+      for (const f of files) {
+        if (!/^image\/(jpeg|png|webp|gif)$/.test(f.type)) { alert('Pictures must be JPG, PNG, WEBP or GIF.'); continue; }
+        $('.be-saved').textContent = 'Uploading picture…';
+        try {
+          const fd = new FormData();
+          fd.append('image', f);
+          const r = await api.postForm('/api/blogs/images', fd);
+          insertHtml(`<figure><img src="${esc(r.url)}" alt="" /><figcaption>Caption (optional)</figcaption></figure><p><br></p>`);
+          $('.be-saved').textContent = '';
+        } catch (e) { $('.be-saved').textContent = ''; alert(e.message); }
+      }
+    }
+    toolbar.querySelector('[data-act="image"]').addEventListener('change', (e) => { saveRange(); uploadImages([...e.target.files]); e.target.value = ''; });
+    editor.addEventListener('paste', (e) => {
+      const files = [...(e.clipboardData && e.clipboardData.files || [])].filter((f) => f.type.startsWith('image/'));
+      if (files.length) { e.preventDefault(); saveRange(); uploadImages(files); }
+    });
+    editor.addEventListener('drop', (e) => {
+      const files = [...(e.dataTransfer && e.dataTransfer.files || [])].filter((f) => f.type.startsWith('image/'));
+      if (!files.length) return;
+      e.preventDefault();
+      if (document.caretRangeFromPoint) savedRange = document.caretRangeFromPoint(e.clientX, e.clientY);
+      uploadImages(files);
+    });
+    editor.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); addLink(); }
+    });
+
+    // Preview, save, publish.
+    $('.be-preview-btn').addEventListener('click', () => {
+      const showing = !preview.classList.contains('hidden');
+      if (!showing) { preview.innerHTML = ''; fillBlogBody(preview, { format: 'html', body: editor.innerHTML }); }
+      preview.classList.toggle('hidden', showing);
+      editor.classList.toggle('hidden', !showing);
+      toolbar.classList.toggle('hidden', !showing);
+      $('.be-preview-btn').textContent = showing ? '👁 Preview' : '✏️ Keep writing';
+    });
+    $('.be-cancel').addEventListener('click', () => (blog && blog.status === 'published' ? openBlog(blog.id) : renderBlogs()));
+    const save = async (status) => {
+      const fd = new FormData();
+      fd.append('title', title.value);
+      fd.append('excerpt', excerpt.value);
+      fd.append('category', category.value);
+      fd.append('tags', JSON.stringify(tags.value.split(',').map((t) => t.trim()).filter(Boolean)));
+      fd.append('body', editor.innerHTML);
+      fd.append('status', status);
+      if (coverFile) fd.append('cover', coverFile);
+      if (removeCover) fd.append('removeCover', '1');
+      const buttons = wrap.querySelectorAll('.be-foot button');
+      buttons.forEach((b) => { b.disabled = true; });
+      try {
+        const r = blog ? await api.putForm('/api/blogs/' + blog.id, fd) : await api.postForm('/api/blogs', fd);
+        try { localStorage.removeItem(BLOG_DRAFT_KEY); } catch (_e) { /* ignore */ }
+        blogMeta = null; // categories/tags may have changed
+        if (status === 'draft') {
+          notifyToast('Draft saved. Only you can see it.');
+          blog = r.blog;
+          $('.be-saved').textContent = 'Draft saved.';
+          buttons.forEach((b) => { b.disabled = false; });
+          return;
+        }
+        notifyToast(blog && blog.publishedAt ? 'Post updated.' : 'Published! It’s in Blogs and on the Highway.');
+        openBlog(r.blog.id);
+      } catch (e) {
+        buttons.forEach((b) => { b.disabled = false; });
+        alert(e.message);
+      }
+    };
+    $('.be-draft').addEventListener('click', () => save('draft'));
+    $('.be-publish').addEventListener('click', () => save('published'));
+    body.appendChild(wrap);
+    (title.value ? editor : title).focus();
   }
 
   /* ---------- Leaderboard ---------- */

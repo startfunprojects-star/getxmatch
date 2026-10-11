@@ -330,6 +330,8 @@ a.card:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--acc
 .cta:hover{text-decoration:none;transform:translateY(-2px);box-shadow:0 8px 24px color-mix(in srgb,var(--accent) 30%,transparent);filter:brightness(1.08)}
 .cover{width:100%;max-height:380px;object-fit:cover;border-radius:14px;margin:0 0 20px}
 article.post{font-size:17px}article.post p{margin:0 0 1em}
+article.post img{max-width:100%;height:auto;border-radius:10px}article.post iframe{width:100%;aspect-ratio:16/9;height:auto;border:0;border-radius:10px}article.post blockquote{margin:0 0 1em;padding:4px 16px;border-left:4px solid var(--border);color:var(--muted)}article.post pre{overflow:auto;padding:12px;border-radius:8px;background:var(--bg2)}article.post figure{margin:0 0 1em}article.post figcaption{font-size:14px;color:var(--muted);text-align:center}
+.hw-blog{display:flex;flex-direction:column;gap:4px;margin-top:10px;color:inherit;text-decoration:none}.hw-blog span{color:var(--muted)}
 footer.site{border-top:1px solid var(--border);color:var(--muted);font-size:13px;padding:24px 0;background:var(--bg2)}
 footer.site .wrap{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between}
 footer.site a{color:var(--muted)}

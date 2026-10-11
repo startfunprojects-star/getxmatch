@@ -41,6 +41,7 @@ const WEIGHTS = {
   // and once to a member who joined with someone's code.
   referrer: 4,
   referred: 2,
+  blogLike: 1, // per like received on a blog post you wrote (src/blogs.js)
 };
 
 // Point totals for every member, or just `userId` when given.
@@ -74,6 +75,8 @@ function scoreRows(userId) {
               (SELECT COUNT(*) FROM open_match_responses om
                 WHERE om.user_id = u.id AND om.points_awarded = 1)             AS open_answered,
               (SELECT COUNT(*) FROM users ru WHERE ru.referred_by = u.id)      AS referrals,
+              (SELECT COUNT(*) FROM blog_likes bl JOIN blogs bb ON bb.id = bl.blog_id
+                WHERE bb.user_id = u.id)                                       AS blog_likes,
               (CASE WHEN u.referred_by IS NULL THEN 0 ELSE 1 END)              AS was_referred,
               (SELECT COALESCE(SUM(points), 0) FROM quiz_penalties qp
                 WHERE qp.user_id = u.id)                                       AS penalty
@@ -105,6 +108,7 @@ function scoreRows(userId) {
           r.referrals * WEIGHTS.referrer +
           r.was_referred * WEIGHTS.referred +
           r.followers * WEIGHTS.follower +
+          r.blog_likes * WEIGHTS.blogLike +
           r.friend_fees_in * WEIGHTS.friendFeeGainMultiplier -
           r.friend_fees_out
       ) - r.penalty;
@@ -120,6 +124,7 @@ function scoreRows(userId) {
       quizzes: r.quizzes,
       quizPoints: r.quiz_points,
       likes: r.likes,
+      blogLikes: r.blog_likes,
       polls: r.polls,
       followers: r.followers,
       matches: r.shares_completed + r.shared_answered + r.open_shares_answered + r.open_answered,
