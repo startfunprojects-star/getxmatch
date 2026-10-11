@@ -2558,6 +2558,53 @@
     if (last < str.length) textWrap.appendChild(document.createTextNode(str.slice(last)));
     container.appendChild(textWrap);
     if (hasMedia) container.appendChild(media);
+    // A preview card (featured image, title, site) for the first ordinary link.
+    const plain = (str.match(new RegExp(URL_RE.source, 'gi')) || []).find((u) => !isMediaUrl(u));
+    if (plain) attachLinkPreview(container, plain);
+  }
+
+  /* ---------- link previews ----------
+     The server reads the page's featured image / title / description (Open
+     Graph) and serves a small copy of the image itself, so members' browsers
+     never contact the linked site. Results are cached here per page load. */
+  const linkPreviewCache = new Map(); // url -> Promise<preview|null>
+  function fetchLinkPreview(url) {
+    if (!linkPreviewCache.has(url)) {
+      linkPreviewCache.set(url, api.get('/api/link-preview?url=' + encodeURIComponent(url))
+        .then((r) => r.preview || null)
+        .catch(() => null));
+    }
+    return linkPreviewCache.get(url);
+  }
+
+  function attachLinkPreview(container, url) {
+    const slot = el('<div class="link-card-slot"></div>');
+    container.appendChild(slot);
+    fetchLinkPreview(url).then((p) => {
+      if (!p || (!p.title && !p.image) || !document.body.contains(slot)) { slot.remove(); return; }
+      const nearBottom = isNearBottom(chatBody());
+      const card = el(`
+        <a class="link-card" target="_blank" rel="noopener noreferrer nofollow">
+          ${p.image ? '<span class="link-card-img"><img alt="" loading="lazy" /></span>' : ''}
+          <span class="link-card-text">
+            <span class="link-card-site"></span>
+            <span class="link-card-title"></span>
+            <span class="link-card-desc"></span>
+          </span>
+        </a>`);
+      card.href = url;
+      if (p.image) {
+        const img = card.querySelector('img');
+        img.src = p.image;
+        img.addEventListener('error', () => card.querySelector('.link-card-img').remove());
+      }
+      card.querySelector('.link-card-site').textContent = p.site || '';
+      card.querySelector('.link-card-title').textContent = p.title || url;
+      const d = card.querySelector('.link-card-desc');
+      if (p.description) d.textContent = p.description; else d.remove();
+      slot.replaceWith(card);
+      if (nearBottom) scrollBody(); // keep a chat pinned to the newest message
+    });
   }
 
   // ---- Composer live preview -------------------------------------------------
@@ -4734,7 +4781,7 @@
     if (empty) empty.remove();
     const item = el(`<div class="call-chat-msg${mine ? ' mine' : ''}"><div class="call-chat-meta"><b></b> <span>${fmtTime(at || Date.now())}</span></div><div class="call-chat-text"></div></div>`);
     item.querySelector('b').textContent = mine ? 'You' : name;
-    item.querySelector('.call-chat-text').textContent = body;
+    appendRichText(item.querySelector('.call-chat-text'), body);
     list.appendChild(item);
     list.scrollTop = list.scrollHeight;
     const panel = document.getElementById('callPanel');
@@ -5958,7 +6005,7 @@
           </div>
         </div>
       `);
-      item.querySelector('.c-text').textContent = c.body;
+      appendRichText(item.querySelector('.c-text'), c.body);
       item.querySelector('.c-author').addEventListener('click', () => { close(); showProfile(c.author.username); });
 
       if (c.canDelete) {
@@ -7071,7 +7118,7 @@
     author.textContent = c.author.displayName;
     author.style.cursor = 'pointer';
     author.addEventListener('click', () => showProfile(c.author.username));
-    item.querySelector('.hw-comment-text').textContent = c.body;
+    appendRichText(item.querySelector('.hw-comment-text'), c.body);
     if (c.canDelete) {
       const del = el('<button class="ghost small hw-comment-del" title="Delete comment">✕</button>');
       del.addEventListener('click', async () => {
@@ -7770,7 +7817,7 @@
         <div class="row-actions"><button class="ghost" id="blogBack">← Back to blogs</button></div>
       </article>
     `);
-    article.querySelector('.blog-body').textContent = blog.body;
+    appendRichText(article.querySelector('.blog-body'), blog.body);
     article.querySelector('#blogBack').addEventListener('click', renderBlogs);
     body.appendChild(article);
   }
