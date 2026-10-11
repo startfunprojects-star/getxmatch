@@ -8464,7 +8464,125 @@
     const toolbar = $('.be-toolbar');
     toolbar.addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); }); // keep the selection
     toolbar.querySelectorAll('[data-cmd]').forEach((b) => b.addEventListener('click', () => exec(b.dataset.cmd)));
-    toolbar.querySelector('[data-block]').addEventListener('change', (e) => { exec('formatBlock', '<' + e.target.value + '>'); e.target.value = 'p'; });
+    // Text style (paragraph, headings, quote, code). Done by hand rather than
+    // with formatBlock, which browsers handle inconsistently: quotes nest or
+    // can't be undone, and turning a block back into a paragraph often fails.
+    const blockSelect = toolbar.querySelector('[data-block]');
+    const TEXT_BLOCKS = ['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE', 'DIV'];
+    const topBlock = (node) => {
+      while (node && node.parentNode !== editor) node = node.parentNode;
+      return node && editor.contains(node) ? node : null;
+    };
+    // Loose text and inline tags sitting straight in the editor get a <p>.
+    const wrapLoose = () => {
+      let run = null;
+      [...editor.childNodes].forEach((n) => {
+        const inline = n.nodeType === 3 || (n.nodeType === 1 && !/^(P|H\d|BLOCKQUOTE|PRE|DIV|UL|OL|TABLE|FIGURE|IFRAME|HR)$/.test(n.nodeName));
+        if (!inline) { run = null; return; }
+        if (n.nodeType === 3 && !n.textContent.trim() && !run) return;
+        if (!run) { run = document.createElement('p'); editor.insertBefore(run, n); }
+        run.appendChild(n);
+      });
+    };
+    const currentBlocks = () => {
+      restoreRange();
+      wrapLoose();
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return [];
+      const r = sel.getRangeAt(0);
+      // A range can sit on the editor itself (e.g. after Select all).
+      const first = r.startContainer === editor ? editor.childNodes[r.startOffset] || editor.lastChild : topBlock(r.startContainer);
+      const last = r.endContainer === editor ? editor.childNodes[Math.max(0, r.endOffset - 1)] : topBlock(r.endContainer);
+      if (!first) return [];
+      const out = [];
+      for (let n = first; n; n = n.nextSibling) { if (n.nodeType === 1) out.push(n); if (n === last) break; }
+      return out;
+    };
+    const setBlock = (tag) => {
+      const blocks = currentBlocks().filter((b) => TEXT_BLOCKS.includes(b.nodeName));
+      if (!blocks.length) return;
+      const sel = window.getSelection();
+      const r = sel.getRangeAt(0);
+      const marks = [r.startContainer, r.startOffset, r.endContainer, r.endOffset];
+      const made = [];
+      blocks.forEach((b) => {
+        // A quote or box holding several paragraphs: each becomes its own block.
+        const inner = [...b.children].some((c) => TEXT_BLOCKS.includes(c.nodeName))
+          ? [...b.childNodes] : [b];
+        if (inner[0] !== b) { inner.forEach((c) => editor.insertBefore(c, b)); b.remove(); }
+        inner.forEach((old) => {
+          if (old.nodeType !== 1) { if (old.textContent.trim()) { const p = document.createElement(tag); editor.insertBefore(p, old); p.appendChild(old); made.push(p); } else old.remove(); return; }
+          if (old.nodeName.toLowerCase() === tag) { made.push(old); return; }
+          const fresh = document.createElement(tag);
+          if (old.style.textAlign) fresh.style.textAlign = old.style.textAlign;
+          while (old.firstChild) fresh.appendChild(old.firstChild);
+          if (!fresh.firstChild) fresh.appendChild(document.createElement('br'));
+          old.replaceWith(fresh);
+          made.push(fresh);
+        });
+      });
+      // The text nodes moved but were not replaced, so the caret can go back
+      // (a range on the editor itself is now stale, so it covers the new blocks).
+      try {
+        const nr = document.createRange();
+        if (marks[0] === editor) nr.setStartBefore(made[0]); else nr.setStart(marks[0], marks[1]);
+        if (marks[2] === editor) nr.setEndAfter(made[made.length - 1]); else nr.setEnd(marks[2], marks[3]);
+        sel.removeAllRanges();
+        sel.addRange(nr);
+      } catch (_e) { /* caret was on a removed element */ }
+      saveRange();
+      changed();
+      syncBlockSelect();
+    };
+    // Show the style of the block the caret is in, so picking "Paragraph"
+    // on a heading or quote is a real change.
+    const syncBlockSelect = () => {
+      const sel = window.getSelection();
+      if (!sel.rangeCount || !editor.contains(sel.anchorNode)) return;
+      const b = topBlock(sel.anchorNode);
+      const tag = b && b.nodeType === 1 ? b.nodeName.toLowerCase() : 'p';
+      blockSelect.value = [...blockSelect.options].some((o) => o.value === tag) ? tag : 'p';
+    };
+    blockSelect.addEventListener('change', () => setBlock(blockSelect.value));
+    const onSelChange = () => {
+      if (!editor.isConnected) { document.removeEventListener('selectionchange', onSelChange); return; }
+      syncBlockSelect();
+    };
+    document.addEventListener('selectionchange', onSelChange);
+    // Enter at the end of a heading or quote, or on an empty last line of
+    // code, carries on in a normal paragraph. Shift+Enter stays in the block.
+    editor.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+      const sel = window.getSelection();
+      if (!sel.rangeCount || !sel.isCollapsed) return;
+      const b = topBlock(sel.anchorNode);
+      if (!b || b.nodeType !== 1 || !/^(H\d|BLOCKQUOTE|PRE)$/.test(b.nodeName)) return;
+      const after = document.createRange();
+      after.setStart(sel.anchorNode, sel.anchorOffset);
+      after.setEnd(b, b.childNodes.length);
+      const atEnd = !after.toString().replace(/​/g, '').length && !after.cloneContents().querySelector('img,iframe');
+      if (b.nodeName === 'PRE') {
+        e.preventDefault();
+        // Enter on an empty last line leaves the code box; otherwise a new line.
+        const lastLineEmpty = atEnd && (b.innerText.endsWith('\n\n') || !b.innerText.trim());
+        if (!lastLineEmpty) { document.execCommand('insertLineBreak'); changed(); return; }
+        while (b.lastChild && b.lastChild.nodeName === 'BR' && b.childNodes.length > 1) b.lastChild.remove();
+      } else if (!atEnd) {
+        return; // let the browser split it
+      }
+      e.preventDefault();
+      if (b.nodeName === 'BLOCKQUOTE' && !b.textContent.trim() && !b.querySelector('img,iframe')) {
+        // Enter on an empty quote line turns it into a paragraph.
+        setBlock('p');
+        return;
+      }
+      const p = document.createElement('p');
+      p.appendChild(document.createElement('br'));
+      b.after(p);
+      sel.collapse(p, 0);
+      saveRange();
+      changed();
+    });
     toolbar.querySelectorAll('[data-color]').forEach((inp) => {
       inp.addEventListener('input', () => exec(inp.dataset.color, inp.value));
     });
