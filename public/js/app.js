@@ -7773,8 +7773,13 @@
     const card = el(`<div class="tile poll-card poll-card-link" role="link" tabindex="0" title="Open this poll in a new tab">
       <h3>${esc(p.question)}</h3>${p.closed ? '<span class="pill">Closed</span>' : ''}
       <div class="poll-opts"></div>
-      <div class="poll-open">${p.closed ? 'See results ↗' : 'Open &amp; vote ↗'}</div>
+      <div class="poll-foot">
+        <span class="poll-open">${p.closed ? 'See results ↗' : 'Open &amp; vote ↗'}</span>
+        <button type="button" class="ghost small poll-share" title="Share this poll on WhatsApp, Facebook, X, Instagram and more">📤 Share</button>
+      </div>
     </div>`);
+    card.querySelector('.poll-share').addEventListener('click', (e) => { e.stopPropagation(); sharePoll(p); });
+    card.querySelector('.poll-share').addEventListener('keydown', (e) => e.stopPropagation());
     const optsBox = card.querySelector('.poll-opts');
     p.options.forEach((opt, oi) => {
       const count = p.counts[oi] || 0;
@@ -7794,6 +7799,75 @@
     card.addEventListener('click', open);
     card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
     return card;
+  }
+
+  // Share a community poll. The link carries ?r=<results version>: a new
+  // version means a new URL, so WhatsApp / Facebook / LinkedIn etc. fetch the
+  // preview afresh and it shows the current results (the page's preview image
+  // is the live results card).
+  function sharePoll(p) {
+    let h = 5381;
+    for (const ch of JSON.stringify([p.counts, !!p.closed])) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
+    const url = `${location.origin}/polls/${p.id}?r=${p.total}-${h.toString(36)}`;
+    const results = p.total
+      ? p.options.map((o, i) => `${o.length > 40 ? o.slice(0, 39) + '…' : o} ${Math.round(((p.counts[i] || 0) / p.total) * 100)}%`).join(' · ') + ` — ${p.total} vote${p.total === 1 ? '' : 's'}`
+      : 'No votes yet — be the first';
+    openShareSheet({
+      title: 'Share this poll',
+      hint: 'The link previews with the poll’s current results.',
+      url,
+      text: `📊 ${p.question} — ${results}`,
+      image: `/og/poll/${p.id}.png`,
+      imageName: 'poll-results.png',
+    });
+  }
+
+  // A share window for any link: the phone's own share sheet (reaches
+  // Instagram, Snapchat and every other installed app), copy, and a button for
+  // each major platform. `image` (optional) is offered as a download for
+  // Instagram / Stories, which have no link-sharing page.
+  function openShareSheet({ title, hint, url, text, image, imageName }) {
+    const u = encodeURIComponent(url);
+    const t = encodeURIComponent(text);
+    const both = encodeURIComponent(`${text} ${url}`);
+    const abs = image ? new URL(image, location.origin).href : '';
+    const targets = [
+      ['WhatsApp', 's-wa', `https://wa.me/?text=${both}`],
+      ['Facebook', 's-fb', `https://www.facebook.com/sharer/sharer.php?u=${u}`],
+      ['X', 's-x', `https://twitter.com/intent/tweet?url=${u}&text=${t}`],
+      ['Telegram', 's-tg', `https://t.me/share/url?url=${u}&text=${t}`],
+      ['LinkedIn', 's-li', `https://www.linkedin.com/sharing/share-offsite/?url=${u}`],
+      ['Reddit', 's-rd', `https://www.reddit.com/submit?url=${u}&title=${t}`],
+      ['Threads', '', `https://www.threads.net/intent/post?text=${both}`],
+      ['Bluesky', '', `https://bsky.app/intent/compose?text=${both}`],
+      ['Pinterest', 's-pi', `https://pinterest.com/pin/create/button/?url=${u}&description=${t}${abs ? '&media=' + encodeURIComponent(abs) : ''}`],
+      ['Tumblr', '', `https://www.tumblr.com/widgets/share/tool?canonicalUrl=${u}&caption=${t}`],
+      ['Email', '', `mailto:?subject=${encodeURIComponent(text.slice(0, 120))}&body=${both}`],
+      ['SMS', '', `sms:?&body=${both}`],
+    ];
+    const { card } = openModal(title, `
+      <div class="share-sheet">
+        ${hint ? `<p class="hint">${esc(hint)}</p>` : ''}
+        ${image ? `<img class="share-preview" src="${esc(image)}" alt="" />` : ''}
+        <div class="share-row">
+          <input class="share-input" type="text" readonly value="${esc(url)}" aria-label="Link" />
+          <button type="button" class="primary small" data-copy>Copy</button>
+        </div>
+        <div class="share-actions">
+          ${navigator.share ? '<button type="button" class="chip-btn" data-native>📤 More apps…</button>' : ''}
+          ${targets.map(([name, cls, href]) => `<a class="chip-btn ${cls}" target="_blank" rel="noopener noreferrer" href="${esc(href)}">${name}</a>`).join('')}
+          ${image ? `<a class="chip-btn" href="${esc(image)}" download="${esc(imageName || 'image.png')}">⬇️ Image for Instagram</a>` : ''}
+        </div>
+      </div>`);
+    const copy = card.querySelector('[data-copy]');
+    copy.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(url); }
+      catch (_e) { const i = card.querySelector('.share-input'); i.select(); try { document.execCommand('copy'); } catch (_e2) { /* ignore */ } }
+      copy.textContent = 'Copied!';
+      setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+    });
+    const native = card.querySelector('[data-native]');
+    if (native) native.addEventListener('click', () => navigator.share({ title, text, url }).catch(() => {}));
   }
 
   /* ---------- Blogs ----------

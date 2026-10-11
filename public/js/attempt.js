@@ -5,6 +5,28 @@
 // is prompted to register when they try. Loaded as an external file because the
 // pages' Content-Security-Policy forbids inline scripts.
 
+// Share bar on poll pages: Copy link, and the phone's own share sheet (which
+// reaches Instagram, Snapchat and any other installed app).
+(function () {
+  var bar = document.querySelector('.gx-share');
+  if (!bar) return;
+  var url = bar.getAttribute('data-url');
+  var text = bar.getAttribute('data-text');
+  var copy = bar.querySelector('.gx-share-copy');
+  copy.addEventListener('click', function () {
+    var done = function () { copy.textContent = '✓ Copied'; setTimeout(function () { copy.textContent = '🔗 Copy link'; }, 1500); };
+    if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, function () { window.prompt('Copy this link', url); });
+    else window.prompt('Copy this link', url);
+  });
+  var native = bar.querySelector('.gx-share-native');
+  if (navigator.share) {
+    native.hidden = false;
+    native.addEventListener('click', function () {
+      navigator.share({ title: document.title, text: text, url: url }).catch(function () {});
+    });
+  }
+})();
+
 (function () {
   var root = document.getElementById('gxAttempt');
   if (!root) return;

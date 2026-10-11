@@ -111,7 +111,10 @@ function summarize(text, n = 160) {
 //   title/desc     content-derived fallbacks
 //   image          site-relative or absolute fallback image (optional)
 //   type           OG type (website / article)
-function resolveSeo(seo, { canonicalPath, title, description, image, type }) {
+//   ogUrl          optional og:url when it should differ from the canonical
+//                  (a poll share link carries ?r=<results version> so each
+//                  share is a fresh object for Facebook / LinkedIn caches)
+function resolveSeo(seo, { canonicalPath, title, description, image, type, ogUrl }) {
   seo = seo || {};
   const cfg = siteConfig();
   const siteName = cfg.name;
@@ -129,6 +132,7 @@ function resolveSeo(seo, { canonicalPath, title, description, image, type }) {
     description: metaDescription,
     keywords: seo.metaKeywords || '',
     canonical,
+    ogUrl: ogUrl ? absUrl(ogUrl) : canonical,
     noindex: !!seo.noindex,
     nofollow: !!seo.nofollow,
     ogTitle: seo.ogTitle || metaTitle,
@@ -160,7 +164,7 @@ function headTags(s) {
     `<meta property="og:title" content="${escAttr(s.ogTitle)}" />`,
     `<meta property="og:description" content="${escAttr(s.ogDescription)}" />`,
     `<meta property="og:type" content="${escAttr(s.ogType)}" />`,
-    `<meta property="og:url" content="${escAttr(s.canonical)}" />`,
+    `<meta property="og:url" content="${escAttr(s.ogUrl || s.canonical)}" />`,
     s.ogImage ? `<meta property="og:image" content="${escAttr(s.ogImage)}" />` : '',
     s.ogImage ? `<meta property="og:image:alt" content="${escAttr(s.ogTitle)}" />` : '',
     s.ogImage ? `<meta property="og:image:width" content="1200" />` : '',

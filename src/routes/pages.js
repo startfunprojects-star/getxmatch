@@ -167,7 +167,11 @@ function humanDate(ms) {
 // from canonical (missing/stale slug), returns { redirect } for a 301.
 function canonicalCheck(base, req, id, slugSource) {
   const canonical = itemPath(base, id, slugSource);
-  if (req.path !== canonical) return { redirect: canonical };
+  if (req.path !== canonical) {
+    // Keep the query (e.g. a poll share link's ?r=) across the redirect.
+    const q = req.originalUrl.indexOf('?');
+    return { redirect: canonical + (q >= 0 ? req.originalUrl.slice(q) : '') };
+  }
   return { canonical };
 }
 
@@ -239,6 +243,20 @@ const ATTEMPT_STYLE = `<style>
 .gx-timebar { height: 6px; border-radius: 999px; background: var(--bg3); overflow: hidden; }
 .gx-timebar span { display: block; height: 100%; width: 100%; background: var(--grad); transition: width .25s linear; }
 .gx-timebar.untimed { display: none; }
+.gx-share { margin: 26px 0 8px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg2); }
+.gx-share h2 { margin: 0; font-size: 18px; }
+.gx-share-hint { margin: 2px 0 12px; color: var(--muted); font-size: 14px; }
+.gx-share-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.gx-share-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg3); color: var(--text); font: inherit; font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer; }
+.gx-share-btn:hover { border-color: var(--accent); text-decoration: none; }
+.gx-share-btn[hidden] { display: none; }
+.gx-share-btn.s-wa { background: #25d366; border-color: #25d366; color: #05240f; }
+.gx-share-btn.s-fb { background: #1877f2; border-color: #1877f2; color: #fff; }
+.gx-share-btn.s-x { background: #000; border-color: #000; color: #fff; }
+.gx-share-btn.s-tg { background: #29a9eb; border-color: #29a9eb; color: #04283a; }
+.gx-share-btn.s-li { background: #0a66c2; border-color: #0a66c2; color: #fff; }
+.gx-share-btn.s-rd { background: #ff4500; border-color: #ff4500; color: #fff; }
+.gx-share-btn.s-pi { background: #e60023; border-color: #e60023; color: #fff; }
 </style>`;
 
 /* ===========================================================================
@@ -478,6 +496,50 @@ ${ATTEMPT_SCRIPT}`;
    Polls
 =========================================================================== */
 
+// "Yes 62% · No 38% — 21 votes": the current results as one line of text, for
+// share previews on platforms that show the description.
+function pollResultsText(options, counts, total) {
+  if (!total) return 'No votes yet — be the first';
+  const parts = options.map((o, i) => `${summarize(o, 40)} ${Math.round(((counts[i] || 0) / total) * 100)}%`);
+  return `${parts.join(' · ')} — ${total} vote${total === 1 ? '' : 's'}`;
+}
+
+// Share buttons for every major platform (plain links, so they work without
+// JavaScript; /js/attempt.js adds Copy and the phone's own share sheet, which
+// covers Instagram, Snapchat and other apps without a web share link).
+function shareLinks(url, text, imageAbs) {
+  const u = encodeURIComponent(url);
+  const t = encodeURIComponent(text);
+  const both = encodeURIComponent(`${text} ${url}`);
+  return [
+    ['WhatsApp', 'wa', `https://wa.me/?text=${both}`],
+    ['Facebook', 'fb', `https://www.facebook.com/sharer/sharer.php?u=${u}`],
+    ['X', 'x', `https://twitter.com/intent/tweet?url=${u}&text=${t}`],
+    ['Telegram', 'tg', `https://t.me/share/url?url=${u}&text=${t}`],
+    ['LinkedIn', 'li', `https://www.linkedin.com/sharing/share-offsite/?url=${u}`],
+    ['Reddit', 'rd', `https://www.reddit.com/submit?url=${u}&title=${t}`],
+    ['Threads', 'th', `https://www.threads.net/intent/post?text=${both}`],
+    ['Bluesky', 'bs', `https://bsky.app/intent/compose?text=${both}`],
+    ['Pinterest', 'pi', `https://pinterest.com/pin/create/button/?url=${u}&media=${encodeURIComponent(imageAbs)}&description=${t}`],
+    ['Tumblr', 'tu', `https://www.tumblr.com/widgets/share/tool?canonicalUrl=${u}&caption=${t}`],
+    ['Email', 'em', `mailto:?subject=${encodeURIComponent(text.slice(0, 120))}&body=${both}`],
+    ['SMS', 'sm', `sms:?&body=${both}`],
+  ];
+}
+
+function shareBarHtml(url, text, imageAbs, imagePath) {
+  return `<section class="gx-share" data-url="${escAttr(url)}" data-text="${escAttr(text)}">
+  <h2>Share this poll</h2>
+  <p class="gx-share-hint">The preview shows the current results.</p>
+  <div class="gx-share-row">
+    <button type="button" class="gx-share-btn gx-share-native" hidden>📤 Share…</button>
+    <button type="button" class="gx-share-btn gx-share-copy">🔗 Copy link</button>
+    ${shareLinks(url, text, imageAbs).map(([name, cls, href]) => `<a class="gx-share-btn s-${cls}" href="${escAttr(href)}" target="_blank" rel="noopener noreferrer">${name}</a>`).join('\n    ')}
+    <a class="gx-share-btn" href="${escAttr(imagePath)}" download="poll-results.png">⬇️ Results image (Instagram, Stories)</a>
+  </div>
+</section>`;
+}
+
 function pollTally(id, options) {
   const counts = new Array(options.length).fill(0);
   // Split each option's votes by voter gender (Male / Female / other) so the
@@ -592,13 +654,19 @@ router.get('/polls/:id/:slug?', optionalAuth, (req, res, next) => {
   // The share image is always the live poll results card (never an admin
   // override), so a shared link previews the poll exactly as people voted.
   const pollImage = `/og/poll/${row.id}.png?v=${og.version}`;
-  const seoDescriptor = resolveSeo({ ...s, ogImage: '', twitterImage: '' }, {
+  // A share link carries ?r=<results version>; echo it into og:url so Facebook /
+  // LinkedIn treat each share as new and fetch the current results.
+  const shareVersion = /^[\w-]{1,32}$/.test(String(req.query.r || '')) ? String(req.query.r) : '';
+  const results = pollResultsText(options, counts, total);
+  const seoDescriptor = resolveSeo({ ...s, ogImage: '', twitterImage: '', metaDescription: '', ogDescription: '', twitterDescription: '' }, {
     canonicalPath: chk.canonical,
+    ogUrl: shareVersion ? `${chk.canonical}?r=${shareVersion}` : '',
     title: row.question,
-    description: row.question ? `Vote: ${summarize(row.question, 150)} — ${total} vote${total === 1 ? '' : 's'} so far. Join the poll on ${SITE_NAME}.` : undefined,
+    description: `${results}${row.closed ? ' · Poll closed.' : ' · Cast your vote on ' + SITE_NAME + '.'}`,
     image: pollImage,
     type: 'article',
   });
+  const shareUrl = absUrl(`${chk.canonical}?r=${og.version}`);
   const jsonLd = [
     breadcrumbLd([{ name: 'Home', path: '/' }, { name: 'Polls', path: '/polls' }, { name: row.question, path: chk.canonical }]),
     {
@@ -618,6 +686,7 @@ ${ATTEMPT_STYLE}
   <p class="gx-hint">${hint}</p>
   <div class="gx-note" hidden></div>
 </div>
+${shareBarHtml(shareUrl, `📊 ${row.question} — ${results}`, absUrl(pollImage), `/og/poll/${row.id}.png?v=${og.version}`)}
 ${ads.slotHtml('content_inline')}
 ${ATTEMPT_SCRIPT}`;
   sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });

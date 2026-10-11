@@ -2288,3 +2288,22 @@ button.primary, .chat-cta { letter-spacing: .01em; }
   .be-row label { flex: 1 1 100%; }
   .blog-body { font-size: 16px; }
 }
+
+/* ---------- Share window (polls and other links) ---------- */
+.share-sheet { display: flex; flex-direction: column; gap: 12px; }
+.share-sheet .hint { margin: 0; }
+.share-preview { width: 100%; aspect-ratio: 1200 / 630; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-3); }
+.share-sheet .share-row { display: flex; gap: 8px; }
+.share-sheet .share-input { flex: 1; min-width: 0; }
+.share-sheet .share-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip-btn { text-decoration: none; cursor: pointer; }
+.chip-btn:hover { text-decoration: none; }
+.chip-btn.s-wa { background: #25d366; border-color: #25d366; color: #05240f; }
+.chip-btn.s-fb { background: #1877f2; border-color: #1877f2; color: #fff; }
+.chip-btn.s-x { background: #000; border-color: #000; color: #fff; }
+.chip-btn.s-tg { background: #29a9eb; border-color: #29a9eb; color: #04283a; }
+.chip-btn.s-li { background: #0a66c2; border-color: #0a66c2; color: #fff; }
+.chip-btn.s-rd { background: #ff4500; border-color: #ff4500; color: #fff; }
+.chip-btn.s-pi { background: #e60023; border-color: #e60023; color: #fff; }
+.poll-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 8px; }
+.poll-foot .poll-share { margin: 0; }
