@@ -16,8 +16,14 @@ const GAIN_MULTIPLIER = 2;
 
 function friendFeeOf(userId) {
   const r = db.prepare('SELECT friend_fee FROM users WHERE id = ?').get(userId);
-  return r && Number.isInteger(r.friend_fee) ? r.friend_fee : DEFAULT_FEE;
+  if (!r || !Number.isInteger(r.friend_fee)) return DEFAULT_FEE;
+  return Math.min(MAX_FEE, Math.max(0, r.friend_fee)); // never charge above the cap
 }
+
+// Fees saved before the cap existed (carried over from old follow fees) are
+// brought down to it, along with requests still pending at such a fee.
+db.prepare('UPDATE users SET friend_fee = ? WHERE friend_fee > ?').run(MAX_FEE, MAX_FEE);
+db.prepare("UPDATE friendships SET fee = ? WHERE fee > ? AND status = 'pending'").run(MAX_FEE, MAX_FEE);
 
 // Points a member has earned from (and spent on) accepted friend requests.
 function friendFeeTotals(userId) {

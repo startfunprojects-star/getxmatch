@@ -6273,7 +6273,10 @@
         `;
         const input = feeBox.querySelector('#ffInput');
         const gain = feeBox.querySelector('#ffGain');
-        input.addEventListener('input', () => { gain.textContent = (Number(input.value) || 0) * me.multiplier; });
+        input.addEventListener('input', () => {
+          if (Number(input.value) > me.maxFee) input.value = me.maxFee; // can't go above the cap
+          gain.textContent = (Number(input.value) || 0) * me.multiplier;
+        });
         feeBox.querySelector('#ffSave').addEventListener('click', async () => {
           try {
             const out = await api.put('/api/social/friend-fee', { fee: Number(input.value) });
