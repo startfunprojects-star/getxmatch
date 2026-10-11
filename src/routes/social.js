@@ -9,6 +9,7 @@ const { friendState, ratingSummary, RATING_DIMS, photoReactionState, photoCommen
 const { areBlocked } = require('../relations');
 const { MAX_FEE, GAIN_MULTIPLIER, friendFeeOf, friendFeeTotals } = require('../friendFees');
 const moderation = require('../moderation');
+const { pointsOf } = require('../points');
 const { GIFTS } = require('../gifts');
 const { GALLERY_REACTIONS, GALLERY_REACTION_SET } = require('../galleryReactions');
 const { listActivities } = require('../activities');
@@ -386,6 +387,13 @@ router.post('/friend/:username', requireAuth, (req, res) => {
       return res.json({ state: 'friends' });
     }
     return res.status(409).json({ error: 'You already sent a request.' });
+  }
+
+  // Members whose points are below zero can't send new requests until they
+  // earn their way back (accepting requests sent to them still works).
+  const myPoints = pointsOf(req.user.id);
+  if (myPoints < 0) {
+    return res.status(403).json({ error: `Your points are ${myPoints}. You can send friend requests again once they're 0 or more.` });
   }
 
   // The request is priced at the addressee's current friend fee; points move

@@ -43,7 +43,8 @@ const WEIGHTS = {
   referred: 2,
 };
 
-function rankedUsers() {
+// Point totals for every member, or just `userId` when given.
+function scoreRows(userId) {
   const rows = db
     .prepare(
       `SELECT u.id, u.username, p.display_name, p.avatar, p.country,
@@ -81,11 +82,12 @@ function rankedUsers() {
        LEFT JOIN (SELECT user_id, SUM(best) AS quiz_points
                     FROM (SELECT user_id, quiz_id, MAX(score) AS best
                             FROM quiz_attempts GROUP BY user_id, quiz_id)
-                   GROUP BY user_id) qb ON qb.user_id = u.id`
+                   GROUP BY user_id) qb ON qb.user_id = u.id
+       ${userId == null ? '' : 'WHERE u.id = ?'}`
     )
-    .all();
+    .all(...(userId == null ? [] : [userId]));
 
-  const scored = rows.map((r) => {
+  return rows.map((r) => {
     const avg = r.rating_avg || 0;
     // Minus points deducted for stopped (proctoring-violating) quiz attempts.
     const points =
@@ -128,6 +130,16 @@ function rankedUsers() {
       score: points, // legacy name
     };
   });
+}
+
+// One member's overall points (same formula as the leaderboard).
+function pointsOf(userId) {
+  const row = scoreRows(userId)[0];
+  return row ? row.points : 0;
+}
+
+function rankedUsers() {
+  const scored = scoreRows(null);
 
   // Per-category quiz points: { userId: { categoryId: points } }.
   const byCat = new Map();
@@ -191,4 +203,4 @@ function leaderboards(decorate = (r) => r) {
   return boards;
 }
 
-module.exports = { rankedUsers, leaderboards, WEIGHTS };
+module.exports = { rankedUsers, leaderboards, pointsOf, WEIGHTS };
