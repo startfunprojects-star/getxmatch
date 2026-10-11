@@ -1428,6 +1428,11 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
 .hw-share-btn { margin-top: 8px; }
 
 /* A like/comment on a shared picture, echoed into the chat. */
+.call-log { align-self: center; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 8px; margin: 8px auto; padding: 6px 12px; border-radius: 14px; background: var(--bg-3); color: var(--muted); font-size: 13px; max-width: 92%; }
+.call-log.missed { color: #d64545; }
+.call-log.missed .call-log-line { font-weight: 600; }
+.call-log .time { font-size: 11px; color: var(--muted); }
+.call-log-btn { padding: 2px 10px; font-size: 12px; }
 .hwevent-card {
   align-self: center; max-width: 92%; display: flex; gap: 10px; align-items: center;
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px;

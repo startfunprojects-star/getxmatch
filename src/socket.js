@@ -194,6 +194,8 @@ function replyPreview(replyToId) {
     text = chatQuiz.quizLabel(chatQuiz.chatQuizIdFromBody(row.body));
   } else if (row.kind === 'voice') {
     text = voiceNotes.label(row.body);
+  } else if (row.kind === 'call') {
+    text = '📹 Video call';
   }
   return { id: row.id, from: row.sender_id, kind: row.kind || 'text', text: String(text).slice(0, 140) };
 }
@@ -335,7 +337,29 @@ function leaveCall(io, room, userId, socketId) {
   if (c.members.size === 0) {
     calls.delete(room);
     callAudience(room, c).forEach((uid) => io.to(`user:${uid}`).emit('call:ring-stop', { room }));
+    recordUnansweredCall(io, room, c);
   }
+}
+
+// A 1:1 call ended without the other person ever joining: leave a "missed"
+// (or "declined") video call line in the conversation, from the caller.
+function recordUnansweredCall(io, room, c) {
+  try {
+    if (c.kind !== 'dm') return;
+    const callee = room.slice(3).split('-').map(Number).find((id) => id !== c.startedBy);
+    if (!callee || c.joined.has(callee)) return;
+    const status = c.declined.has(callee) ? 'declined' : 'missed';
+    const now = Date.now();
+    const body = JSON.stringify({ status });
+    // A declined call was seen, so it doesn't count as unread.
+    const info = db
+      .prepare("INSERT INTO messages (sender_id, recipient_id, body, kind, created_at, expires_at, delivered_at, read_at) VALUES (?, ?, ?, 'call', ?, NULL, ?, ?)")
+      .run(c.startedBy, callee, body, now, deliveredNow(callee, now), status === 'declined' ? now : null);
+    const msg = { id: info.lastInsertRowid, from: c.startedBy, to: callee, body, kind: 'call', at: now, status: receiptStatus(callee) };
+    io.to(`user:${callee}`).emit('chat:message', { ...msg, mine: false });
+    io.to(`user:${c.startedBy}`).emit('chat:message', { ...msg, mine: true });
+    if (status === 'missed') pushDm(c.startedBy, callee, 'call', body);
+  } catch (_e) { /* the call itself has already ended */ }
 }
 
 /* --------------------------------------------------------------------------
@@ -433,7 +457,7 @@ function postDenied(from, { to, groupId }) {
 }
 
 // Push a new message to the recipient's installed app (icon badge + notification).
-const PUSH_PREVIEW = { voice: '🎤 Voice message', gift: '🎁 Sent you a gift', poll: '📊 Sent you a poll', quiz: '🧠 Sent you a quiz', image: '📷 Photo', file: '📎 File' };
+const PUSH_PREVIEW = { call: '📹 Missed video call', voice: '🎤 Voice message', gift: '🎁 Sent you a gift', poll: '📊 Sent you a poll', quiz: '🧠 Sent you a quiz', image: '📷 Photo', file: '📎 File' };
 function messagePreview(kind, body) {
   if (kind === 'text') return String(body || '').slice(0, 140);
   return PUSH_PREVIEW[kind] || 'New message';
@@ -932,12 +956,13 @@ function initSocket(io) {
 
         let c = calls.get(r.room);
         if (!c) {
-          c = { kind: r.kind, groupId: r.groupId, startedBy: me.id, members: new Map(), declined: new Set(), invited: new Set() };
+          c = { kind: r.kind, groupId: r.groupId, startedBy: me.id, members: new Map(), declined: new Set(), invited: new Set(), joined: new Set() };
           calls.set(r.room, c);
         }
         const others = [...c.members.keys()].filter((id) => id !== me.id);
         if (others.length + 1 > MAX_CALL_PEOPLE) return ack && ack({ error: 'This call is full.' });
         c.members.set(me.id, socket.id);
+        c.joined.add(me.id); // ever answered (see recordUnansweredCall)
         c.declined.delete(me.id);
         broadcastGroupCall(io, c);
 

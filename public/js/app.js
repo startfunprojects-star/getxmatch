@@ -2913,12 +2913,39 @@
     else if (m.kind === 'poll') appendPollBubble(m);
     else if (m.kind === 'quiz') appendQuizBubble(m);
     else if (m.kind === 'hwevent') appendHighwayEventBubble(m);
+    else if (m.kind === 'call') return appendCallBubble(m);
     else if (m.kind === 'voice') { if (isVoiceBody(m.body)) appendVoiceBubble(m); else return; } // old-style notes are skipped
     else appendTextBubble(m);
     // Advertisement after every 20 exchanged messages (text + gifts).
     if (m.kind !== 'voice' && m.kind !== 'poll' && m.kind !== 'quiz' && m.kind !== 'hwevent') {
       maybeInsertStreamAd(chatBody(), 'chat_inline', 'chat', 20);
     }
+  }
+
+  // A 1:1 video call nobody answered: a centered line in the conversation, with
+  // "Call back" for the person who missed it.
+  function appendCallBubble(m) {
+    const b = chatBody();
+    if (!b) return;
+    let p = {};
+    try { p = typeof m.body === 'string' ? JSON.parse(m.body) : (m.body || {}); } catch (_e) { p = {}; }
+    const declined = p.status === 'declined';
+    const line = m.mine
+      ? (declined ? `${esc(peerLabel())} declined your video call` : `${esc(peerLabel())} missed your video call`)
+      : (declined ? 'You declined a video call' : 'Missed video call');
+    const card = el(`
+      <div class="call-log${!m.mine && !declined ? ' missed' : ''}">
+        <span class="call-log-icon">📹</span>
+        <span class="call-log-line">${line}</span>
+        <span class="time">${fmtTime(m.at)}</span>
+      </div>`);
+    if (state.peer) {
+      const again = el(`<button type="button" class="ghost small call-log-btn">${m.mine ? 'Call again' : 'Call back'}</button>`);
+      again.addEventListener('click', () => startCall({ kind: 'dm', to: state.peer.id, name: peerLabel() }));
+      card.appendChild(again);
+    }
+    b.appendChild(card);
+    scrollBody();
   }
 
   // A like/comment on a picture this conversation shared to the Highway. Shown as
@@ -3537,6 +3564,7 @@
   // A short text snapshot of a message, for quoting.
   function previewTextOf(m) {
     if (m.kind === 'voice') return voiceLabel(m.body);
+    if (m.kind === 'call') return '📹 Video call';
     if (m.kind === 'gift') {
       const g = state.giftsById[m.body];
       return g ? `${g.emoji} ${g.name}` : 'a gift';
