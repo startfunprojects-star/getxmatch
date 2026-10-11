@@ -6,8 +6,10 @@
 //   • quiz attempts         (quizzes users attempted)
 //   • admin events          (curated announcements)
 //   • user-shared images    (photos/GIFs posted to the feed)
-//   • profile updates       (new gallery photos/reels, GIFs and profile edits
-//                            by members the viewer follows or is friends with)
+//   • profile updates       (new gallery photos/reels, profile pictures, GIFs
+//                            and profile edits by members the viewer follows or
+//                            is friends with — these pictures never go to the
+//                            Highway)
 //   • news                  (headlines from the admin's RSS feeds matching the
 //                            viewer's areas of interest and chosen country —
 //                            src/news.js, src/newsCountries.js)
@@ -208,9 +210,11 @@ function buildFeed(viewerId, opts) {
                       SELECT CASE WHEN requester_id = @me THEN addressee_id ELSE requester_id END
                         FROM friendships
                        WHERE (requester_id = @me OR addressee_id = @me) AND status = 'accepted')`;
+    // The member's own uploads show too, so they can see what went out.
+    const watchedOrMe = watched.replace('(SELECT followee_id', '(SELECT @me UNION SELECT followee_id');
     db.prepare(
       `SELECT id, user_id, filename, kind, created_at FROM gallery_photos
-        WHERE user_id IN ${watched} ORDER BY created_at DESC LIMIT @n`
+        WHERE user_id IN ${watchedOrMe} ORDER BY created_at DESC LIMIT @n`
     ).all({ me, n: PER_SOURCE }).forEach((row) => {
       const a = userMini(row.user_id, me);
       if (!a) return;
@@ -224,6 +228,36 @@ function buildFeed(viewerId, opts) {
         target: null,
         text: `${a.displayName} added a new ${isReel ? 'reel' : 'photo'} to their gallery`,
         image: !isReel && canSeePhoto({ id: row.id, user_id: row.user_id }, me) ? `/uploads/${row.filename}` : undefined,
+      });
+    });
+    // New profile pictures (the main one and the rotating picture buffer).
+    const pictureAt = new Map(); // user_id -> [times], to skip the matching "updated their profile"
+    const pictureRows = [
+      ...db.prepare(
+        `SELECT 'avatar' AS src, id, user_id, filename, created_at FROM avatar_changes
+          WHERE user_id IN ${watchedOrMe} ORDER BY created_at DESC LIMIT @n`
+      ).all({ me, n: PER_SOURCE }),
+      ...db.prepare(
+        `SELECT 'buffer' AS src, id, user_id, filename, created_at FROM profile_buffer_photos
+          WHERE user_id IN ${watchedOrMe} ORDER BY created_at DESC LIMIT @n`
+      ).all({ me, n: PER_SOURCE }),
+    ];
+    pictureRows.forEach((row) => {
+      const a = userMini(row.user_id, me);
+      if (!a) return;
+      if (!pictureAt.has(row.user_id)) pictureAt.set(row.user_id, []);
+      pictureAt.get(row.user_id).push(row.created_at);
+      events.push({
+        id: `${row.src === 'avatar' ? 'avatar' : 'pfp'}-${row.id}`,
+        type: 'profile-update',
+        at: row.created_at,
+        icon: '🖼️',
+        actor: a,
+        target: null,
+        text: row.src === 'avatar'
+          ? `${a.displayName} changed their profile picture`
+          : `${a.displayName} added a new profile picture`,
+        image: `/uploads/${row.filename}`,
       });
     });
     db.prepare(
@@ -246,6 +280,8 @@ function buildFeed(viewerId, opts) {
       `SELECT user_id, updated_at FROM profiles
         WHERE user_id IN ${watched} AND updated_at IS NOT NULL ORDER BY updated_at DESC LIMIT @n`
     ).all({ me, n: PER_SOURCE }).forEach((row) => {
+      // A picture change already has its own row.
+      if ((pictureAt.get(row.user_id) || []).some((t) => Math.abs(t - row.updated_at) < 15000)) return;
       const a = userMini(row.user_id, me);
       if (!a) return;
       events.push({

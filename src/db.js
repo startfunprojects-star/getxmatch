@@ -1143,4 +1143,16 @@ db.exec(`
   if (!cols.includes('read_at')) db.exec('ALTER TABLE chat_group_members ADD COLUMN read_at INTEGER;');
 })();
 
+// Profile-picture changes, for Recent Activity (followers and friends only).
+// `filename` is a copy of the picture, so it outlives later changes.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS avatar_changes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    filename   TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_avatar_changes_user ON avatar_changes (user_id, created_at);
+`);
+
 module.exports = db;

@@ -14,7 +14,7 @@ const { videoDuration } = require('../videoDuration');
 const { buildProfile } = require('../profileData');
 const { saveProfile } = require('../profileWrite');
 const F = require('../profileFields');
-const { shareUploadToHighway } = require('../highwayShare');
+const crypto = require('crypto');
 
 const router = express.Router();
 
@@ -25,6 +25,24 @@ function removeUpload(filename) {
 }
 
 // GET /api/profile/me  — current user's profile (or 404 if not created yet)
+// New profile pictures are not posted to the Highway: they appear on Recent
+// Activity for the member's followers and friends (src/routes/events.js). A
+// copy is kept for that, because replacing the picture deletes the old file.
+const AVATAR_HISTORY = 10; // per member; older copies are deleted
+function recordAvatarChange(userId, filename) {
+  try {
+    const copy = crypto.randomBytes(16).toString('hex') + path.extname(filename);
+    fs.copyFileSync(path.join(config.uploadsDir, path.basename(filename)), path.join(config.uploadsDir, copy));
+    db.prepare('INSERT INTO avatar_changes (user_id, filename, created_at) VALUES (?, ?, ?)').run(userId, copy, Date.now());
+    db.prepare(`SELECT id, filename FROM avatar_changes WHERE user_id = ? ORDER BY created_at DESC LIMIT -1 OFFSET ?`)
+      .all(userId, AVATAR_HISTORY)
+      .forEach((r) => {
+        db.prepare('DELETE FROM avatar_changes WHERE id = ?').run(r.id);
+        removeUpload(r.filename);
+      });
+  } catch (_e) { /* never block the profile save */ }
+}
+
 router.get('/me', requireAuth, (req, res) => {
   const profile = buildProfile(req.user.id, req.user.id);
   if (!profile) return res.status(404).json({ error: 'No profile yet.' });
@@ -44,7 +62,7 @@ router.get('/:username', requireAuth, (req, res) => {
 router.put('/', requireAuth, imageUpload.single('avatar'), requireSafeLinks('displayName', 'about'), nsfwGuard, (req, res) => {
   const out = saveProfile(req.user.id, req.body, req.file);
   if (out.error) return res.status(400).json({ error: out.error });
-  if (req.file) shareUploadToHighway(req.user.id, req.file.filename, 'New profile picture');
+  if (req.file) recordAvatarChange(req.user.id, req.file.filename);
   res.json({ profile: out.profile });
 });
 
@@ -91,7 +109,6 @@ router.post('/gallery', requireAuth, imageUpload.single('photo'), requireSafeLin
     .prepare(`INSERT INTO gallery_photos (user_id, filename, created_at, kind, caption, location, music, music_mixed)
               VALUES (?, ?, ?, 'photo', ?, ?, ?, 0)`)
     .run(req.user.id, req.file.filename, Date.now(), d.caption, d.location, d.music);
-  shareUploadToHighway(req.user.id, req.file.filename, d.caption || 'New gallery photo');
 
   res.status(201).json({
     photo: galleryItem({ id: info.lastInsertRowid, filename: req.file.filename, kind: 'photo', duration: null, ...d, musicMixed: 0 }),
@@ -241,7 +258,6 @@ router.post('/buffer', requireAuth, imageUpload.single('photo'), nsfwGuard, (req
   const info = db
     .prepare('INSERT INTO profile_buffer_photos (user_id, filename, created_at) VALUES (?, ?, ?)')
     .run(req.user.id, req.file.filename, Date.now());
-  shareUploadToHighway(req.user.id, req.file.filename, 'New picture');
 
   res.status(201).json({
     photo: { id: info.lastInsertRowid, url: `/uploads/${req.file.filename}` },

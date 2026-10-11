@@ -1,8 +1,7 @@
 'use strict';
 
-// Auto-share: every picture a member uploads (profile picture, gallery, picture
-// buffer, Recent Activity image) is also posted to the Highway, where the
-// Highway audience rule (see highway.audienceFilter) decides who sees it. The
+// Auto-share: an image a member shares on Recent Activity is also posted to the
+// Highway, where the Highway audience rule (see highway.audienceFilter) decides who sees it. The
 // file is copied so pruning the Highway post never deletes the original, and
 // deleting the original never breaks the post.
 
