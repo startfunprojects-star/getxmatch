@@ -1,17 +1,31 @@
 'use strict';
 
-// Daily "offline activity" email digest.
+// Activity email ("digest").
 //
-// Once a day at config.digestHour (local server time), every user who is
-// currently OFFLINE and has received direct messages, relationship requests or
-// group invites since they were last online gets a single summary email. This
-// batches notifications to one mail a day rather than one per event, and skips
-// anyone who is online (they'll see it live in the app).
+// A member gets an email when someone sends them a friend request, or a new quiz
+// or poll is published. They also get any direct messages or group invites
+// received while offline. At most ONE email per member in any 24 hours,
+// and each one goes out at a random moment (a random delay of up to
+// MAX_DELAY_MS after it becomes due) rather than at a fixed hour. Everything
+// that happened in between is batched into that one email.
+//
+// users.last_digest_at = when they were last emailed (the cut-off for "new");
+// users.digest_due_at  = the random moment their next email is scheduled for.
 
 const db = require('./db');
 const config = require('./config');
 const { isOnline } = require('./socket');
 const { sendOfflineDigest } = require('./mail');
+
+const MIN_GAP_MS = 24 * 60 * 60 * 1000;  // one email per 24 hours, at most
+const MIN_DELAY_MS = 10 * 60 * 1000;     // a random delay once something is due…
+const MAX_DELAY_MS = 6 * 60 * 60 * 1000; // …of between 10 minutes and 6 hours
+const TICK_MS = 5 * 60 * 1000;           // how often the scheduler looks
+
+(function migrate() {
+  const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!cols.includes('digest_due_at')) db.exec('ALTER TABLE users ADD COLUMN digest_due_at INTEGER');
+})();
 
 // Human-friendly "Alice, Bob and 2 others" from a list of names.
 function nameList(names) {
@@ -23,68 +37,93 @@ function nameList(names) {
   return `${shown.join(', ')} and ${uniq.length - 2} other${uniq.length - 2 === 1 ? '' : 's'}`;
 }
 
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
 
-// Build the digest "parts" (summary lines) for one user given a cutoff time.
-// Only counts activity strictly newer than `cutoff`. Returns [] when nothing.
-function buildParts(userId, cutoff) {
+// "“A”, “B”, “C” and 2 more"
+function titleList(titles) {
+  const shown = titles.slice(0, 3).map((t) => `“${String(t).slice(0, 80)}”`).join(', ');
+  return titles.length > 3 ? `${shown} and ${titles.length - 3} more` : shown;
+}
+
+// The email's summary lines for one member: everything newer than their last
+// email. Messages and group invites only count when the member hasn't been
+// online since (and isn't online now); friend requests, quizzes and polls
+// always count. Returns [] when there is nothing to tell.
+function buildParts(user) {
   const parts = [];
-
-  const msg = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE recipient_id = ? AND created_at > ?').get(userId, cutoff);
-  if (msg && msg.n > 0) {
-    const senders = db.prepare(
-      `SELECT DISTINCT COALESCE(NULLIF(p.display_name, ''), u.username) AS name
-       FROM messages m JOIN users u ON u.id = m.sender_id
-       LEFT JOIN profiles p ON p.user_id = u.id
-       WHERE m.recipient_id = ? AND m.created_at > ? LIMIT 5`
-    ).all(userId, cutoff).map((r) => r.name);
-    const from = nameList(senders);
-    parts.push(`${plural(msg.n, 'new message')}${from ? ` from ${from}` : ''}`);
-  }
+  const sinceMail = user.last_digest_at || 0;
 
   const req = db.prepare(
     "SELECT COUNT(*) AS n FROM friendships WHERE addressee_id = ? AND status = 'pending' AND created_at > ?"
-  ).get(userId, cutoff);
+  ).get(user.id, sinceMail);
   if (req && req.n > 0) {
     const from = nameList(db.prepare(
       `SELECT COALESCE(NULLIF(p.display_name, ''), u.username) AS name
        FROM friendships f JOIN users u ON u.id = f.requester_id
        LEFT JOIN profiles p ON p.user_id = u.id
-       WHERE f.addressee_id = ? AND f.status = 'pending' AND f.created_at > ? LIMIT 5`
-    ).all(userId, cutoff).map((r) => r.name));
-    parts.push(`${plural(req.n, 'new connection request')}${from ? ` from ${from}` : ''}`);
+       WHERE f.addressee_id = ? AND f.status = 'pending' AND f.created_at > ?
+       ORDER BY f.created_at DESC LIMIT 5`
+    ).all(user.id, sinceMail).map((r) => r.name));
+    parts.push(`${plural(req.n, 'new friend request')}${from ? ` from ${from}` : ''}`);
   }
 
-  const inv = db.prepare(
-    "SELECT COUNT(*) AS n FROM chat_group_members WHERE user_id = ? AND status = 'invited' AND created_at > ?"
-  ).get(userId, cutoff);
-  if (inv && inv.n > 0) {
-    parts.push(plural(inv.n, 'new group invite'));
+  if (!isOnline(user.id)) {
+    const unseen = Math.max(user.last_seen_at || 0, sinceMail);
+    const msg = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE recipient_id = ? AND created_at > ?').get(user.id, unseen);
+    if (msg && msg.n > 0) {
+      const from = nameList(db.prepare(
+        `SELECT DISTINCT COALESCE(NULLIF(p.display_name, ''), u.username) AS name
+         FROM messages m JOIN users u ON u.id = m.sender_id
+         LEFT JOIN profiles p ON p.user_id = u.id
+         WHERE m.recipient_id = ? AND m.created_at > ? LIMIT 5`
+      ).all(user.id, unseen).map((r) => r.name));
+      parts.push(`${plural(msg.n, 'new message')}${from ? ` from ${from}` : ''}`);
+    }
+    const inv = db.prepare(
+      "SELECT COUNT(*) AS n FROM chat_group_members WHERE user_id = ? AND status = 'invited' AND created_at > ?"
+    ).get(user.id, unseen);
+    if (inv && inv.n > 0) parts.push(plural(inv.n, 'new group invite'));
   }
+
+  // Quizzes and polls published since the last email (or since they joined).
+  const since = Math.max(sinceMail, user.created_at || 0);
+  const quizzes = db.prepare('SELECT title FROM quizzes WHERE created_at > ? ORDER BY created_at DESC').all(since);
+  if (quizzes.length) parts.push(`${quizzes.length === 1 ? 'A new quiz' : plural(quizzes.length, 'new quiz', 'new quizzes')}: ${titleList(quizzes.map((q) => q.title))}`);
+  const polls = db.prepare('SELECT question FROM polls WHERE created_at > ? ORDER BY created_at DESC').all(since);
+  if (polls.length) parts.push(`${polls.length === 1 ? 'A new poll' : plural(polls.length, 'new poll')}: ${titleList(polls.map((p) => p.question))}`);
 
   return parts;
 }
 
-// Run one digest pass. Emails every eligible offline user and advances their
-// last_digest_at. `nowMs` is the reference "now" (injectable for tests).
-// Returns a small summary of what happened.
+const randomDelay = () => MIN_DELAY_MS + Math.floor(Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS));
+
+// One scheduler pass. For each member with an email address: once 24 hours
+// have passed since their last email and there is something new, pick a random
+// send time; when that time arrives, send one email covering everything new.
+// `nowMs` is injectable for tests. Returns a small summary.
 async function runDigest(nowMs = Date.now()) {
-  const users = db
-    .prepare("SELECT id, username, email, last_seen_at, last_digest_at FROM users WHERE email IS NOT NULL AND email != ''")
-    .all();
+  const users = db.prepare(
+    `SELECT id, username, email, created_at, last_seen_at, last_digest_at, digest_due_at
+       FROM users WHERE email IS NOT NULL AND email != ''`
+  ).all();
 
   let sent = 0;
-  let skippedOnline = 0;
-  let skippedEmpty = 0;
+  let scheduled = 0;
 
   for (const u of users) {
-    if (isOnline(u.id)) { skippedOnline++; continue; }
+    if (nowMs - (u.last_digest_at || 0) < MIN_GAP_MS) continue; // emailed in the last 24h
 
-    // Only count activity that is both unseen (after they went offline) and not
-    // already covered by a previous digest.
-    const cutoff = Math.max(u.last_seen_at || 0, u.last_digest_at || 0);
-    const parts = buildParts(u.id, cutoff);
-    if (!parts.length) { skippedEmpty++; continue; }
+    const parts = buildParts(u);
+    if (!parts.length) {
+      if (u.digest_due_at) db.prepare('UPDATE users SET digest_due_at = NULL WHERE id = ?').run(u.id);
+      continue;
+    }
+    if (!u.digest_due_at) {
+      db.prepare('UPDATE users SET digest_due_at = ? WHERE id = ?').run(nowMs + randomDelay(), u.id);
+      scheduled++;
+      continue;
+    }
+    if (nowMs < u.digest_due_at) continue;
 
     const name = displayName(u.id) || u.username;
     try {
@@ -94,14 +133,13 @@ async function runDigest(nowMs = Date.now()) {
       // Log and continue — one bad address shouldn't stop the batch.
       console.error(`digest: failed to email user ${u.id}:`, e.message);
     }
-    // Advance the cut-off so the same items aren't re-sent tomorrow, whether or
-    // not the SMTP call succeeded (a persistent failure shouldn't loop daily).
-    db.prepare('UPDATE users SET last_digest_at = ? WHERE id = ?').run(nowMs, u.id);
+    // Start the next 24 hours whether or not SMTP succeeded (a persistent
+    // failure shouldn't retry every few minutes).
+    db.prepare('UPDATE users SET last_digest_at = ?, digest_due_at = NULL WHERE id = ?').run(nowMs, u.id);
   }
 
-  const summary = { sent, skippedOnline, skippedEmpty, total: users.length };
-  console.log(`digest: ${JSON.stringify(summary)}`);
-  return summary;
+  if (sent || scheduled) console.log(`digest: ${JSON.stringify({ sent, scheduled })}`);
+  return { sent, scheduled, total: users.length };
 }
 
 function displayName(userId) {
@@ -109,31 +147,21 @@ function displayName(userId) {
   return r && r.display_name ? r.display_name : null;
 }
 
-// Milliseconds from `from` until the next occurrence of digestHour:00 local.
-function msUntilNextRun(from = new Date()) {
-  const next = new Date(from);
-  next.setHours(config.digestHour, 0, 0, 0);
-  if (next <= from) next.setDate(next.getDate() + 1);
-  return next - from;
-}
-
 let timer = null;
 
-// Start the daily scheduler (idempotent). No-op when disabled.
+// Start the scheduler (idempotent). No-op when disabled.
 function startDigestScheduler() {
   if (timer || !config.digestEnabled) return;
-  const schedule = () => {
-    const wait = msUntilNextRun();
-    timer = setTimeout(async () => {
-      try { await runDigest(); } catch (e) { console.error('digest run failed:', e.message); }
-      schedule(); // re-arm for the next day
-    }, wait);
-    // Don't keep the process alive solely for this timer.
-    if (timer && typeof timer.unref === 'function') timer.unref();
-    const hrs = Math.round((wait / 3600000) * 10) / 10;
-    console.log(`digest: next run in ~${hrs}h (daily at ${config.digestHour}:00 local)`);
-  };
-  schedule();
+  let running = false;
+  timer = setInterval(async () => {
+    if (running) return;
+    running = true;
+    try { await runDigest(); } catch (e) { console.error('digest run failed:', e.message); }
+    running = false;
+  }, TICK_MS);
+  // Don't keep the process alive solely for this timer.
+  if (typeof timer.unref === 'function') timer.unref();
+  console.log('digest: activity emails on (one per member per 24h, random send time)');
 }
 
-module.exports = { startDigestScheduler, runDigest, buildParts, msUntilNextRun };
+module.exports = { startDigestScheduler, runDigest, buildParts };

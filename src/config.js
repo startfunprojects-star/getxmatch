@@ -34,11 +34,10 @@ const config = {
   // Admin password reset link lifetime.
   adminResetTtlMs: (parseInt(process.env.ADMIN_RESET_TTL_MIN, 10) || 60) * 60 * 1000,
 
-  // Daily "offline activity" digest email. Sent once a day at digestHour (local
-  // server time, 0-23) to offline users who got messages/requests since they
-  // were last online. Set DIGEST_ENABLED=false to turn it off.
+  // Activity emails (friend requests, new quizzes/polls, unseen messages): at
+  // most one per member per 24 hours, at a random time (src/digest.js). Set
+  // DIGEST_ENABLED=false to turn them off.
   digestEnabled: process.env.DIGEST_ENABLED !== 'false',
-  digestHour: Math.min(23, Math.max(0, parseInt(process.env.DIGEST_HOUR, 10) || 12)),
 
   // WebRTC ICE servers for video calls. Public STUN works for most networks;
   // set TURN_URLS (comma-separated, e.g. "turn:turn.example.com:3478,turns:turn.example.com:5349")

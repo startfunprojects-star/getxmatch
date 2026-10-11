@@ -67,22 +67,24 @@ function sendAdminResetLink(url) {
   return sendMail({ to: config.adminEmail, subject, text, html });
 }
 
-// Daily "you have unseen activity" digest for an offline user. `parts` is an
-// array of human-readable lines (e.g. "3 new messages", "1 friend request").
+// Activity email (src/digest.js), at most one per member per 24 hours. `parts`
+// is an array of human-readable lines (e.g. "2 new friend requests from Alice
+// and Bob", "A new quiz: “…”").
 function sendOfflineDigest(email, { name, parts, appUrl }) {
   const greeting = name ? `Hi ${name},` : 'Hi,';
-  const subject = 'You have new activity on getxmatch';
+  const request = parts.find((p) => /friend request/.test(p));
+  const subject = request ? `You have ${request} on getxmatch` : "What's new for you on getxmatch";
   const bullets = parts.map((p) => `• ${p}`).join('\n');
   const text =
     `${greeting}\n\n` +
-    `While you were away, you received:\n\n${bullets}\n\n` +
-    `Sign in to see them: ${appUrl}\n\n` +
+    `Here's what's new for you:\n\n${bullets}\n\n` +
+    `Open getxmatch: ${appUrl}\n\n` +
     `— getxmatch\n\n` +
     `You're receiving this because you have an account on getxmatch.`;
   const liHtml = parts.map((p) => `<li>${escapeHtml(p)}</li>`).join('');
   const html =
     `<p>${escapeHtml(greeting)}</p>` +
-    `<p>While you were away, you received:</p>` +
+    `<p>Here's what's new for you:</p>` +
     `<ul style="font-size:16px;line-height:1.6">${liHtml}</ul>` +
     `<p><a href="${escapeHtml(appUrl)}" style="display:inline-block;background:#1f4e8c;color:#fff;` +
     `font-weight:700;padding:12px 22px;border-radius:999px;text-decoration:none">Open getxmatch →</a></p>` +
