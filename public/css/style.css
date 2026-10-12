@@ -2421,3 +2421,13 @@ button.primary, .chat-cta { letter-spacing: .01em; }
 .sg-controls { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; }
 .sg-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
 .sg-controls select { width: auto; max-width: 200px; }
+
+/* Chat: preview of an image / file pasted into the message box. */
+.paste-preview { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-height: 60vh; overflow-y: auto; }
+.paste-preview img { max-width: 100%; max-height: 50vh; border-radius: 10px; border: 1px solid var(--border); object-fit: contain; }
+.paste-file { padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-3); overflow-wrap: anywhere; }
+
+/* Chat: preview of an image / file pasted into the message box. */
+.paste-preview { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-height: 60vh; overflow-y: auto; }
+.paste-preview img { max-width: 100%; max-height: 50vh; border-radius: 10px; border: 1px solid var(--border); object-fit: contain; }
+.paste-file { padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-3); overflow-wrap: anywhere; }

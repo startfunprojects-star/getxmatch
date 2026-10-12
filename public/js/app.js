@@ -3829,6 +3829,48 @@
       }
       send();
     });
+    composerPaste(input);
+  }
+
+  // Pasting into the message box: text goes in as usual; a copied image (or a
+  // file copied in the file manager) is shown in a small preview and shared
+  // like a 📎 attachment once confirmed. Images pasted alongside text (e.g.
+  // from a document) are offered too, and the text is still pasted.
+  function composerPaste(input) {
+    input.addEventListener('paste', (e) => {
+      const files = Array.from((e.clipboardData && e.clipboardData.files) || []);
+      if (!files.length) return;
+      if (!e.clipboardData.getData('text/plain')) e.preventDefault();
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      const named = files.map((f, i) => (f.name && f.name !== 'image.png') ? f
+        : new File([f], `pasted-${stamp}${files.length > 1 ? '-' + (i + 1) : ''}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type }));
+      confirmPastedFiles(named, input);
+    });
+  }
+
+  function confirmPastedFiles(files, input) {
+    const urls = files.map((f) => (/^image\//.test(f.type) ? URL.createObjectURL(f) : ''));
+    const n = files.length;
+    const { card, close } = openModal(n === 1 ? (urls[0] ? 'Send this image?' : 'Send this file?') : `Send these ${n} files?`, `
+      <div class="paste-preview">
+        ${files.map((f, i) => urls[i]
+          ? `<img src="${urls[i]}" alt="${esc(f.name)}" />`
+          : `<div class="paste-file">📄 ${esc(f.name)}</div>`).join('')}
+      </div>
+      <div class="row-actions" style="justify-content:flex-end">
+        <button type="button" class="ghost" data-cancel>Cancel</button>
+        <button type="button" class="primary" data-send>Send</button>
+      </div>`);
+    const done = () => { urls.forEach((u) => u && URL.revokeObjectURL(u)); close(); input.focus(); };
+    const sendBtn = card.querySelector('[data-send]');
+    card.querySelector('[data-cancel]').addEventListener('click', done);
+    card.addEventListener('keydown', (e) => { if (e.key === 'Escape') done(); });
+    sendBtn.addEventListener('click', async () => {
+      sendBtn.disabled = true;
+      for (const f of files) await sendFile(f);
+      done();
+    });
+    sendBtn.focus(); // Enter sends, Esc / ✕ / outside click cancels
   }
 
   // Returns the message box for `view`: a growing <textarea> everywhere. On
