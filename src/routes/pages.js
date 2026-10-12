@@ -265,12 +265,6 @@ const ATTEMPT_STYLE = `<style>
    a shared link unfurls with the heading as its preview image.
 =========================================================================== */
 
-function sendOg(res, png) {
-  res.set('Content-Type', 'image/png');
-  res.set('Cache-Control', 'public, max-age=86400'); // 1 day
-  res.send(png);
-}
-
 // The poll image shows the live results, so it is versioned by a hash of the
 // question, options and tallies: the page links /og/poll/:id.png?v=<hash>, and a
 // new vote yields a new URL that WhatsApp / Facebook / Telegram etc. fetch
@@ -301,10 +295,17 @@ router.get('/og/poll/:id.png', (req, res, next) => {
 });
 
 router.get('/og/quiz/:id.png', (req, res, next) => {
-  const row = db.prepare('SELECT id, title, updated_at, created_at FROM quizzes WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, title, questions, updated_at, created_at FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return next();
-  const key = `quiz:${row.id}:${row.updated_at || row.created_at || ''}`;
-  sendOg(res, ogImage.renderCard('Quiz', row.title, key));
+  // Live: the corner shows how many have played, so the card is re-rendered
+  // (and re-keyed) as players come in.
+  const nQ = parseJson(row.questions, []).length;
+  const players = db.prepare('SELECT COUNT(DISTINCT user_id) AS n FROM quiz_attempts WHERE quiz_id = ?').get(row.id).n;
+  const status = `${nQ} question${nQ === 1 ? '' : 's'} - ${players ? `${players} player${players === 1 ? '' : 's'}` : 'be the first'}`;
+  const key = `quiz:${row.id}:${row.updated_at || row.created_at || ''}:${players}`;
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'public, max-age=300');
+  res.send(ogImage.renderCard('Quiz', row.title, key, status));
 });
 
 /* ===========================================================================

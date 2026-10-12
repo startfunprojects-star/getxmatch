@@ -242,7 +242,8 @@ function cachePut(key, png) {
 
 // Render a feature image. `kind` is 'Poll' or 'Quiz', `heading` the question/
 // title. Returns a PNG Buffer.
-function renderCard(kind, heading, cacheKey) {
+// `status` (optional) is drawn top-right, e.g. a quiz's question / player count.
+function renderCard(kind, heading, cacheKey, status) {
   if (cacheKey && cache.has(cacheKey)) return cache.get(cacheKey);
 
   const c = canvas(W, H, BG);
@@ -257,13 +258,17 @@ function renderCard(kind, heading, cacheKey) {
   const label = String(kind || '').toUpperCase();
   drawText(c, label, marginX, 96, 6, ACCENT);
   fillRect(c, marginX, 150, textWidth(label, 6), 4, ACCENT);
+  if (status) {
+    const st = String(status).toUpperCase();
+    drawText(c, st, W - 80 - 44 - textWidth(st, 4), 104, 4, MUTED);
+  }
 
   // Heading — pick the largest scale at which the whole heading wraps into at
   // most 4 lines within the central band; ellipsise only if even the smallest
   // scale can't hold it.
   const clean = String(heading || '').toUpperCase().replace(/\s+/g, ' ').trim() || 'UNTITLED';
-  const bandTop = 200;
-  const bandH = 300;
+  const bandTop = 190;
+  const bandH = 270; // ends well above the footer
   const MAX_LINES = 4;
   const lineHAt = (s) => GLYPH_H * s + 4 * s; // glyph height + line gap
   let scale = 6;

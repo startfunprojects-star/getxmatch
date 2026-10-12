@@ -16,6 +16,7 @@ const db = require('./db');
 const config = require('./config');
 const { isOnline } = require('./socket');
 const { sendOfflineDigest } = require('./mail');
+const { itemPath } = require('./seo');
 
 const MIN_GAP_MS = 24 * 60 * 60 * 1000;  // one email per 24 hours, at most
 const MIN_DELAY_MS = 10 * 60 * 1000;     // a random delay once something is due…
@@ -95,6 +96,53 @@ function buildParts(user) {
   return parts;
 }
 
+const MAX_FEATURES = 3; // cards per kind; the rest are covered by the summary line
+
+// The new polls and quizzes as picture cards for the email. Each image URL
+// points at the same live-rendered preview the share links use (the poll card
+// shows the current votes); the timestamp makes the mail client fetch a fresh
+// copy rather than one cached from an earlier email.
+function buildFeatures(user, nowMs = Date.now()) {
+  const since = Math.max(user.last_digest_at || 0, user.created_at || 0);
+  const base = config.publicUrl;
+  const features = [];
+
+  db.prepare('SELECT id, question, options, closed FROM polls WHERE created_at > ? ORDER BY created_at DESC LIMIT ?')
+    .all(since, MAX_FEATURES)
+    .forEach((p) => {
+      const votes = db.prepare('SELECT COUNT(*) AS n FROM poll_votes WHERE poll_id = ?').get(p.id).n;
+      let options = [];
+      try { options = JSON.parse(p.options) || []; } catch (_e) { /* ignore */ }
+      features.push({
+        kind: 'Poll',
+        title: p.question,
+        meta: `${plural(options.length, 'option')} · ${plural(votes, 'vote')} so far${p.closed ? ' · closed' : ''}`,
+        url: base + itemPath('polls', p.id, p.question),
+        image: `${base}/og/poll/${p.id}.png?e=${nowMs}`,
+        cta: p.closed ? 'See the results' : 'Cast your vote',
+      });
+    });
+
+  db.prepare('SELECT id, title, description, questions FROM quizzes WHERE created_at > ? ORDER BY created_at DESC LIMIT ?')
+    .all(since, MAX_FEATURES)
+    .forEach((q) => {
+      const attempts = db.prepare('SELECT COUNT(DISTINCT user_id) AS n FROM quiz_attempts WHERE quiz_id = ?').get(q.id).n;
+      let questions = [];
+      try { questions = JSON.parse(q.questions) || []; } catch (_e) { /* ignore */ }
+      features.push({
+        kind: 'Quiz',
+        title: q.title,
+        description: q.description,
+        meta: `${plural(questions.length, 'question')} · ${attempts ? `${plural(attempts, 'player')} so far` : 'be the first to play'}`,
+        url: base + itemPath('quizzes', q.id, q.title),
+        image: `${base}/og/quiz/${q.id}.png?e=${nowMs}`,
+        cta: 'Take the quiz',
+      });
+    });
+
+  return features;
+}
+
 const randomDelay = () => MIN_DELAY_MS + Math.floor(Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS));
 
 // One scheduler pass. For each member with an email address: once 24 hours
@@ -127,7 +175,7 @@ async function runDigest(nowMs = Date.now()) {
 
     const name = displayName(u.id) || u.username;
     try {
-      await sendOfflineDigest(u.email, { name, parts, appUrl: config.publicUrl });
+      await sendOfflineDigest(u.email, { name, parts, features: buildFeatures(u, nowMs), appUrl: config.publicUrl });
       sent++;
     } catch (e) {
       // Log and continue — one bad address shouldn't stop the batch.
@@ -164,4 +212,4 @@ function startDigestScheduler() {
   console.log('digest: activity emails on (one per member per 24h, random send time)');
 }
 
-module.exports = { startDigestScheduler, runDigest, buildParts };
+module.exports = { startDigestScheduler, runDigest, buildParts, buildFeatures };
