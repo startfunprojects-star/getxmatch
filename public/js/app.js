@@ -1836,7 +1836,7 @@
     const input = phoneComposer(view);
     const send = () => sendGroupMessage(input);
     view.querySelector('#sendBtn').addEventListener('click', send);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !input._multiline) { e.preventDefault(); send(); } });
+    composerKeydown(input, send);
     input.addEventListener('input', () => updateComposerPreview(input.value));
     // Put the cursor in the composer right away so the user can type at once.
     setTimeout(() => input.focus(), 0);
@@ -2306,7 +2306,7 @@
     const input = phoneComposer(view);
     const send = () => sendMessage(input);
     view.querySelector('#sendBtn').addEventListener('click', send);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !input._multiline) { e.preventDefault(); send(); } });
+    composerKeydown(input, send);
     input.addEventListener('input', () => {
       if (state.socket) state.socket.emit('chat:typing', { to: peer.id });
       updateComposerPreview(input.value);
@@ -3789,11 +3789,56 @@
   const PHONE_MQ = '(max-width: 600px), (pointer: coarse) and (max-height: 500px)';
   function isPhone() { return !!(window.matchMedia && window.matchMedia(PHONE_MQ).matches); }
 
-  // Returns the message box for `view` (a growing <textarea> on phones).
+  // Larger screens: swap the one-line <input> for a <textarea> that starts one
+  // line tall and grows with Alt+Enter line breaks (up to ~6 lines, then scrolls).
+  function desktopComposer(input) {
+    const ta = document.createElement('textarea');
+    ta.id = 'msgInput';
+    ta.rows = 1;
+    ta.placeholder = input.placeholder;
+    ta.autocomplete = 'off';
+    ta.dir = 'auto';
+    ta.title = 'Enter to send · Alt+Enter for a new line';
+    input.replaceWith(ta);
+    const sync = () => {
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight + 2, 150) + 'px';
+    };
+    // Sending clears the box in code (no input event), so watch value writes too.
+    const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+    Object.defineProperty(ta, 'value', {
+      configurable: true,
+      get() { return desc.get.call(this); },
+      set(v) { desc.set.call(this, v); sync(); },
+    });
+    ta.addEventListener('input', sync);
+    return ta;
+  }
+
+  // Message box keys: Enter sends; Alt+Enter / Shift+Enter add a new line.
+  // (On phones the box is multiline and Enter always adds a line.)
+  function composerKeydown(input, send) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.isComposing || input._multiline) return;
+      e.preventDefault();
+      if (e.altKey || e.shiftKey) {
+        if (input.tagName !== 'TEXTAREA') return;
+        input.setRangeText('\n', input.selectionStart, input.selectionEnd, 'end');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        return;
+      }
+      send();
+    });
+  }
+
+  // Returns the message box for `view`: a growing <textarea> everywhere. On
+  // phones Enter adds a line; on larger screens Enter sends and Alt+Enter (or
+  // Shift+Enter) adds a line (see composerKeydown).
   function phoneComposer(view) {
     let input = view.querySelector('#msgInput');
     const composer = view.querySelector('.composer');
-    if (!composer || !isPhone()) return input;
+    if (!composer) return input;
+    if (!isPhone()) return desktopComposer(input);
     composer.classList.add('phone');
 
     const ta = document.createElement('textarea');
