@@ -6653,6 +6653,7 @@
             ${isMe && profile.referralCode ? '<button class="ghost" id="pvRefer" title="Invite someone to join getxmatch with your referral code">🎟️ Refer</button>' : ''}
           </div>
           ${isMe && profile.referralCode ? `<div class="referral-box">Your referral code: <b class="referral-code">${esc(profile.referralCode)}</b>
+            <button type="button" class="primary small" id="pvReferBox">📤 Share code</button>
             <span class="hint">You get 4 points for everyone who joins with it, and they get 2.</span></div>` : ''}
           ${isMe ? '<div class="follow-fee-box" id="pvFriendFee"></div>' : ''}
           ${!isMe && profile.access !== 'full' ? `<div class="access-note">🔒 ${profile.access === 'follower'
@@ -6981,19 +6982,16 @@
         catch (_e) { promptBox('Copy link', 'Copy this link to share:', link); }
       });
     }
-    // Refer: same as Share, but the link invites someone to sign up with my code.
-    const referBtn = view.querySelector('#pvRefer');
-    if (referBtn) {
-      const link = location.origin + '/?ref=' + encodeURIComponent(profile.referralCode);
-      const text = `Join me on getxmatch! Use my referral code ${profile.referralCode} when you sign up.`;
-      referBtn.addEventListener('click', async () => {
-        if (navigator.share) {
-          try { await navigator.share({ title: 'Join getxmatch', text, url: link }); return; }
-          catch (_e) { /* user cancelled or unsupported — fall back to copy */ }
-        }
-        try { await navigator.clipboard.writeText(link); notifyToast('Referral link copied to share'); }
-        catch (_e) { promptBox('Copy link', 'Copy this link to share:', link); }
+    // Refer: opens the same share window as a poll, with a link that invites
+    // someone to sign up with my code.
+    if (profile.referralCode) {
+      const openRefer = () => openShareSheet({
+        title: 'Share your referral code',
+        hint: `Anyone who joins with code ${profile.referralCode} gets 2 points, and you get 4.`,
+        url: location.origin + '/?ref=' + encodeURIComponent(profile.referralCode),
+        text: `Join me on getxmatch! Use my referral code ${profile.referralCode} when you sign up.`,
       });
+      view.querySelectorAll('#pvRefer, #pvReferBox').forEach((b) => b.addEventListener('click', openRefer));
     }
     const chatBtn = view.querySelector('#pvChat');
     if (chatBtn) {
