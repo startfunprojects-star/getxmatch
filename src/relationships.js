@@ -20,13 +20,6 @@ function possessivePronoun(gender) {
   return 'their';
 }
 
-// Feed line when `a` sends `b` a friend request. (The type and gender
-// arguments are accepted for older callers; every request reads as a friend
-// request.)
-function sentText(_type, a, b) {
-  return `${a} sent ${b} a friend request`;
-}
-
 // Feed line when a friend request between `a` and `b` is accepted.
 function acceptedText(_type, a, b) {
   return `${a} and ${b} are now friends`;
@@ -36,4 +29,4 @@ function relEmoji() {
   return REL_TYPES.friend.emoji;
 }
 
-module.exports = { REL_TYPES, REL_ORDER, isValidRelType, sentText, acceptedText, relEmoji, possessivePronoun };
+module.exports = { REL_TYPES, REL_ORDER, isValidRelType, acceptedText, relEmoji, possessivePronoun };

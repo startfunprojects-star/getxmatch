@@ -13,7 +13,7 @@ const { pointsOf } = require('../points');
 const { GIFTS } = require('../gifts');
 const { GALLERY_REACTIONS, GALLERY_REACTION_SET } = require('../galleryReactions');
 const { listActivities } = require('../activities');
-const { sentText, acceptedText, relEmoji } = require('../relationships');
+const { acceptedText, relEmoji } = require('../relationships');
 const { broadcastActivity, notifyUser, broadcastLeaderboardChange, isOnline } = require('../socket');
 
 const router = express.Router();
@@ -24,17 +24,14 @@ function profileBits(userId, fallback) {
   return { name: (r && r.display_name) || fallback, gender: r ? r.gender : null };
 }
 
-// Announce a relationship request being sent / accepted onto Recent Activity.
-// Broadcast only (no socket on the public sign-in page, so real names stay in
-// the logged-in feed); accepts also persist via the accepted-friendships source.
-// For a "sent" line the his/her/their possessive follows the sender's gender.
-function announceRelation(kind, type, aId, aFallback, bId, bFallback) {
+// Announce an accepted friend request onto Recent Activity. (A request that
+// is only sent stays private between the two members.) Broadcast only (no
+// socket on the public sign-in page, so real names stay in the logged-in
+// feed); accepts also persist via the accepted-friendships source.
+function announceAccepted(type, aId, aFallback, bId, bFallback) {
   const a = profileBits(aId, aFallback);
   const b = profileBits(bId, bFallback);
-  const text = kind === 'accepted'
-    ? acceptedText(type, a.name, b.name)
-    : sentText(type, a.name, b.name, a.gender);
-  broadcastActivity({ at: Date.now(), icon: relEmoji(type), text });
+  broadcastActivity({ at: Date.now(), icon: relEmoji(type), text: acceptedText(type, a.name, b.name) });
 }
 
 // Resolve a :username param to a user row that has a profile. Sends the 404
@@ -382,7 +379,7 @@ router.post('/friend/:username', requireAuth, (req, res) => {
     // Pending. If the target requested us, accept it (keep their chosen type).
     if (row.addressee_id === req.user.id) {
       db.prepare('UPDATE friendships SET status = ? WHERE id = ?').run('accepted', row.id);
-      announceRelation('accepted', row.rel_type || 'friend', req.user.id, req.user.username, target.id, target.username);
+      announceAccepted(row.rel_type || 'friend', req.user.id, req.user.username, target.id, target.username);
       broadcastLeaderboardChange(); // a new accepted friendship can reshuffle ranks
       return res.json({ state: 'friends' });
     }
@@ -402,7 +399,6 @@ router.post('/friend/:username', requireAuth, (req, res) => {
   db.prepare(
     'INSERT INTO friendships (requester_id, addressee_id, status, rel_type, fee, created_at) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(req.user.id, target.id, 'pending', type, fee, Date.now());
-  announceRelation('sent', type, req.user.id, req.user.username, target.id, target.username);
   // Live-notify the addressee so their "Requests" button lights up immediately.
   notifyUser(target.id, 'notify:request', { from: req.user.username, type });
   res.status(201).json({ state: 'outgoing', type, fee, theyEarn: fee * GAIN_MULTIPLIER });
@@ -442,7 +438,7 @@ router.post('/friend/:username/accept', requireAuth, (req, res) => {
   }
 
   db.prepare('UPDATE friendships SET status = ? WHERE id = ?').run('accepted', row.id);
-  announceRelation('accepted', row.rel_type || 'friend', req.user.id, req.user.username, target.id, target.username);
+  announceAccepted(row.rel_type || 'friend', req.user.id, req.user.username, target.id, target.username);
   broadcastLeaderboardChange(); // a new accepted friendship can reshuffle ranks
   res.json({ state: 'friends' });
 });

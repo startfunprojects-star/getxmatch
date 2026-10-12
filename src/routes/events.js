@@ -33,7 +33,7 @@ const { imageUpload } = require('../upload');
 const { nsfwGuard } = require('../nsfw');
 const { broadcastActivity } = require('../socket');
 const { shareUploadToHighway } = require('../highwayShare');
-const { acceptedText, sentText, relEmoji } = require('../relationships');
+const { acceptedText, relEmoji } = require('../relationships');
 
 const router = express.Router();
 
@@ -133,30 +133,8 @@ function buildFeed(viewerId, opts) {
     });
   });
 
-  // 1b) Pending relationship requests that were sent (so a sent request shows on
-  //     Recent Activity until it's accepted, declined or cancelled). The his/her/
-  //     their possessive follows the sender's declared gender.
-  db.prepare(
-    `SELECT f.id, f.requester_id, f.addressee_id, f.rel_type, f.created_at,
-            rp.gender AS requester_gender
-     FROM friendships f
-     LEFT JOIN profiles rp ON rp.user_id = f.requester_id
-     WHERE f.status = 'pending' ORDER BY f.created_at DESC LIMIT ?`
-  ).all(PER_SOURCE).forEach((f) => {
-    const a = userMini(f.requester_id, me);
-    const b = userMini(f.addressee_id, me);
-    if (!a || !b) return;
-    const type = f.rel_type || 'friend';
-    events.push({
-      id: 'req-' + f.id,
-      type: 'request',
-      at: f.created_at,
-      icon: relEmoji(type),
-      actor: a,
-      target: b,
-      text: sentText(type, a.displayName, b.displayName, f.requester_gender),
-    });
-  });
+  // (Pending friend requests are private between the two members: only an
+  //  accepted friendship, above, appears on the feed.)
 
   // (Chats are private: who talks to whom never appears on the feed.)
 
