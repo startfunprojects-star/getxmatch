@@ -13,6 +13,26 @@ self-host on a single VPS: no external database or storage service required.
   (Arts, Commerce, Science (Math), Science (Biology)) and **working status**
   (Student, Working, Working Student); they're stored on the account, shown on
   the profile and editable (still required) in the profile editor.
+- **Account settings** (⚙️ Account in the menu, or on your own profile):
+  - **Forgot password** — "Forgot password?" on the login page emails a
+    6-digit code to the account's address; entering it with a new password
+    sets it. Members created by the admin without an email ask the admin.
+  - **Change password** (needs the current one) and **change or add an email**
+    (confirmed with a code sent to the new address; the old address is told).
+    A password change or reset signs the member out on every other device
+    (`users.token_version` is part of every login token).
+  - **Download my data** — a .zip of the account, profile, points, friends,
+    messages, posts, blogs, quiz/poll activity, photos, reels and voice notes.
+  - **Delete my account** — password + typing DELETE. Removes every row
+    (foreign-key cascades) and the member's uploaded files. The admin's delete
+    button now removes the files too.
+  - **Parent controls** for members under 18 — the member adds a parent's
+    email; the parent confirms from the emailed link and then manages
+    everything from a private page (`/guardian/<token>`, linked from every
+    email): approve or decline new friends (the friendship waits with status
+    `guardian` until they do), a weekly summary email of activity counts (never
+    message contents), and removing the link. The member can only *ask* to
+    remove an active link. Controls stop applying at 18.
 - **Admin dashboard** at `/admin` — lists every user with a live green
   online/offline indicator, lets the admin create users **without** an email
   address (username + password), and delete users. The admin password is set

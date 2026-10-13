@@ -25,6 +25,7 @@ const seo = require('../seo');
 const ads = require('../ads');
 const hw = require('../highway');
 const blogs = require('../blogs');
+const { deleteUser } = require('../account');
 const {
   ADMIN_COOKIE,
   signAdminToken,
@@ -518,12 +519,13 @@ router.delete('/users/:id/block', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-// DELETE /api/admin/users/:id — remove a user (cascades to their data).
+// DELETE /api/admin/users/:id — remove a user (cascades to their data, and
+// deletes their uploaded pictures, reels and voice notes).
 router.delete('/users/:id', requireAdmin, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error: 'Invalid user id.' });
-  const info = db.prepare('DELETE FROM users WHERE id = ?').run(id);
-  if (info.changes === 0) return res.status(404).json({ error: 'User not found.' });
+  if (!deleteUser(id)) return res.status(404).json({ error: 'User not found.' });
+  disconnectUser(id);
   res.json({ ok: true });
 });
 

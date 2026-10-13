@@ -173,4 +173,133 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-module.exports = { sendMail, sendSignupOtp, sendAdminResetLink, sendOfflineDigest, smtpReady };
+/* ---------- Account and parent emails ---------- */
+
+// A short branded email: a title, paragraphs of plain text, an optional big
+// code and an optional button. Everything is escaped here.
+function simpleMail(to, subject, { title, lines = [], code, cta, footnote }) {
+  const appUrl = config.publicUrl;
+  const text =
+    (title ? `${title}\n\n` : '') +
+    lines.join('\n\n') +
+    (code ? `\n\n${code}` : '') +
+    (cta ? `\n\n${cta.label}: ${cta.url}` : '') +
+    `\n\n— getxmatch`;
+  const body =
+    (title ? `<p style="margin:0 0 14px;font-size:18px;font-weight:700;color:${INK}">${escapeHtml(title)}</p>` : '') +
+    lines.map((l) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.55;color:${INK}">${escapeHtml(l)}</p>`).join('') +
+    (code ? `<p style="margin:18px 0;font-size:30px;font-weight:700;letter-spacing:6px;color:${ACCENT}">${escapeHtml(code)}</p>` : '') +
+    (cta ? `<p style="margin:24px 0 0;text-align:center">${button(cta.url, cta.label)}</p>` : '');
+  return sendMail({ to, subject, text, html: layout(body, appUrl, footnote || '') });
+}
+
+const minutes = () => Math.round(config.otpTtlMs / 60000);
+
+function sendPasswordResetCode(email, code) {
+  return simpleMail(email, 'Reset your getxmatch password', {
+    title: 'Reset your password',
+    lines: [`Enter this code on getxmatch to choose a new password. It expires in ${minutes()} minutes.`],
+    code,
+    footnote: "If you didn't ask to reset your password, ignore this email. Your password stays the same.",
+  });
+}
+
+function sendEmailChangeCode(email, code) {
+  return simpleMail(email, 'Confirm your new getxmatch email', {
+    title: 'Confirm your new email address',
+    lines: [`Enter this code in getxmatch Account settings to use this address for your account. It expires in ${minutes()} minutes.`],
+    code,
+    footnote: "If you didn't ask for this, ignore this email.",
+  });
+}
+
+// Sent to the OLD address once an email change is done.
+function sendEmailChangedNotice(oldEmail, newEmail, username) {
+  return simpleMail(oldEmail, 'Your getxmatch email was changed', {
+    title: 'Your email address was changed',
+    lines: [
+      `The email for the getxmatch account @${username} was changed to ${newEmail}.`,
+      "If you didn't do this, reply to this email or contact contact@getxmatch.com straight away.",
+    ],
+  });
+}
+
+function sendPasswordChangedNotice(email, username) {
+  return simpleMail(email, 'Your getxmatch password was changed', {
+    title: 'Your password was changed',
+    lines: [
+      `The password for the getxmatch account @${username} was just changed, and every other device was signed out.`,
+      "If you didn't do this, use “Forgot password?” on the login page to choose a new one, then contact contact@getxmatch.com.",
+    ],
+  });
+}
+
+function sendAccountDeletedNotice(email, username) {
+  return simpleMail(email, 'Your getxmatch account was deleted', {
+    title: 'Your account was deleted',
+    lines: [
+      `The getxmatch account @${username} and everything in it (profile, photos, reels, posts, messages and points) has been permanently deleted.`,
+      "You're welcome back any time with a new account.",
+    ],
+  });
+}
+
+// Parent emails. `child` is { name, username }.
+function sendGuardianConfirm(email, child, confirmUrl) {
+  return simpleMail(email, `${child.name} added you as their parent on getxmatch`, {
+    title: 'Please confirm you are the parent or guardian',
+    lines: [
+      `${child.name} (@${child.username}), who is under 18, added this email address as their parent or guardian on getxmatch, a social network for learning.`,
+      'Once you confirm, you will get a short weekly summary of their activity and you can approve or decline new friends before they connect. You will never see their private messages.',
+    ],
+    cta: { url: confirmUrl, label: 'Confirm and open parent controls' },
+    footnote: "If you don't know this person, ignore this email and nothing will be linked.",
+  });
+}
+
+function sendGuardianApprovalRequest(email, child, friendName, manageUrl) {
+  return simpleMail(email, `${child.name} wants to be friends with ${friendName} on getxmatch`, {
+    title: 'A friend request needs your approval',
+    lines: [
+      `${child.name} (@${child.username}) and ${friendName} both want to be friends on getxmatch.`,
+      'They will only be connected (and able to chat) after you approve.',
+    ],
+    cta: { url: manageUrl, label: 'Review the request' },
+  });
+}
+
+function sendGuardianRemovalRequest(email, child, manageUrl) {
+  return simpleMail(email, `${child.name} asked to remove parent controls on getxmatch`, {
+    title: 'Request to remove parent controls',
+    lines: [
+      `${child.name} (@${child.username}) asked to unlink you as their parent or guardian on getxmatch.`,
+      'Nothing changes unless you choose “Remove parent controls” on the parent page.',
+    ],
+    cta: { url: manageUrl, label: 'Open parent controls' },
+  });
+}
+
+// `s` = { newFriends: [names], pendingApprovals, quizzes, posts, blogs,
+// messages, points, lastActive }
+function sendGuardianWeekly(email, child, s, manageUrl) {
+  const friends = s.newFriends.length ? `${s.newFriends.length} new friend${s.newFriends.length === 1 ? '' : 's'}: ${s.newFriends.join(', ')}` : 'No new friends';
+  return simpleMail(email, `${child.name}'s week on getxmatch`, {
+    title: `${child.name}'s week on getxmatch`,
+    lines: [
+      friends + '.',
+      `Quizzes taken: ${s.quizzes} · Highway posts: ${s.posts} · Blogs published: ${s.blogs} · Chat messages sent: ${s.messages}.`,
+      `Total points: ${s.points}. Last active: ${s.lastActive}.`,
+      s.pendingApprovals ? `${s.pendingApprovals} friend request${s.pendingApprovals === 1 ? ' is' : 's are'} waiting for your approval.` : '',
+      'Message contents are private and never included.',
+    ].filter(Boolean),
+    cta: { url: manageUrl, label: 'Open parent controls' },
+    footnote: 'You can turn this weekly summary off on the parent page.',
+  });
+}
+
+module.exports = {
+  sendMail, sendSignupOtp, sendAdminResetLink, sendOfflineDigest, smtpReady,
+  sendPasswordResetCode, sendEmailChangeCode, sendEmailChangedNotice, sendPasswordChangedNotice,
+  sendAccountDeletedNotice, sendGuardianConfirm, sendGuardianApprovalRequest, sendGuardianRemovalRequest,
+  sendGuardianWeekly,
+};

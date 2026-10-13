@@ -4,9 +4,13 @@ const jwt = require('jsonwebtoken');
 const config = require('./config');
 const db = require('./db');
 
+// `tv` is the member's token_version: bumping it (password change or reset)
+// makes every token issued before it invalid.
 function signToken(user) {
+  const tv = user.token_version != null ? user.token_version
+    : (db.prepare('SELECT token_version FROM users WHERE id = ?').get(user.id) || {}).token_version || 0;
   return jwt.sign(
-    { uid: user.id, username: user.username },
+    { uid: user.id, username: user.username, tv },
     config.jwtSecret,
     { expiresIn: config.tokenTtl }
   );
@@ -34,10 +38,11 @@ function userFromToken(token) {
     const payload = jwt.verify(token, config.jwtSecret);
     const user = db
       .prepare(`SELECT id, username, email, created_at, suspended_until, suspended_reason,
-                       education, education_stream, work_status
+                       education, education_stream, work_status, token_version
                 FROM users WHERE id = ?`)
       .get(payload.uid);
-    return user || null;
+    if (!user || (payload.tv || 0) !== (user.token_version || 0)) return null;
+    return user;
   } catch (_e) {
     return null;
   }

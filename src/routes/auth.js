@@ -8,7 +8,8 @@ const rateLimit = require('express-rate-limit');
 const referrals = require('../referrals');
 const db = require('../db');
 const config = require('../config');
-const { sendSignupOtp } = require('../mail');
+const { sendSignupOtp, sendPasswordResetCode, sendPasswordChangedNotice } = require('../mail');
+const { disconnectUser } = require('../socket');
 const F = require('../profileFields');
 const { signToken, setAuthCookie, clearAuthCookie, requireAuth } = require('../auth');
 
@@ -208,6 +209,70 @@ router.post('/login', authLimiter, (req, res) => {
 
   const profile = db.prepare('SELECT user_id FROM profiles WHERE user_id = ?').get(user.id);
   res.json({ user: publicUser(user), hasProfile: !!profile });
+});
+
+/* ---------------------------------------------------------------------------
+   Forgot password: a 6-digit code goes to the account's email; entering it with
+   a new password sets the password and signs out every other device.
+--------------------------------------------------------------------------- */
+
+function findByIdentifier(identifier) {
+  const id = String(identifier || '').trim();
+  if (!id) return null;
+  return db.prepare('SELECT * FROM users WHERE username = ? OR email = ?').get(id, id.toLowerCase()) || null;
+}
+
+// POST /api/auth/password/forgot { identifier } — always answers the same way,
+// so it can't be used to find out which usernames or emails exist.
+router.post('/password/forgot', authLimiter, async (req, res) => {
+  const user = findByIdentifier(req.body && req.body.identifier);
+  if (user && user.email) {
+    const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO password_resets (user_id, code_hash, attempts, expires_at, created_at) VALUES (?, ?, 0, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET code_hash = excluded.code_hash, attempts = 0,
+         expires_at = excluded.expires_at, created_at = excluded.created_at`
+    ).run(user.id, sha256(code), now + config.otpTtlMs, now);
+    try {
+      await sendPasswordResetCode(user.email, code);
+    } catch (e) {
+      console.error('password reset email failed:', e.message);
+      return res.status(502).json({ error: 'Could not send the email. Please try again.' });
+    }
+  }
+  res.json({ ok: true });
+});
+
+// POST /api/auth/password/reset { identifier, code, password }
+router.post('/password/reset', authLimiter, (req, res) => {
+  const { code, password } = req.body || {};
+  const user = findByIdentifier(req.body && req.body.identifier);
+  const pending = user && db.prepare('SELECT * FROM password_resets WHERE user_id = ?').get(user.id);
+  if (!pending) return res.status(400).json({ error: 'No reset in progress. Ask for a new code.' });
+  if (Date.now() > pending.expires_at) {
+    db.prepare('DELETE FROM password_resets WHERE user_id = ?').run(user.id);
+    return res.status(400).json({ error: 'The code has expired. Ask for a new one.' });
+  }
+  if (pending.attempts >= config.otpMaxAttempts) {
+    db.prepare('DELETE FROM password_resets WHERE user_id = ?').run(user.id);
+    return res.status(429).json({ error: 'Too many incorrect attempts. Ask for a new code.' });
+  }
+  if (sha256(String(code || '').trim()) !== pending.code_hash) {
+    db.prepare('UPDATE password_resets SET attempts = attempts + 1 WHERE user_id = ?').run(user.id);
+    const left = config.otpMaxAttempts - (pending.attempts + 1);
+    return res.status(400).json({ error: `Incorrect code.${left > 0 ? ` ${left} attempt(s) left.` : ''}` });
+  }
+  if (!password || String(password).length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  }
+
+  db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?')
+    .run(bcrypt.hashSync(String(password), 12), user.id);
+  db.prepare('DELETE FROM password_resets WHERE user_id = ?').run(user.id);
+  disconnectUser(user.id); // open tabs elsewhere were signed out by the new token version
+  sendPasswordChangedNotice(user.email, user.username).catch(() => {});
+  res.json({ ok: true });
 });
 
 // POST /api/auth/logout

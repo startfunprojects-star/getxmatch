@@ -86,6 +86,7 @@ app.use('/api/voice', require('./src/routes/voice')); // voice notes: upload + p
 app.use('/api/link-preview', require('./src/routes/linkPreview')); // featured image + title for posted links
 app.use('/api/blogs', require('./src/routes/blogs')); // member blogs: write, search, like, comment
 app.use('/api/suggestions', require('./src/routes/suggestions')); // members send ideas to the admin
+app.use('/api/account', require('./src/routes/account')); // settings: password, email, data download, delete, parent controls
 app.use('/api/push', require('./src/routes/push')); // installed app: push subscriptions + icon badge count
 require('./src/referrals').backfill(); // every member gets a fixed referral code
 require('./src/news').start(); // fetch interest-based news for Recent Activity
@@ -109,6 +110,9 @@ app.get(/^\/admin(\/.*)?$/, (req, res) => {
 app.get(/^\/m(\/.*)?$/, (req, res) => {
   res.sendFile(path.join(publicDir, 'match.html'));
 });
+
+// Parent / guardian controls for members under 18 (token links from emails).
+app.use('/guardian', require('./src/routes/guardian'));
 
 // Public, server-rendered, crawlable pages + sitemap.xml + robots.txt. Mounted
 // before static/SPA so `/` gets injected canonical+OG meta and /quizzes, /polls,
@@ -139,6 +143,7 @@ const io = new Server(server, {
 initSocket(io);
 nsfw.start(); // load the NSFW image classifier in its worker thread
 startDigestScheduler(); // daily offline-activity email digest
+require('./src/guardian').startWeeklyScheduler(); // weekly summary emails to parents
 
 server.listen(config.port, () => {
   console.log(`getxmatch listening on http://localhost:${config.port} (${config.env})`);

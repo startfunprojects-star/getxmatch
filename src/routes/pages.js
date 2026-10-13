@@ -1143,7 +1143,7 @@ router.get('/safety', (req, res) => {
     bodyHtml: `
 <h2>The essentials</h2>
 <ul>
-  <li><strong>All ages, kept apart.</strong> Anyone can join. Members under 18 and adults can't contact each other, and members under 18 should use ${SITE_NAME} with a parent or guardian's permission.</li>
+  <li><strong>All ages, kept apart.</strong> Anyone can join. Members under 18 and adults can't contact each other, and members under 18 should use ${SITE_NAME} with a parent or guardian's permission. Under-18 members can link a parent in Account settings: the parent gets a weekly summary (never message contents) and can approve new friends.</li>
   <li><strong>Be respectful.</strong> No harassment, hate speech, threats or unsolicited explicit content.</li>
   <li><strong>Be real.</strong> Impersonation, spam, scams and solicitation are not allowed.</li>
   <li><strong>Consent matters.</strong> Only share images you have the right to share, and never share someone else's private information.</li>
@@ -1165,12 +1165,14 @@ router.get('/safety', (req, res) => {
 // ---- FAQ (with FAQPage rich-result structured data) ------------------------
 const FAQS = [
   ['Is getxmatch free?', 'Yes. Creating a profile, browsing people, taking quizzes, voting in polls and chatting are all free.'],
-  ['Is there a minimum age?', 'No. getxmatch is open to everyone. Members under 18 and adults cannot contact each other, and members under 18 should use it with the permission of a parent or guardian.'],
+  ['Is there a minimum age?', 'No. getxmatch is open to everyone. Members under 18 and adults cannot contact each other, and members under 18 should use it with the permission of a parent or guardian. Members under 18 can also link a parent in Account settings, who then approves new friends and gets a weekly summary.'],
+  ['I forgot my password. What do I do?', 'Choose “Forgot password?” on the login page. We email a 6-digit code to the address on your account; enter it with your new password. Changing your password signs you out on every other device.'],
+  ['Can I download my data?', 'Yes. Open Account settings and choose “Download my data” to get a .zip file with your account, profile, points, friends, messages, posts and your photos and reels.'],
   ['Is my email address visible to other people?', 'No. Your email is used only to verify your account and for notifications. It is never shown to other members and is never returned by our public APIs.'],
   ['What happens to files I share in chat?', 'Files shared in chat are relayed live between you and the recipient and are never stored on our servers — not on disk and not in the database. Images and videos are automatically checked for nudity before they are delivered. Only text messages are kept as history.'],
   ['How do compatibility quizzes work?', 'You answer a short set of questions, then share a private link. When the other person answers, you both see how many answers you picked in common and a compatibility score.'],
   ['How do I stay safe?', 'Read our Safety & Community Guidelines. In short: keep chats on-platform, never send money, protect personal details, and block or report anyone who breaks the rules.'],
-  ['How do I delete my account?', 'You can remove your profile from the app. If you need help, use the contact details in our Privacy Policy and we will assist you.'],
+  ['How do I delete my account?', 'Open Account settings, enter your password, type DELETE and confirm. Your account and everything in it (profile, photos, reels, posts, messages, friends and points) are deleted permanently. You can download your data first.'],
 ];
 router.get('/faq', (req, res) => {
   const faqHtml = FAQS.map(([q, a]) => `
@@ -1216,7 +1218,9 @@ router.get('/privacy', (req, res) => {
 <h2>Cookies</h2>
 <p>We use a single, essential, signed httpOnly cookie to keep you logged in. We do not use advertising or third-party tracking cookies.</p>
 <h2>Your choices</h2>
-<p>You can edit or remove your profile content at any time and request account deletion. Passwords are stored only as salted hashes and are never readable by us.</p>
+<p>You can edit or remove your profile content at any time. In Account settings you can change your email and password, download a copy of your data, and delete your account, which permanently removes it together with your photos, reels, posts and messages. Passwords are stored only as salted hashes and are never readable by us.</p>
+<h2>Parents and guardians</h2>
+<p>A member under 18 can link a parent or guardian's email. Only after the parent confirms do we send them a weekly summary of activity counts (never message contents) and let them approve or decline new friends. The parent can remove the link at any time; it stops applying when the member turns 18.</p>
 <h2>Contact</h2>
 <p>Questions about your privacy? Contact us at <a href="mailto:contact@getxmatch.com">contact@getxmatch.com</a>.</p>`,
   });
@@ -1240,7 +1244,7 @@ router.get('/terms', (req, res) => {
 <h2>4. Content</h2>
 <p>You retain ownership of the content you post and grant us a limited licence to display it as part of operating the service. You are responsible for the content you share.</p>
 <h2>5. Termination</h2>
-<p>We may suspend or remove accounts that violate these terms or our guidelines. You may stop using the service and request deletion at any time.</p>
+<p>We may suspend or remove accounts that violate these terms or our guidelines. You may stop using the service and delete your account at any time from Account settings.</p>
 <h2>6. Disclaimer</h2>
 <p>The service is provided "as is" without warranties. To the extent permitted by law, we are not liable for interactions between members or for indirect damages.</p>
 <h2>7. Changes</h2>

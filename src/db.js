@@ -1155,4 +1155,64 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_avatar_changes_user ON avatar_changes (user_id, created_at);
 `);
 
+// Account self-service (src/routes/account.js). token_version is part of every
+// login token: bumping it signs the member out everywhere (password change or
+// reset). accepted_at dates a friendship for the parent's weekly summary.
+(function migrateAccountSecurity() {
+  const ucols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!ucols.includes('token_version')) db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;');
+  const fcols = db.prepare('PRAGMA table_info(friendships)').all().map((c) => c.name);
+  if (!fcols.includes('accepted_at')) db.exec('ALTER TABLE friendships ADD COLUMN accepted_at INTEGER;');
+})();
+
+db.exec(`
+  -- "Forgot password": a 6-digit code emailed to the member. One per member.
+  CREATE TABLE IF NOT EXISTS password_resets (
+    user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    code_hash  TEXT NOT NULL,
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  -- A pending change of email address, confirmed by a code sent to the new one.
+  CREATE TABLE IF NOT EXISTS email_changes (
+    user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    new_email  TEXT NOT NULL,
+    code_hash  TEXT NOT NULL,
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  -- Parent / guardian linked to a member under 18 (src/guardian.js). 'pending'
+  -- until the parent confirms from the emailed link. The parent manages it all
+  -- from a private page whose token is in every email (manage_token).
+  CREATE TABLE IF NOT EXISTS guardians (
+    user_id            INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    email              TEXT NOT NULL,
+    status             TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'active'
+    approve_friends    INTEGER NOT NULL DEFAULT 1,
+    weekly_summary     INTEGER NOT NULL DEFAULT 1,
+    confirm_token_hash TEXT,
+    manage_token       TEXT NOT NULL,
+    removal_requested_at INTEGER,
+    created_at         INTEGER NOT NULL,
+    confirmed_at       INTEGER,
+    last_summary_at    INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_guardians_manage ON guardians (manage_token);
+  CREATE INDEX IF NOT EXISTS idx_guardians_confirm ON guardians (confirm_token_hash);
+
+  -- Friendships waiting on a parent: friendships.status is 'guardian' while any
+  -- row here remains; one row per child whose parent still has to approve.
+  CREATE TABLE IF NOT EXISTS friend_approvals (
+    friendship_id INTEGER NOT NULL REFERENCES friendships(id) ON DELETE CASCADE,
+    child_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at    INTEGER NOT NULL,
+    PRIMARY KEY (friendship_id, child_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_friend_approvals_child ON friend_approvals (child_id);
+`);
+
 module.exports = db;

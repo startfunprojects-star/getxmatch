@@ -812,6 +812,7 @@
             <input name="identifier" autocomplete="username" required />
             <label>Password</label>
             <input name="password" type="password" autocomplete="current-password" required />
+            <div class="forgot-row"><a href="#" id="forgotLink">Forgot password?</a></div>
           `}
           <div class="msg" id="authMsg"></div>
           <button class="primary" type="submit" style="width:100%;margin-top:18px">
@@ -835,6 +836,12 @@
       e.preventDefault();
       renderAuth(mode === 'login' ? 'signup' : 'login');
     });
+    const forgot = card.querySelector('#forgotLink');
+    if (forgot) forgot.addEventListener('click', (e) => {
+      e.preventDefault();
+      renderForgot(String(new FormData(form).get('identifier') || '').trim());
+    });
+    if (authNotice) { msg.textContent = authNotice; msg.className = 'msg ok'; authNotice = ''; }
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -899,6 +906,79 @@
     container.appendChild(feed);
     const sinceAt = Math.max(0, ...events.map((e) => e.at || 0));
     startAuthActivityPoll(feed, sinceAt); // live via polling (no socket here)
+  }
+
+  // A one-time message shown on the next login screen (e.g. after a reset).
+  let authNotice = '';
+
+  /* Forgot password: email a 6-digit code, then enter it with a new password. */
+  function renderForgot(prefill) {
+    root.innerHTML = '';
+    const card = el(`
+      <div class="auth-wrap"><div class="auth-card">
+        <h1 class="brand">get<span class="x">x</span>match</h1>
+        <p class="auth-sub">Reset your password</p>
+        <form id="fpStart">
+          <label>Username or email</label>
+          <input name="identifier" autocomplete="username" required />
+          <p class="hint">We'll email a 6-digit code to the address on your account.</p>
+          <div class="msg" id="fpMsg"></div>
+          <button class="primary" type="submit" style="width:100%;margin-top:14px">Email me a code</button>
+        </form>
+        <form id="fpReset" hidden>
+          <p class="hint" id="fpSent"></p>
+          <label>Code from the email</label>
+          <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" required
+                 style="letter-spacing:8px;text-align:center;font-size:22px" />
+          <label>New password</label>
+          <input name="password" type="password" autocomplete="new-password" placeholder="At least 8 characters" minlength="8" required />
+          <label>Repeat new password</label>
+          <input name="password2" type="password" autocomplete="new-password" minlength="8" required />
+          <div class="msg" id="fpMsg2"></div>
+          <button class="primary" type="submit" style="width:100%;margin-top:14px">Set new password</button>
+          <div class="auth-toggle"><a href="#" id="fpAgain">Send a new code</a></div>
+        </form>
+        <div class="auth-toggle"><a href="#" id="fpBack">Back to log in</a></div>
+      </div></div>
+    `);
+    root.appendChild(card);
+    const start = card.querySelector('#fpStart');
+    const reset = card.querySelector('#fpReset');
+    const showErr = (box, err) => { box.textContent = err.message; box.className = 'msg error'; };
+    let identifier = '';
+    start.identifier.value = prefill || '';
+
+    const sendCode = async () => {
+      await api.post('/api/auth/password/forgot', { identifier });
+      start.hidden = true;
+      reset.hidden = false;
+      card.querySelector('#fpSent').textContent =
+        `If “${identifier}” has an email address on getxmatch, we've sent it a code. It expires in 10 minutes. Members without an email address can ask the admin to reset their password.`;
+      reset.code.focus();
+    };
+    start.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      identifier = start.identifier.value.trim();
+      const btn = start.querySelector('button');
+      btn.disabled = true;
+      try { await sendCode(); } catch (err) { showErr(card.querySelector('#fpMsg'), err); }
+      btn.disabled = false;
+    });
+    card.querySelector('#fpAgain').addEventListener('click', async (e) => {
+      e.preventDefault();
+      try { await sendCode(); notifyToast('A new code is on its way.'); } catch (err) { showErr(card.querySelector('#fpMsg2'), err); }
+    });
+    reset.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const box = card.querySelector('#fpMsg2');
+      if (reset.password.value !== reset.password2.value) return showErr(box, new Error('The two passwords are different.'));
+      try {
+        await api.post('/api/auth/password/reset', { identifier, code: reset.code.value, password: reset.password.value });
+        authNotice = 'Your password was changed. Log in with your new password.';
+        renderAuth('login');
+      } catch (err) { showErr(box, err); }
+    });
+    card.querySelector('#fpBack').addEventListener('click', (e) => { e.preventDefault(); renderAuth('login'); });
   }
 
   /* Step 2 of signup: enter the 6-digit code emailed to the user. */
@@ -1213,6 +1293,7 @@
             <button data-view="leaderboard">🏆 Leaderboard<span class="ndot"></span></button>
             <button data-view="events">✨ Recent Activity</button>
             <button data-view="suggestions">💡 Suggestions</button>
+            <button data-view="account">⚙️ Account</button>
           </div>
           <div class="search"><input id="searchInput" placeholder="Search people…" /></div>
           <div class="list" id="list"></div>
@@ -6735,6 +6816,7 @@
             ${!isMe ? `<span id="pvFriend"></span>` : ''}
             ${!isMe ? `<span id="pvBlock"></span>` : ''}
             ${isMe ? '<button class="ghost" id="pvEdit">✎ Edit profile</button>' : ''}
+            ${isMe ? '<button class="ghost" id="pvAccount" title="Password, email, download my data, delete account">⚙️ Account</button>' : ''}
             ${isMe ? '<button class="ghost" id="pvCameraTop" title="Take a photo or record a reel for your gallery">📷 Camera</button>' : ''}
             <button class="ghost" id="pvShare" title="Copy a shareable link to this profile">🔗 Share</button>
             ${isMe && profile.referralCode ? '<button class="ghost" id="pvRefer" title="Invite someone to join getxmatch with your referral code">🎟️ Refer</button>' : ''}
@@ -7031,6 +7113,11 @@
       if (state.peer) openChat(state.peer);
       else { document.getElementById('shell').classList.remove('viewing-main'); main.innerHTML = ''; }
     });
+    const accountBtn = view.querySelector('#pvAccount');
+    if (accountBtn) accountBtn.addEventListener('click', () => {
+      const nav = document.querySelector('#exploreNav button[data-view="account"]');
+      if (nav) nav.click(); else renderAccount();
+    });
     const editBtn = view.querySelector('#pvEdit');
     if (editBtn) editBtn.addEventListener('click', () => renderProfileEditor(false));
 
@@ -7190,6 +7277,10 @@
         slot.appendChild(el(`<span class="pill">Sent · ${esc(relLabel(rel))}</span>`));
         slot.appendChild(btn('Cancel', 'ghost', () => api.del('/api/social/friend/' + u)));
         break;
+      case 'awaiting_guardian':
+        slot.appendChild(el('<span class="pill" title="A parent has to approve this friendship before you can chat">⏳ Waiting for parent approval</span>'));
+        slot.appendChild(btn('Cancel', 'ghost', () => api.del('/api/social/friend/' + u)));
+        break;
       case 'incoming':
         slot.appendChild(el(`<span class="pill">Wants · ${esc(relLabel(rel))}</span>`));
         slot.appendChild(btn('Accept', 'primary', () => api.post('/api/social/friend/' + u + '/accept')));
@@ -7226,7 +7317,8 @@
   }
 
   // A compact friend-action control for use in lists (leaderboard/events/requests).
-  // `fstate` is one of self|friends|incoming|outgoing|none. Returns null for self.
+  // `fstate` is one of self|friends|incoming|outgoing|awaiting_guardian|none.
+  // Returns null for self.
   function friendButtonEl(username, fstate, refresh) {
     const u = encodeURIComponent(username);
     const act = async (fn) => { try { await fn(); refreshRequestBadge(); refresh(); } catch (e) { alert(e.message); } };
@@ -7239,6 +7331,7 @@
       case 'self': return null;
       case 'friends': return el('<span class="pill friend-pill">✓ Connected</span>');
       case 'outgoing': return btn('Cancel request', 'ghost', () => api.del('/api/social/friend/' + u));
+      case 'awaiting_guardian': return el('<span class="pill" title="A parent has to approve this friendship first">⏳ Parent approval</span>');
       case 'incoming': return btn('Accept request', 'primary', () => api.post('/api/social/friend/' + u + '/accept'));
       default: return relationshipRequestEl(username, refresh);
     }
@@ -7253,6 +7346,7 @@
     if (view === 'blogs') return renderBlogs();
     if (view === 'leaderboard') return renderLeaderboard();
     if (view === 'suggestions') return renderSuggestions();
+    if (view === 'account') return renderAccount();
     if (view === 'events') return renderMainHome(true); // activity lives in the chat box now
   }
 
@@ -9062,6 +9156,217 @@
     body.appendChild(form);
     body.appendChild(list);
     paint();
+  }
+
+  /* ---------- Account settings ----------
+     Email, password, parent controls (under 18), download my data and delete
+     account (src/routes/account.js). */
+  async function renderAccount() {
+    const main = openMainView();
+    main.appendChild(sectionShell('Account settings', 'Your login details, your data and your account.'));
+    const body = main.querySelector('#sectionBody');
+    let acc;
+    try { acc = await api.get('/api/account'); }
+    catch (e) { body.innerHTML = `<div class="empty-main">${esc(e.message)}</div>`; return; }
+    body.innerHTML = '';
+    const wrap = el('<div class="account-view"></div>');
+    body.appendChild(wrap);
+    const showMsg = (box, text, ok) => { box.textContent = text; box.className = ok ? 'msg ok' : 'msg error'; };
+    const busy = async (btn, fn) => { btn.disabled = true; try { await fn(); } finally { btn.disabled = false; } };
+
+    /* --- Email --- */
+    const emailCard = el(`
+      <section class="card account-card">
+        <h3 class="card-title">✉️ Email address</h3>
+        <p>${acc.email ? `Your email is <b>${esc(acc.email)}</b>.` : 'Your account has no email address yet. Add one so you can reset your password if you forget it.'}</p>
+        <form class="account-form" data-step="start">
+          <label>New email address<input name="email" type="email" autocomplete="email" required /></label>
+          <label>Your password<input name="password" type="password" autocomplete="current-password" required /></label>
+          <div><button class="primary" type="submit">${acc.email ? 'Change email' : 'Add email'}</button></div>
+        </form>
+        <form class="account-form" data-step="verify" hidden>
+          <p class="hint acc-pending"></p>
+          <label>Code from the email<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" required /></label>
+          <div class="account-actions"><button class="primary" type="submit">Confirm new email</button>
+            <button class="ghost" type="button" data-cancel>Cancel</button></div>
+        </form>
+        <div class="msg"></div>
+      </section>`);
+    const [eStart, eVerify] = emailCard.querySelectorAll('form');
+    const eMsg = emailCard.querySelector('.msg');
+    const showVerify = (addr) => {
+      eStart.hidden = true;
+      eVerify.hidden = false;
+      eVerify.querySelector('.acc-pending').textContent = `We emailed a 6-digit code to ${addr}. Enter it here to finish the change.`;
+    };
+    if (acc.pendingEmail) showVerify(acc.pendingEmail);
+    eStart.addEventListener('submit', (e) => {
+      e.preventDefault();
+      busy(eStart.querySelector('button'), async () => {
+        try {
+          const r = await api.post('/api/account/email/start', { email: eStart.email.value, password: eStart.password.value });
+          eStart.reset();
+          eMsg.className = 'msg';
+          showVerify(r.pendingEmail);
+        } catch (err) { showMsg(eMsg, err.message); }
+      });
+    });
+    eVerify.addEventListener('submit', (e) => {
+      e.preventDefault();
+      busy(eVerify.querySelector('button'), async () => {
+        try {
+          const r = await api.post('/api/account/email/verify', { code: eVerify.code.value });
+          if (state.me) state.me.email = r.email;
+          notifyToast('Your email address was changed.');
+          renderAccount();
+        } catch (err) { showMsg(eMsg, err.message); }
+      });
+    });
+    eVerify.querySelector('[data-cancel]').addEventListener('click', async () => {
+      try { await api.del('/api/account/email/pending'); } catch (_e) { /* ignore */ }
+      eVerify.hidden = true;
+      eStart.hidden = false;
+      eMsg.className = 'msg';
+    });
+    wrap.appendChild(emailCard);
+
+    /* --- Password --- */
+    const pwCard = el(`
+      <section class="card account-card">
+        <h3 class="card-title">🔑 Password</h3>
+        <form class="account-form">
+          <label>Current password<input name="current" type="password" autocomplete="current-password" required /></label>
+          <label>New password<input name="next" type="password" autocomplete="new-password" minlength="8" placeholder="At least 8 characters" required /></label>
+          <label>Repeat new password<input name="next2" type="password" autocomplete="new-password" minlength="8" required /></label>
+          <p class="hint">Changing your password signs you out on every other device.</p>
+          <div><button class="primary" type="submit">Change password</button></div>
+        </form>
+        <div class="msg"></div>
+      </section>`);
+    const pwForm = pwCard.querySelector('form');
+    const pwMsg = pwCard.querySelector('.msg');
+    pwForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (pwForm.next.value !== pwForm.next2.value) return showMsg(pwMsg, 'The two new passwords are different.');
+      busy(pwForm.querySelector('button'), async () => {
+        try {
+          await api.put('/api/account/password', { currentPassword: pwForm.current.value, newPassword: pwForm.next.value });
+          pwForm.reset();
+          showMsg(pwMsg, 'Your password was changed. Other devices have been signed out.', true);
+        } catch (err) { showMsg(pwMsg, err.message); }
+      });
+    });
+    wrap.appendChild(pwCard);
+
+    /* --- Parent controls (members under 18) --- */
+    if (acc.isMinor || acc.guardian) wrap.appendChild(guardianCard(acc.guardian, showMsg, busy));
+
+    /* --- Download my data --- */
+    wrap.appendChild(el(`
+      <section class="card account-card">
+        <h3 class="card-title">📦 Download my data</h3>
+        <p>Get a .zip file with your account and profile details, points, friends, messages, posts, blogs, quiz and poll activity, plus your photos, reels and voice notes.</p>
+        <div><a class="button-link" href="/api/account/export" download>⬇ Download my data</a></div>
+        <p class="hint">Files shared in chats are never stored on getxmatch, so they can't be included.</p>
+      </section>`));
+
+    /* --- Delete account --- */
+    const delCard = el(`
+      <section class="card account-card account-danger">
+        <h3 class="card-title">🗑️ Delete my account</h3>
+        <p>This permanently deletes your profile, photos, reels, posts, blogs, messages, friends and points. It can't be undone. You may want to download your data first.</p>
+        <form class="account-form">
+          <label>Your password<input name="password" type="password" autocomplete="current-password" required /></label>
+          <label>Type DELETE to confirm<input name="confirm" autocomplete="off" placeholder="DELETE" required /></label>
+          <div><button class="danger" type="submit">Delete my account forever</button></div>
+        </form>
+        <div class="msg"></div>
+      </section>`);
+    const delForm = delCard.querySelector('form');
+    const delMsg = delCard.querySelector('.msg');
+    delForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (delForm.confirm.value.trim().toUpperCase() !== 'DELETE') return showMsg(delMsg, 'Type DELETE to confirm.');
+      if (!(await confirmBox('Delete your getxmatch account and everything in it? This cannot be undone.', 'Delete forever'))) return;
+      busy(delForm.querySelector('button'), async () => {
+        try {
+          await api.post('/api/account/delete', { password: delForm.password.value, confirm: delForm.confirm.value });
+          try { if (state.socket) state.socket.disconnect(); } catch (_e) { /* ignore */ }
+          state.me = null;
+          authNotice = 'Your account was deleted. Thank you for being part of getxmatch.';
+          renderAuth('login');
+        } catch (err) { showMsg(delMsg, err.message); }
+      });
+    });
+    wrap.appendChild(delCard);
+  }
+
+  // Parent controls card. `g` is null (none linked) or { email, status, … }.
+  function guardianCard(g, showMsg, busy) {
+    const card = el('<section class="card account-card"><h3 class="card-title">👪 Parent controls</h3><div class="acc-body"></div><div class="msg"></div></section>');
+    const bodyEl = card.querySelector('.acc-body');
+    const msg = card.querySelector('.msg');
+    const paint = (g) => {
+      msg.className = 'msg';
+      if (!g) {
+        bodyEl.innerHTML = `
+          <p>Because you're under 18, you can link a parent or guardian. They'll get a weekly summary of your activity (never your messages) and can approve new friends before you connect.</p>
+          <form class="account-form">
+            <label>Parent's or guardian's email<input name="email" type="email" autocomplete="off" required /></label>
+            <div><button class="primary" type="submit">Send invitation</button></div>
+          </form>`;
+        const f = bodyEl.querySelector('form');
+        f.addEventListener('submit', (e) => {
+          e.preventDefault();
+          busy(f.querySelector('button'), async () => {
+            try {
+              const r = await api.put('/api/account/guardian', { email: f.email.value });
+              paint(r.guardian);
+              showMsg(msg, 'Invitation sent. Ask your parent to open the email and confirm.', true);
+            } catch (err) { showMsg(msg, err.message); }
+          });
+        });
+        return;
+      }
+      if (g.status === 'pending') {
+        bodyEl.innerHTML = `
+          <p>Waiting for <b>${esc(g.email)}</b> to confirm from the email we sent. Nothing changes until they do.</p>
+          <div class="account-actions"><button class="ghost" data-act="resend">Send the email again</button>
+            <button class="ghost" data-act="remove">Remove</button></div>`;
+      } else {
+        bodyEl.innerHTML = `
+          <p>Linked to <b>${esc(g.email)}</b>.</p>
+          <ul class="acc-list">
+            <li>${g.approveFriends ? 'New friends need their approval before you can chat.' : 'New friends don’t need their approval.'}</li>
+            <li>${g.weeklySummary ? 'They get a weekly summary email.' : 'Weekly summaries are off.'}</li>
+            ${g.pendingApprovals ? `<li>${g.pendingApprovals} friend request${g.pendingApprovals === 1 ? ' is' : 's are'} waiting for them.</li>` : ''}
+          </ul>
+          <p class="hint">Only your parent can change these or remove the link. Parent controls end automatically when you turn 18.</p>
+          <div class="account-actions">${g.removalRequested
+            ? '<span class="hint">You asked your parent to remove parent controls.</span>'
+            : '<button class="ghost" data-act="remove">Ask to remove parent controls</button>'}</div>`;
+      }
+      const resend = bodyEl.querySelector('[data-act="resend"]');
+      if (resend) resend.addEventListener('click', () => busy(resend, async () => {
+        try { await api.post('/api/account/guardian/resend'); showMsg(msg, 'Sent again.', true); }
+        catch (err) { showMsg(msg, err.message); }
+      }));
+      const remove = bodyEl.querySelector('[data-act="remove"]');
+      if (remove) remove.addEventListener('click', async () => {
+        const active = g.status === 'active';
+        const ask = active ? 'Ask your parent to remove parent controls? They will get an email and decide.' : 'Remove this parent invitation?';
+        if (!(await confirmBox(ask, active ? 'Ask' : 'Remove'))) return;
+        busy(remove, async () => {
+          try {
+            const r = await api.del('/api/account/guardian');
+            paint(r.guardian);
+            if (r.result === 'requested') showMsg(msg, 'We emailed your parent. They decide whether to remove parent controls.', true);
+          } catch (err) { showMsg(msg, err.message); }
+        });
+      });
+    };
+    paint(g);
+    return card;
   }
 
   /* ---------- Leaderboard ---------- */

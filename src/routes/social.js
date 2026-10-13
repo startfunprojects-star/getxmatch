@@ -13,26 +13,10 @@ const { pointsOf } = require('../points');
 const { GIFTS } = require('../gifts');
 const { GALLERY_REACTIONS, GALLERY_REACTION_SET } = require('../galleryReactions');
 const { listActivities } = require('../activities');
-const { acceptedText, relEmoji } = require('../relationships');
-const { broadcastActivity, notifyUser, broadcastLeaderboardChange, isOnline } = require('../socket');
+const { notifyUser, broadcastLeaderboardChange, isOnline } = require('../socket');
+const guardian = require('../guardian');
 
 const router = express.Router();
-
-// Display name + declared gender for a user (name falls back to username).
-function profileBits(userId, fallback) {
-  const r = db.prepare('SELECT display_name, gender FROM profiles WHERE user_id = ?').get(userId);
-  return { name: (r && r.display_name) || fallback, gender: r ? r.gender : null };
-}
-
-// Announce an accepted friend request onto Recent Activity. (A request that
-// is only sent stays private between the two members.) Broadcast only (no
-// socket on the public sign-in page, so real names stay in the logged-in
-// feed); accepts also persist via the accepted-friendships source.
-function announceAccepted(type, aId, aFallback, bId, bFallback) {
-  const a = profileBits(aId, aFallback);
-  const b = profileBits(bId, bFallback);
-  broadcastActivity({ at: Date.now(), icon: relEmoji(type), text: acceptedText(type, a.name, b.name) });
-}
 
 // Resolve a :username param to a user row that has a profile. Sends the 404
 // response itself and returns null when not found.
@@ -376,12 +360,14 @@ router.post('/friend/:username', requireAuth, (req, res) => {
     if (row.status === 'accepted') {
       return res.status(409).json({ error: 'You are already connected.' });
     }
-    // Pending. If the target requested us, accept it (keep their chosen type).
+    if (row.status === 'guardian') {
+      return res.status(409).json({ error: 'This friendship is waiting for a parent to approve it.' });
+    }
+    // Pending. If the target requested us, accept it (keep their chosen type),
+    // unless a parent has to approve it first (src/guardian.js).
     if (row.addressee_id === req.user.id) {
-      db.prepare('UPDATE friendships SET status = ? WHERE id = ?').run('accepted', row.id);
-      announceAccepted(row.rel_type || 'friend', req.user.id, req.user.username, target.id, target.username);
-      broadcastLeaderboardChange(); // a new accepted friendship can reshuffle ranks
-      return res.json({ state: 'friends' });
+      const result = guardian.acceptOrHold(row);
+      return res.json({ state: result === 'friends' ? 'friends' : 'awaiting_guardian' });
     }
     return res.status(409).json({ error: 'You already sent a request.' });
   }
@@ -437,10 +423,8 @@ router.post('/friend/:username/accept', requireAuth, (req, res) => {
     return res.status(403).json({ error: 'You cannot accept a request from this member.' });
   }
 
-  db.prepare('UPDATE friendships SET status = ? WHERE id = ?').run('accepted', row.id);
-  announceAccepted(row.rel_type || 'friend', req.user.id, req.user.username, target.id, target.username);
-  broadcastLeaderboardChange(); // a new accepted friendship can reshuffle ranks
-  res.json({ state: 'friends' });
+  const result = guardian.acceptOrHold(row);
+  res.json({ state: result === 'friends' ? 'friends' : 'awaiting_guardian' });
 });
 
 // DELETE /api/social/friend/:username — unfriend, cancel a sent request, or

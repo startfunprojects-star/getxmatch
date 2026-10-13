@@ -22,6 +22,7 @@ function friendState(ownerId, viewerId) {
     .get(ownerId, viewerId, viewerId, ownerId);
   if (!row) return 'none';
   if (row.status === 'accepted') return 'friends';
+  if (row.status === 'guardian') return 'awaiting_guardian'; // a parent must approve (src/guardian.js)
   return row.requester_id === viewerId ? 'outgoing' : 'incoming';
 }
 
