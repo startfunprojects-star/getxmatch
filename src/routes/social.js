@@ -445,6 +445,9 @@ router.delete('/friend/:username', requireAuth, (req, res) => {
 // GET /api/social/friends — my accepted friends plus pending requests
 // GET /api/social/chats — everyone I have a 1:1 conversation with, newest
 // first, with when it last had a message and how many I haven't read.
+// Conversations the member deleted ("Delete chat" / "Delete all chats") only
+// count messages sent after they deleted them, so a deleted chat drops off the
+// list until someone writes again.
 router.get('/chats', requireAuth, (req, res) => {
   const me = req.user.id;
   const rows = db.prepare(
@@ -455,11 +458,12 @@ router.get('/chats', requireAuth, (req, res) => {
                FROM messages WHERE sender_id = ? OR recipient_id = ?) c
        JOIN users u ON u.id = c.peer
        LEFT JOIN profiles p ON p.user_id = c.peer
-      WHERE c.peer <> ?
+       LEFT JOIN chat_clears cc ON cc.user_id = ? AND cc.peer_id = c.peer
+      WHERE c.peer <> ? AND c.created_at > COALESCE(cc.cleared_at, 0)
       GROUP BY c.peer
       ORDER BY last_at DESC
       LIMIT 200`
-  ).all(me, me, me, me, me);
+  ).all(me, me, me, me, me, me);
   res.json({
     chats: rows.filter((r) => !areBlocked(me, r.id)).map((r) => ({
       id: r.id,
@@ -470,6 +474,37 @@ router.get('/chats', requireAuth, (req, res) => {
       unread: r.unread || 0,
     })),
   });
+});
+
+// DELETE /api/social/chats — "Delete all chats": clears every one-to-one chat
+// and every group chat the member is in, for them only (the other people keep
+// their copies). New messages after this show up as usual.
+router.delete('/chats', requireAuth, (req, res) => {
+  const me = req.user.id;
+  const now = Date.now();
+  const peers = db.prepare(
+    `SELECT DISTINCT CASE WHEN sender_id = ? THEN recipient_id ELSE sender_id END AS peer
+       FROM messages WHERE sender_id = ? OR recipient_id = ?`
+  ).all(me, me, me).map((r) => r.peer).filter((p) => p !== me);
+  const groups = db.prepare('SELECT group_id FROM chat_group_members WHERE user_id = ?').all(me).map((r) => r.group_id);
+  const clearPeer = db.prepare(
+    `INSERT INTO chat_clears (user_id, peer_id, cleared_at) VALUES (?, ?, ?)
+     ON CONFLICT(user_id, peer_id) DO UPDATE SET cleared_at = excluded.cleared_at`
+  );
+  const clearGroup = db.prepare(
+    `INSERT INTO group_clears (user_id, group_id, cleared_at) VALUES (?, ?, ?)
+     ON CONFLICT(user_id, group_id) DO UPDATE SET cleared_at = excluded.cleared_at`
+  );
+  db.exec('BEGIN');
+  try {
+    peers.forEach((p) => clearPeer.run(me, p, now));
+    groups.forEach((g) => clearGroup.run(me, g, now));
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  res.json({ ok: true, chats: peers.length, groups: groups.length });
 });
 
 router.get('/friends', requireAuth, (req, res) => {

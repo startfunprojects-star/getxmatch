@@ -157,6 +157,17 @@ router.get('/:id/messages', requireAuth, (req, res) => {
     .all(req.user.id, otherId, otherId, req.user.id, req.user.id, otherId, req.user.id)
     .reverse(); // the newest 500, oldest first
 
+  // How many messages this member still has in the conversation. Only the
+  // newest 500 load, so past that the chat suggests clearing it.
+  const total = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM messages m
+        WHERE ((m.sender_id = ? AND m.recipient_id = ?) OR (m.sender_id = ? AND m.recipient_id = ?))
+          AND m.created_at > COALESCE((SELECT cleared_at FROM chat_clears WHERE user_id = ? AND peer_id = ?), 0)
+          AND m.id NOT IN (SELECT message_id FROM message_hides WHERE user_id = ?)`
+    )
+    .get(req.user.id, otherId, otherId, req.user.id, req.user.id, otherId, req.user.id).n;
+
   // Reactions across this whole conversation, grouped by message.
   const reactionRows = db
     .prepare(
@@ -176,6 +187,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
   res.json({
     // One-to-one chat is for friends only (enforced on send in src/socket.js).
     canChat: areFriends(req.user.id, otherId) && !areBlocked(req.user.id, otherId),
+    total,
     messages: rows.map((m) => ({
       id: m.id,
       from: m.sender_id,

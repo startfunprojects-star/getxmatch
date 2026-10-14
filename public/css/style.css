@@ -1564,6 +1564,12 @@ a.share-link:hover { text-decoration: underline; }
 .match-cta { text-align: center; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
 .chat-cta { display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 999px; background: var(--grad); background-size: 140% 140%; box-shadow: var(--glow); color: #fff; font-weight: 700; text-decoration: none; }
 .match-cta .hint { margin-top: 10px; }
+/* Chats list: "Delete all chats" above the conversations. */
+.chat-large-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 8px 12px 0; padding: 10px 14px; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 10px; background: var(--bg-2, var(--bg)); font-size: 13px; line-height: 1.45; }
+.chat-large-notice .cln-text { flex: 1 1 260px; color: var(--muted); }
+.chat-large-notice .cln-text strong { color: var(--text); display: block; margin-bottom: 2px; }
+.chat-large-notice .cln-actions { display: flex; gap: 8px; }
+.list-actions { display: flex; justify-content: flex-end; padding: 6px 10px; border-bottom: 1px solid var(--border); }
 .waiting-dots { color: var(--muted); margin-top: 14px; font-size: 14px; }
 
 /* Admin: On-page SEO fieldset */

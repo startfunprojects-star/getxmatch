@@ -1596,7 +1596,13 @@
       ...groups.map((g) => ({ g, at: g.lastAt || 0, unread: state.group && state.group.gid === g.id ? 0 : (g.unread || 0) })),
       ...items.map((u) => ({ u, at: u.lastAt || 0, unread: state.peer && state.peer.id === u.id ? 0 : (u.unread || 0) })),
     ];
-    if (state.tab !== 'people') rows.sort((a, b) => b.at - a.at);
+    if (state.tab !== 'people') {
+      rows.sort((a, b) => b.at - a.at);
+      // "Delete all chats" (for me only) above the conversation list.
+      const bar = el('<div class="list-actions"><button type="button" class="ghost small" title="Delete every chat, for you only">🗑 Delete all chats</button></div>');
+      bar.querySelector('button').addEventListener('click', clearAllConversations);
+      listEl.appendChild(bar);
+    }
     const unreadPill = (n) => (n ? `<span class="list-unread" title="${n} unread">${n > 99 ? '99+' : n}</span>` : '');
     rows.forEach(({ g, u, unread }) => {
       let row;
@@ -2445,7 +2451,8 @@
     // Load persisted history (text + gifts).
     adState.counters.chat = 0; // restart the every-20-messages ad cadence per chat
     try {
-      const { messages, canChat } = await api.get(`/api/users/${peer.id}/messages`);
+      const { messages, canChat, total } = await api.get(`/api/users/${peer.id}/messages`);
+      if (state.peer && state.peer.id === peer.id) showLargeChatNotice(view, peer, total || 0);
       // Only friends can chat: swap the composer for a notice otherwise.
       if (canChat === false && state.peer && state.peer.id === peer.id) lockChatComposer(view, peer);
 
@@ -2472,6 +2479,45 @@
       }
     } catch (_e) {}
     scrollBody();
+  }
+
+  // Past LARGE_CHAT messages only the newest ones load, and long histories make
+  // the chat slower, so suggest clearing it. "Not now" hides the notice for
+  // this conversation for a week (kept in this browser only).
+  const LARGE_CHAT = 500;
+  const LARGE_CHAT_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
+  function showLargeChatNotice(view, peer, total) {
+    const old = view.querySelector('.chat-large-notice');
+    if (old) old.remove();
+    if (total < LARGE_CHAT) return;
+    const key = `gx-large-chat-${state.me.id}-${peer.id}`;
+    try {
+      const snoozed = Number(localStorage.getItem(key) || 0);
+      if (snoozed && Date.now() - snoozed < LARGE_CHAT_SNOOZE_MS) return;
+    } catch (_e) {}
+    const name = esc(peer.displayName || peer.username);
+    const note = el(`
+      <div class="chat-large-notice" role="status">
+        <div class="cln-text">
+          <strong>This conversation is getting long.</strong>
+          You and ${name} have exchanged over ${LARGE_CHAT} messages. To keep your chat fast and responsive, we recommend clearing it —
+          only the most recent ${LARGE_CHAT} messages are shown. Clearing removes the history for you only; ${name} keeps their copy.
+        </div>
+        <div class="cln-actions">
+          <button type="button" class="primary small" data-clear>Clear chat</button>
+          <button type="button" class="ghost small" data-later>Not now</button>
+        </div>
+      </div>
+    `);
+    note.querySelector('[data-clear]').addEventListener('click', async () => {
+      if (await clearConversation('dm', peer.id)) note.remove();
+    });
+    note.querySelector('[data-later]').addEventListener('click', () => {
+      try { localStorage.setItem(key, String(Date.now())); } catch (_e) {}
+      note.remove();
+    });
+    const body = view.querySelector('#chatBody');
+    if (body && body.parentNode) body.parentNode.insertBefore(note, body);
   }
 
   // Replace a conversation's composer (and its share / group / activity
@@ -3795,13 +3841,32 @@
     const msg = kind === 'group'
       ? 'Delete this group chat for you? All its messages will be removed from your view. Other members keep theirs.'
       : 'Delete this whole chat? All messages will be removed for you. The other person keeps their copy.';
-    if (!(await confirmBox(msg, 'Delete chat'))) return;
+    if (!(await confirmBox(msg, 'Delete chat'))) return false;
     try {
       await api.del(kind === 'group' ? `/api/groups/${id}/messages` : `/api/users/${id}/messages`);
       await idbClearPeer(kind === 'group' ? 'g' + id : id);
       const b = chatBody();
       if (b) b.innerHTML = '<div class="hint chat-cleared">Chat deleted. New messages will appear here.</div>';
       notifyToast('Chat deleted.');
+      if (kind !== 'group') delete state.chatPeers[id];
+      if (state.tab === 'chats') renderList();
+      return true;
+    } catch (e) { alert(e.message); return false; }
+  }
+
+  // Delete every one-to-one and group chat, for this member only.
+  async function clearAllConversations() {
+    const msg = 'Delete all your chats? Every conversation, including group chats, will be removed for you. ' +
+      'The other people keep their copies, and new messages will still reach you.';
+    if (!(await confirmBox(msg, 'Delete all chats'))) return;
+    try {
+      await api.del('/api/social/chats');
+      await idbClearAll();
+      state.chatPeers = {};
+      const b = chatBody();
+      if (b && (state.peer || state.group)) b.innerHTML = '<div class="hint chat-cleared">Chat deleted. New messages will appear here.</div>';
+      notifyToast('All chats deleted.');
+      renderList();
     } catch (e) { alert(e.message); }
   }
 
@@ -4223,6 +4288,21 @@
     const rows = await idbLoadFiles(peerId);
     (rows || []).forEach((r) => { idbDeleteFile(peerId, r.id); try { URL.revokeObjectURL(r.url); } catch (_e) {} });
     if (state.sharedFiles) delete state.sharedFiles[peerId];
+  }
+
+  // Every file kept in this browser, for every chat.
+  async function idbClearAll() {
+    Object.values(state.sharedFiles || {}).forEach((arr) => (arr || []).forEach((r) => { try { URL.revokeObjectURL(r.url); } catch (_e) {} }));
+    state.sharedFiles = {};
+    try {
+      const db = await idb();
+      await new Promise((res, rej) => {
+        const tx = db.transaction('files', 'readwrite');
+        tx.objectStore('files').clear();
+        tx.oncomplete = res;
+        tx.onerror = () => rej(tx.error);
+      });
+    } catch (_e) {}
   }
 
   async function idbLoadFiles(peerId) {

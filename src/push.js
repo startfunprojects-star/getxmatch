@@ -80,11 +80,16 @@ function unsubscribe(userId, endpoint) {
 // Notifications (new quizzes, polls, compatibility results, followers).
 function badgeCount(userId) {
   const msgs = db.prepare(
-    "SELECT COUNT(*) AS n FROM messages WHERE recipient_id = ? AND read_at IS NULL AND kind <> 'hwevent'"
+    `SELECT COUNT(*) AS n FROM messages m
+       LEFT JOIN chat_clears cc ON cc.user_id = m.recipient_id AND cc.peer_id = m.sender_id
+      WHERE m.recipient_id = ? AND m.read_at IS NULL AND m.kind <> 'hwevent'
+        AND m.created_at > COALESCE(cc.cleared_at, 0)` // deleted chats don't count
   ).get(userId).n;
   const groupMsgs = db.prepare(
     `SELECT COUNT(*) AS n FROM group_messages gm JOIN chat_group_members m ON m.group_id = gm.group_id
-      WHERE m.user_id = ? AND m.status = 'joined' AND gm.sender_id <> ? AND gm.created_at > COALESCE(m.read_at, m.created_at)`
+       LEFT JOIN group_clears gc ON gc.user_id = m.user_id AND gc.group_id = gm.group_id
+      WHERE m.user_id = ? AND m.status = 'joined' AND gm.sender_id <> ? AND gm.created_at > COALESCE(m.read_at, m.created_at)
+        AND gm.created_at > COALESCE(gc.cleared_at, 0)`
   ).get(userId, userId).n;
   return msgs + groupMsgs + unreadCount(userId);
 }
