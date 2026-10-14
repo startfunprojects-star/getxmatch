@@ -3351,16 +3351,32 @@
     body.appendChild(el(q.group
       ? '<div class="quiz-sub">Answer together — pick your response to each. Once you submit, you’ll see how much you match everyone else who has finished.</div>'
       : '<div class="quiz-sub">Answer together — pick your response to each. You’ll both see how much you have in common once you’re both done.</div>'));
-    q.questions.forEach((qq, i) => {
+    // Questions and options in a random order, picked once per card so a
+    // re-render mid-answer doesn't reshuffle. Answers keep original indexes.
+    const shuffle = (a) => {
+      for (let k = a.length - 1; k > 0; k -= 1) {
+        const j = Math.floor(Math.random() * (k + 1));
+        [a[k], a[j]] = [a[j], a[k]];
+      }
+      return a;
+    };
+    if (!card._order || card._order.length !== q.questions.length) {
+      card._order = shuffle(q.questions.map((_x, k) => k));
+      card._optOrder = q.questions.map((qq) => shuffle(qq.options.map((_x, k) => k)));
+    }
+    card._order.forEach((i, pos) => {
+      const qq = q.questions[i];
       const block = el('<div class="quiz-q"></div>');
-      block.appendChild(el('<div class="quiz-q-prompt"></div>')).textContent = (i + 1) + '. ' + qq.prompt;
+      block.appendChild(el('<div class="quiz-q-prompt"></div>')).textContent = (pos + 1) + '. ' + qq.prompt;
       const opts = el('<div class="quiz-q-opts"></div>');
-      qq.options.forEach((optText, oi) => {
+      const optOrder = card._optOrder[i] && card._optOrder[i].length === qq.options.length ? card._optOrder[i] : qq.options.map((_x, k) => k);
+      optOrder.forEach((oi) => {
         const btn = el(`<button class="quiz-opt${card._draft[i] === oi ? ' sel' : ''}" type="button"></button>`);
-        btn.textContent = optText;
+        btn.textContent = qq.options[oi];
+        btn.dataset.oi = oi;
         btn.addEventListener('click', () => {
           card._draft[i] = oi;
-          opts.querySelectorAll('.quiz-opt').forEach((b, bi) => b.classList.toggle('sel', bi === oi));
+          opts.querySelectorAll('.quiz-opt').forEach((b) => b.classList.toggle('sel', Number(b.dataset.oi) === oi));
           const done = card._draft.every((a) => a >= 0);
           const sub = card.querySelector('.quiz-submit');
           if (sub) sub.disabled = !done;

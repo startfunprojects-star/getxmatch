@@ -18,6 +18,14 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
+  // Fisher–Yates, in place; returns the array.
+  function shuffle(a) {
+    for (let i = a.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
   function el(html) {
     const t = document.createElement('template');
     t.innerHTML = html.trim();
@@ -250,10 +258,13 @@
         </div>
       `));
     }
-    data.questions.forEach((q, qi) => {
-      const block = el(`<div class="quiz-q"><div class="quiz-prompt">${qi + 1}. ${esc(q.prompt)}</div></div>`);
-      q.options.forEach((opt, oi) => {
-        block.appendChild(el(`<label class="quiz-opt"><input type="radio" name="q${qi}" value="${oi}" /> <span>${esc(opt)}</span></label>`));
+    // Questions and options appear in a random order every time; the radio
+    // names / values keep the original indexes, so answers map back as-is.
+    shuffle(data.questions.map((_q, i) => i)).forEach((qi, pos) => {
+      const q = data.questions[qi];
+      const block = el(`<div class="quiz-q"><div class="quiz-prompt">${pos + 1}. ${esc(q.prompt)}</div></div>`);
+      shuffle(q.options.map((_o, i) => i)).forEach((oi) => {
+        block.appendChild(el(`<label class="quiz-opt"><input type="radio" name="q${qi}" value="${oi}" /> <span>${esc(q.options[oi])}</span></label>`));
       });
       form.appendChild(block);
     });

@@ -146,20 +146,57 @@ function questionMeta(q) {
   };
 }
 
+// A random permutation of 0..n-1 (Fisher–Yates).
+function shuffled(n) {
+  const a = Array.from({ length: n }, (_v, i) => i);
+  for (let i = n - 1; i > 0; i -= 1) {
+    const j = crypto.randomInt(i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// The session's question order and per-question option order. Sessions from
+// before shuffling (or a quiz edited mid-attempt) fall back to the original
+// order wherever the stored order doesn't fit.
+function sessionOrder(sess, questions) {
+  const n = questions.length;
+  const optCount = (q) => (Array.isArray(q && q.options) ? q.options.length : 0);
+  const isPerm = (p, len) => Array.isArray(p) && p.length === len && p.every((x, i) => p.indexOf(i) >= 0);
+  let order = parseJson(sess.q_order, null);
+  if (!isPerm(order, n)) order = identity(n);
+  const stored = parseJson(sess.opt_order, []);
+  const opts = questions.map((q, i) => (isPerm(stored[i], optCount(q)) ? stored[i] : identity(optCount(q))));
+  return { order, opts };
+}
+function identity(n) {
+  return Array.from({ length: n }, (_v, i) => i);
+}
+
 // Where a session is in the quiz: the current question and how long is left
 // on it (by the server's clock), plus points earned so far. In a standard
 // quiz (`graded`) the points stay hidden until the end — a running score
 // would give away which answers were right.
+// `index` is the position in this attempt's shuffled order; `q` is the
+// question shown there (its original index) and `opts` its options' original
+// indexes in the order to show them.
 function sessionState(sess, questions, graded) {
   const index = sess.q_index || 0;
   const done = index >= questions.length;
   let remainingMs = null;
+  let q = null;
+  let opts = null;
   if (!done) {
-    const { seconds } = questionMeta(questions[index]);
+    const ord = sessionOrder(sess, questions);
+    q = ord.order[index];
+    opts = ord.opts[q];
+    const { seconds } = questionMeta(questions[q]);
     if (seconds) remainingMs = Math.max(0, seconds * 1000 - (Date.now() - (sess.q_started_at || Date.now())));
   }
   return {
     index,
+    q,
+    opts,
     done,
     remainingMs,
     points: graded && !done ? null : sess.points || 0,
@@ -250,11 +287,17 @@ router.post('/quizzes/:id/proctor/start', requireAuth, (req, res) => {
         .run(req.user.id, row.id, charged, 'Quiz reattempt', now);
     }
     // The first question's clock starts now.
-    sess = { token: crypto.randomBytes(18).toString('base64url'), strikes: 0, q_index: 0, q_started_at: now, points: 0, match_id: matchId };
+    // A fresh random order of questions and options for every attempt.
+    const qOrder = JSON.stringify(shuffled(questions.length));
+    const optOrder = JSON.stringify(questions.map((q) => shuffled(Array.isArray(q.options) ? q.options.length : 0)));
+    sess = {
+      token: crypto.randomBytes(18).toString('base64url'),
+      strikes: 0, q_index: 0, q_started_at: now, points: 0, match_id: matchId, q_order: qOrder, opt_order: optOrder,
+    };
     db.prepare(
-      `INSERT INTO quiz_proctor_sessions (token, quiz_id, user_id, created_at, expires_at, q_started_at, match_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(sess.token, row.id, req.user.id, now, now + PROCTOR_SESSION_MS, now, matchId);
+      `INSERT INTO quiz_proctor_sessions (token, quiz_id, user_id, created_at, expires_at, q_started_at, match_id, q_order, opt_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(sess.token, row.id, req.user.id, now, now + PROCTOR_SESSION_MS, now, matchId, qOrder, optOrder);
   }
   if (charged) broadcastLeaderboardChange();
   res.json({
@@ -343,7 +386,11 @@ router.post('/quizzes/:id/proctor/answer', requireAuth, (req, res) => {
     return res.json({ accepted: false, state: sessionState(sess, questions, isGraded(row.type)) });
   }
 
-  const q = questions[index];
+  // `index` is the position in this attempt's shuffled order; the answer is
+  // recorded against the question's original index. `option` is already an
+  // original option index (the page only reorders how they're shown).
+  const qi = sessionOrder(sess, questions).order[index];
+  const q = questions[qi];
   const { points, seconds } = questionMeta(q);
   const opts = Array.isArray(q.options) ? q.options : [];
   const option = Number(req.body && req.body.option);
@@ -355,7 +402,7 @@ router.post('/quizzes/:id/proctor/answer', requireAuth, (req, res) => {
   const earned = answer < 0 ? -(row.negative_marks || 0) : wrong ? 0 : points;
 
   const answers = parseJson(sess.answers, []);
-  answers[index] = answer;
+  answers[qi] = answer;
   const next = { ...sess, q_index: index + 1, q_started_at: now, points: (sess.points || 0) + earned, answers: JSON.stringify(answers) };
   db.prepare('UPDATE quiz_proctor_sessions SET q_index = ?, q_started_at = ?, points = ?, answers = ? WHERE token = ?')
     .run(next.q_index, next.q_started_at, next.points, next.answers, token);

@@ -414,7 +414,7 @@ router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
     ].filter(Boolean).join(' · ');
     return `
     <fieldset class="gx-q" data-q="${i}" data-points="${qPoints(q)}" data-seconds="${qSeconds(q)}">
-      <legend>${i + 1}. ${esc(q.prompt)}</legend>
+      <legend><span class="gx-qn">${i + 1}.</span> ${esc(q.prompt)}</legend>
       <p class="gx-qmeta">${meta}</p>
       ${optHtml}
     </fieldset>`;

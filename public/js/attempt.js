@@ -266,13 +266,28 @@
       if (left <= 0) { stopQuestionTimer(); sendAnswer(true); }
     }
 
-    // Show question `state.index` with its countdown (remainingMs is measured
-    // by the server, so the local clock's accuracy doesn't matter).
+    // Show the question at position `state.index` with its countdown
+    // (remainingMs is measured by the server, so the local clock's accuracy
+    // doesn't matter). Every attempt has its own random order: state.q is the
+    // question to show there and state.opts its options in display order (the
+    // radio values stay the original option indexes).
     function showQuestion(state) {
       stopQuestionTimer();
       qIndex = state.index;
-      for (var i = 0; i < fieldsets.length; i++) fieldsets[i].hidden = i !== qIndex;
-      var fs = fieldsets[qIndex];
+      var shown = state.q != null ? state.q : qIndex;
+      for (var i = 0; i < fieldsets.length; i++) fieldsets[i].hidden = i !== shown;
+      var fs = fieldsets[shown];
+      var num = fs.querySelector('.gx-qn');
+      if (num) num.textContent = (qIndex + 1) + '.';
+      if (state.opts) {
+        var byValue = {};
+        var labels = fs.querySelectorAll('.gx-qopt');
+        for (var k = 0; k < labels.length; k++) {
+          var inp = labels[k].querySelector('input');
+          if (inp) { byValue[inp.value] = labels[k]; inp.checked = false; }
+        }
+        state.opts.forEach(function (oi) { if (byValue[oi]) fs.appendChild(byValue[oi]); });
+      }
       var secs = parseInt(fs.getAttribute('data-seconds'), 10) || 0;
       progressEl.textContent = 'Question ' + (qIndex + 1) + ' of ' + fieldsets.length;
       // Standard quizzes keep the score hidden until the end (points is null).
@@ -436,7 +451,7 @@
     // Send the current question's answer (or a timeout) and move on.
     function sendAnswer(timedOut) {
       if (!active || answering) return;
-      var picked = fieldsets[qIndex].querySelector('input[type="radio"]:checked');
+      var picked = form.querySelector('.gx-q:not([hidden]) input[type="radio"]:checked');
       if (!picked && !timedOut) { showNote('Pick an answer, or wait for the timer to skip this question.'); return; }
       answering = true;
       stopQuestionTimer();

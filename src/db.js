@@ -1230,6 +1230,12 @@ db.exec(`
   if (!mcols.includes('b_forfeit')) db.exec('ALTER TABLE quiz_matches ADD COLUMN b_forfeit INTEGER NOT NULL DEFAULT 0;');
   const scols = db.prepare('PRAGMA table_info(quiz_proctor_sessions)').all().map((c) => c.name);
   if (!scols.includes('match_id')) db.exec('ALTER TABLE quiz_proctor_sessions ADD COLUMN match_id INTEGER;');
+  // Each attempt shows the questions, and each question's options, in its own
+  // random order: q_order = [question index, ...] in the order shown,
+  // opt_order = per question (by original index) its option indexes in the
+  // order shown. Answers are still recorded by original indexes.
+  if (!scols.includes('q_order')) db.exec('ALTER TABLE quiz_proctor_sessions ADD COLUMN q_order TEXT;');
+  if (!scols.includes('opt_order')) db.exec('ALTER TABLE quiz_proctor_sessions ADD COLUMN opt_order TEXT;');
   db.exec(`
     CREATE TABLE IF NOT EXISTS quiz_challenge_points (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
