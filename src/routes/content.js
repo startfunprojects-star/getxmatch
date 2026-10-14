@@ -13,7 +13,7 @@ const { quizStats } = require('../quizStats');
 
 const router = express.Router();
 
-const { MATCH_TTL_MS, typeLabel, isShareable, isOpen } = require('../quizTypes');
+const { MATCH_TTL_MS, typeLabel, isShareable, isOpen, hasBadge, isGraded, correctOption } = require('../quizTypes');
 const { WEIGHTS } = require('../points'); // shared links live for 24 hours
 const { categoryLabel } = require('../quizCategories');
 
@@ -62,9 +62,10 @@ router.get('/quizzes', requireAuth, (req, res) => {
       typeLabel: typeLabel(r.type),
       category: r.category || null,
       categoryLabel: categoryLabel(r.category),
-      // shareable = finishing gives a link (badge shown); open = anyone
-      // registered can answer that link.
+      // shareable = finishing gives a link; badge = show the type's label;
+      // open = anyone registered can answer that link.
       shareable: isShareable(r.type),
+      badge: hasBadge(r.type),
       open: isOpen(r.type),
       createdAt: r.created_at,
       // questionCount, totalSeconds, untimedQuestions, totalPoints,
@@ -158,6 +159,21 @@ function sessionState(sess, questions) {
     points: sess.points || 0,
     maxPoints: questions.reduce((a, q) => a + questionMeta(q).points, 0),
   };
+}
+
+// For a standard quiz: how many answers were right, out of the questions that
+// have a correct option set ({} for other quiz types).
+function gradedCounts(type, questions, answers) {
+  if (!isGraded(type)) return {};
+  let graded = 0;
+  let correct = 0;
+  questions.forEach((q, i) => {
+    const key = correctOption(q);
+    if (key == null) return;
+    graded += 1;
+    if (answers[i] === key) correct += 1;
+  });
+  return graded ? { graded, correct } : {};
 }
 
 function lockedResponse(res, until) {
@@ -268,9 +284,10 @@ router.post('/quizzes/:id/proctor/violation', requireAuth, (req, res) => {
 // Records the answer to the current question and moves on to the next. An
 // answer that arrives after the question's time limit (or option -1, sent when
 // the client's timer runs out) is recorded as unanswered: it earns no points,
-// and costs the quiz's negative marks if it has any.
+// and costs the quiz's negative marks if it has any. In a standard quiz only
+// the correct option earns the question's points; a wrong one earns none.
 router.post('/quizzes/:id/proctor/answer', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT id, questions, negative_marks FROM quizzes WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, questions, negative_marks, type FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Quiz not found.' });
   const until = activeLockout(req.user.id, row.id);
   if (until) return lockedResponse(res, until);
@@ -296,15 +313,17 @@ router.post('/quizzes/:id/proctor/answer', requireAuth, (req, res) => {
   const option = Number(req.body && req.body.option);
   const late = seconds > 0 && now - (sess.q_started_at || now) > seconds * 1000 + ANSWER_GRACE_MS;
   const answer = !late && Number.isInteger(option) && option >= 0 && option < opts.length ? option : -1;
+  const key = isGraded(row.type) ? correctOption(q) : null;
+  const wrong = answer >= 0 && key != null && answer !== key;
   // Negative marking: an unanswered (timed-out) question costs points.
-  const earned = answer >= 0 ? points : -(row.negative_marks || 0);
+  const earned = answer < 0 ? -(row.negative_marks || 0) : wrong ? 0 : points;
 
   const answers = parseJson(sess.answers, []);
   answers[index] = answer;
   const next = { ...sess, q_index: index + 1, q_started_at: now, points: (sess.points || 0) + earned, answers: JSON.stringify(answers) };
   db.prepare('UPDATE quiz_proctor_sessions SET q_index = ?, q_started_at = ?, points = ?, answers = ? WHERE token = ?')
     .run(next.q_index, next.q_started_at, next.points, next.answers, token);
-  res.json({ accepted: true, answered: answer >= 0, late, earned, state: sessionState(next, questions) });
+  res.json({ accepted: true, answered: answer >= 0, wrong, late, earned, state: sessionState(next, questions) });
 });
 
 // POST /api/content/quizzes/:id/match  { session }
@@ -337,8 +356,9 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
   const state = sessionState(sess, questions);
 
   const now = Date.now();
-  // Only compatibility quizzes get a share link; a standard quiz just records
-  // the attempt. An open link can be answered by any registered member.
+  // Every quiz type gives a share link (a standard quiz's link compares how
+  // many each person got right). An open link can be answered by any
+  // registered member.
   const shareable = isShareable(row.type);
   const open = isOpen(row.type);
   const token = shareable ? crypto.randomBytes(9).toString('base64url') : null; // ~12 url-safe chars
@@ -376,6 +396,7 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
     durationMs: now - sess.created_at,
     answered: answers.filter((a) => a >= 0).length,
     total: questions.length,
+    ...gradedCounts(row.type, questions, answers),
   });
 });
 

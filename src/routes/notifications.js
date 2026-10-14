@@ -37,12 +37,15 @@ function parseJson(raw, fallback) {
 function addMatchNotifications({ m, quizTitle, bUserId, bName, result, sharerPoints, responderPoints }) {
   const now = Date.now();
   const base = { token: m.token, quizTitle, percent: result.percent, score: result.score, total: result.total };
+  // Standard quizzes: right answers out of `graded`. Stored from each side's
+  // point of view (mine = the recipient's own score).
+  const scored = (mine, theirs) => (result.scored ? { scored: true, myCorrect: mine, theirCorrect: theirs, graded: result.graded } : {});
   const insert = db.prepare('INSERT INTO notifications (user_id, kind, data, created_at) VALUES (?, ?, ?, ?)');
   if (m.a_user_id) {
-    insert.run(m.a_user_id, 'match_shared', JSON.stringify({ ...base, otherName: bName, otherUserId: bUserId, points: sharerPoints }), now);
+    insert.run(m.a_user_id, 'match_shared', JSON.stringify({ ...base, ...scored(result.aCorrect, result.bCorrect), otherName: bName, otherUserId: bUserId, points: sharerPoints }), now);
   }
   if (bUserId) {
-    insert.run(bUserId, 'match_answered', JSON.stringify({ ...base, otherName: m.a_name, otherUserId: m.a_user_id, points: responderPoints }), now);
+    insert.run(bUserId, 'match_answered', JSON.stringify({ ...base, ...scored(result.bCorrect, result.aCorrect), otherName: m.a_name, otherUserId: m.a_user_id, points: responderPoints }), now);
   }
 }
 
@@ -85,6 +88,10 @@ function buildItems(userId) {
         percent: d.percent,
         score: d.score,
         total: d.total,
+        scored: !!d.scored,
+        myCorrect: d.myCorrect,
+        theirCorrect: d.theirCorrect,
+        graded: d.graded,
         points: d.points || 0,
         link: `/m/${d.token}`,
       });

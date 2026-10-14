@@ -10,13 +10,18 @@
 // "completed": any number of registered members can answer them, each getting
 // a row in open_match_responses. The sharer sees every responder's result;
 // a responder sees only their own compatibility with the sharer.
+//
+// Standard quizzes have right answers, so their (one-to-one) links compare
+// how many each person got right instead. Their breakdown shows only whether
+// each person was right, never the options, so the link can't be used as an
+// answer key for the quiz itself.
 
 const express = require('express');
 
 const db = require('../db');
 const { optionalAuth } = require('../auth');
 const { WEIGHTS } = require('../points');
-const { MATCH_TTL_MS } = require('../quizTypes');
+const { MATCH_TTL_MS, isGraded, correctOption } = require('../quizTypes');
 const { notifyUser, broadcastLeaderboardChange } = require('../socket');
 const { addMatchNotifications } = require('./notifications');
 
@@ -102,10 +107,45 @@ function chatContext(m, reqUser) {
   };
 }
 
+// Each question's correct option for a standard quiz (null where none is
+// set), or null when the quiz isn't scored right / wrong.
+function answerKey(quiz, questions) {
+  if (!isGraded(quiz.type)) return null;
+  const key = questions.map(correctOption);
+  return key.some((k) => k != null) ? key : null;
+}
+
 // Shape the completed-result payload (safe to show to either party).
-function resultPayload(m, questions) {
+function resultPayload(m, questions, key) {
   const aAns = parseJson(m.a_answers, []);
   const bAns = parseJson(m.b_answers, []);
+  if (key) {
+    let aCorrect = 0;
+    let bCorrect = 0;
+    let graded = 0;
+    const breakdown = questions.map((q, i) => {
+      if (key[i] == null) return { prompt: q.prompt, graded: false };
+      graded += 1;
+      const aRight = aAns[i] === key[i];
+      const bRight = bAns[i] === key[i];
+      if (aRight) aCorrect += 1;
+      if (bRight) bCorrect += 1;
+      return { prompt: q.prompt, graded: true, aRight, bRight };
+    });
+    return {
+      scored: true,
+      aCorrect,
+      bCorrect,
+      graded,
+      score: m.score,
+      total: m.total,
+      percent: m.total ? Math.round((m.score / m.total) * 100) : 0,
+      aName: m.a_name,
+      bName: m.b_name,
+      breakdown,
+      completedAt: m.completed_at,
+    };
+  }
   const breakdown = questions.map((q, i) => {
     const opts = Array.isArray(q.options) ? q.options : [];
     return {
@@ -284,11 +324,12 @@ router.get('/:token', optionalAuth, (req, res) => {
   const m = loadMatch(req.params.token);
   if (!m) return res.status(404).json({ error: 'This link is not valid.' });
 
-  const quiz = db.prepare('SELECT title, description, questions FROM quizzes WHERE id = ?').get(m.quiz_id);
+  const quiz = db.prepare('SELECT title, description, questions, type FROM quizzes WHERE id = ?').get(m.quiz_id);
   if (!quiz) return res.status(404).json({ error: 'This quiz no longer exists.' });
   const questions = parseJson(quiz.questions, []);
   if (m.is_open) return openGet(req, res, m, quiz, questions);
   const isInitiator = !!(req.user && m.a_user_id && req.user.id === m.a_user_id);
+  const key = answerKey(quiz, questions);
 
   // Already completed → show the result to anyone with the link.
   if (m.completed_at) {
@@ -297,7 +338,7 @@ router.get('/:token', optionalAuth, (req, res) => {
       state: 'done',
       quizTitle: quiz.title,
       isInitiator,
-      result: resultPayload(m, questions),
+      result: resultPayload(m, questions, key),
       points: pointsInfo(m, ctx.viewer),
       ...ctx,
     });
@@ -317,6 +358,7 @@ router.get('/:token', optionalAuth, (req, res) => {
       expiresAt: m.expires_at,
       ttlHours: MATCH_TTL_MS / 3600000,
       isInitiator: true,
+      scored: !!key,
       points: { sharer: WEIGHTS.shareCompleted, responder: WEIGHTS.answerShared },
     });
   }
@@ -329,6 +371,7 @@ router.get('/:token', optionalAuth, (req, res) => {
     expiresAt: m.expires_at,
     ttlHours: MATCH_TTL_MS / 3600000,
     loggedIn: !!req.user,
+    scored: !!key,
     points: { sharer: WEIGHTS.shareCompleted, responder: WEIGHTS.answerShared },
     questions: questions.map((q) => ({
       prompt: q.prompt,
@@ -355,7 +398,7 @@ router.post('/:token/answer', optionalAuth, (req, res) => {
     return res.status(403).json({ error: 'You started this quiz — share the link with someone else.' });
   }
 
-  const quiz = db.prepare('SELECT title, questions FROM quizzes WHERE id = ?').get(m.quiz_id);
+  const quiz = db.prepare('SELECT title, questions, type FROM quizzes WHERE id = ?').get(m.quiz_id);
   if (!quiz) return res.status(404).json({ error: 'This quiz no longer exists.' });
   const questions = parseJson(quiz.questions, []);
 
@@ -391,7 +434,7 @@ router.post('/:token/answer', optionalAuth, (req, res) => {
   if (!info.changes) return res.status(409).json({ error: 'This quiz has already been answered.' });
 
   const updated = loadMatch(req.params.token);
-  const result = resultPayload(updated, questions);
+  const result = resultPayload(updated, questions, answerKey(quiz, questions));
   if (award) broadcastLeaderboardChange();
   // Both people get a notification with the compatibility result.
   addMatchNotifications({
@@ -410,6 +453,7 @@ router.post('/:token/answer', optionalAuth, (req, res) => {
     quizTitle: quiz.title,
     bName: finalName,
     percent: result.percent,
+    ...(result.scored ? { scored: true, aCorrect: result.aCorrect, bCorrect: result.bCorrect, graded: result.graded } : {}),
     points: award ? WEIGHTS.shareCompleted : 0,
   });
   const ctx = chatContext(updated, req.user);

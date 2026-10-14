@@ -21,7 +21,7 @@ const hw = require('../highway');
 const blogs = require('../blogs');
 const ogImage = require('../ogImage');
 const { quizStats, timeLabel, fmtDuration } = require('../quizStats');
-const { typeLabel, isShareable, isOpen } = require('../quizTypes');
+const { typeLabel, isOpen, hasBadge, isGraded } = require('../quizTypes');
 const { categoryLabel } = require('../quizCategories');
 const { buildProfile } = require('../profileData');
 const { renderProfileQr } = require('../qrCard');
@@ -351,7 +351,7 @@ router.get('/quizzes', (req, res) => {
   const rows = db.prepare('SELECT id, title, description, questions, negative_marks, type, category, seo, updated_at FROM quizzes ORDER BY created_at DESC').all();
   const items = rows.map((r) => {
     const s = parseJson(r.seo, {});
-    return { id: r.id, title: r.title, description: r.description, type: isShareable(r.type) ? typeLabel(r.type) : '', category: categoryLabel(r.category), stats: quizStats(r), path: itemPath('quizzes', r.id, s.slug || r.title) };
+    return { id: r.id, title: r.title, description: r.description, type: hasBadge(r.type) ? typeLabel(r.type) : '', category: categoryLabel(r.category), stats: quizStats(r), path: itemPath('quizzes', r.id, s.slug || r.title) };
   });
 
   const cards = items.length
@@ -389,8 +389,9 @@ ${cards}`;
 router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
   const row = db.prepare('SELECT id, title, description, questions, negative_marks, type, category, seo, created_at, updated_at FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return notFound(res, req.path.split('/')[1].replace(/s$/,''));
-  const compat = isShareable(row.type); // compatibility or open compatibility
+  const compat = hasBadge(row.type); // compatibility or open compatibility
   const open = isOpen(row.type);
+  const graded = isGraded(row.type); // standard: right answers, head-to-head link
   const s = parseJson(row.seo, {});
   const chk = canonicalCheck('quizzes', req, row.id, s.slug || row.title);
   if (chk.redirect) return res.redirect(301, chk.redirect);
@@ -443,7 +444,8 @@ router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
   const hint = !hasQuestions ? ''
     : (loggedIn
         ? (open ? 'Answer every question, then submit to get a link any member can answer — see your compatibility with each of them.'
-          : compat ? 'Answer every question, then submit to get a private link to compare with someone.' : 'Answer every question in time to earn its points.')
+          : compat ? 'Answer every question, then submit to get a private link to compare with someone.'
+          : 'Answer every question correctly and in time to earn its points, then share a link to challenge someone.')
         : 'Register or sign in to attempt this quiz.');
   const bodyHtml = `
 ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Quizzes', path: '/quizzes' }, { name: row.title, path: chk.canonical }])}
@@ -458,12 +460,13 @@ ${hasQuestions ? `
     <p class="gx-proctor-sum">${questions.length} question${questions.length === 1 ? '' : 's'}${totalPoints ? ` · up to ${totalPoints} points` : ''}</p>
     <ul>
       <li>The quiz opens in full screen and must stay there until you submit.</li>
-      <li>Questions come one at a time. Each shows its points and time limit — answer before the timer runs out to earn its points. When time is up, the question is skipped${negMarks ? ` and <strong>${negMarks} point${negMarks === 1 ? ' is' : 's are'} deducted (negative marking)</strong>` : ' and earns nothing (no negative marking)'}.</li>
+      <li>Questions come one at a time. Each shows its points and time limit — ${graded ? 'answer correctly' : 'answer'} before the timer runs out to earn its points${graded ? ' (a wrong answer earns none)' : ''}. When time is up, the question is skipped${negMarks ? ` and <strong>${negMarks} point${negMarks === 1 ? ' is' : 's are'} deducted (negative marking)</strong>` : ' and earns nothing (no negative marking)'}.</li>
       <li>Pressing Esc, switching tabs or apps, minimising the window, connecting another display or using remote-control/automation tools counts as leaving the quiz.</li>
       <li>The first time, you get a warning and return to full screen.</li>
       <li><strong>The second time, the quiz stops, you can't attempt it again for 24 hours and 10 points are deducted from your score.</strong></li>
       <li><strong>You can retake a quiz, but every reattempt costs 10 points as soon as you start it</strong> (your best attempt still counts).</li>
       ${open ? `<li>This is an open compatibility quiz: when you finish, you get a link to share that stays active for 24 hours. Any registered member can answer it — you see your compatibility with each of them, and each of them sees only their own result with you. You earn 3 points for every member who answers, and they earn 1.</li>` : ''}
+      ${graded ? `<li>When you finish, you get a link to share that stays active for 24 hours. Whoever answers it goes head to head with you — you both see who got more answers right. If they're a signed-in member, you earn 10 points and they earn 5.</li>` : ''}
       ${compat && !open ? `<li>This is a compatibility quiz: when you finish, you get a link to share that stays active for 24 hours. When a signed-in member answers it, you both see your compatibility results — you earn 10 points and they earn 5.</li>` : ''}
     </ul>
     <button type="button" class="cta gx-start">Start quiz in full screen</button>

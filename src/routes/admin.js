@@ -15,7 +15,7 @@ const { isOnline, broadcastNotify, disconnectUser, notifyUser } = require('../so
 const push = require('../push');
 const { buildFeed, pruneActivity } = require('./events');
 const { leaderboards } = require('../points');
-const { QUIZ_TYPES } = require('../quizTypes');
+const { QUIZ_TYPES, isGraded } = require('../quizTypes');
 const { isValidCategory } = require('../quizCategories');
 const { imageUpload } = require('../upload');
 const { buildProfile } = require('../profileData');
@@ -590,9 +590,11 @@ function normalizeSeo(raw, fallbackTitle) {
 }
 
 // Validate + normalise a quiz's questions array. Returns { value } or { error }.
-// Compatibility quizzes have no "correct" option — every question is a prompt,
-// the choices two people can match on, the points it's worth and its time limit.
-function normalizeQuestions(raw) {
+// Every question is a prompt, its choices, the points it's worth and its time
+// limit. Standard (graded) quizzes also mark each question's correct option
+// (answer = its index); compatibility quizzes have no "correct" option.
+function normalizeQuestions(raw, type) {
+  const graded = isGraded(type);
   const arr = parseJson(raw, null);
   if (!Array.isArray(arr) || arr.length === 0) return { error: 'A quiz needs at least one question.' };
   const out = [];
@@ -613,7 +615,16 @@ function normalizeQuestions(raw) {
     if (!Number.isInteger(seconds) || seconds < 0 || seconds > 3600 || (seconds > 0 && seconds < 5)) {
       return { error: 'Time for each question must be 0 (no limit) or 5 to 3600 seconds.' };
     }
-    out.push({ prompt: prompt.slice(0, 300), options: options.slice(0, 8), points, seconds });
+    const kept = options.slice(0, 8);
+    const item = { prompt: prompt.slice(0, 300), options: kept, points, seconds };
+    if (graded) {
+      const answer = Number(q.answer == null || q.answer === '' ? NaN : q.answer);
+      if (!Number.isInteger(answer) || answer < 0 || answer >= kept.length) {
+        return { error: `Please mark the correct answer for question ${out.length + 1}.` };
+      }
+      item.answer = answer;
+    }
+    out.push(item);
   }
   return { value: out };
 }
@@ -665,12 +676,12 @@ router.post('/quizzes', requireAdmin, (req, res) => {
   const title = ((req.body && req.body.title) || '').trim();
   if (!title) return res.status(400).json({ error: 'Title is required.' });
   const description = ((req.body && req.body.description) || '').trim().slice(0, 500);
-  const q = normalizeQuestions(req.body && req.body.questions);
+  const type = normalizeType(req.body && req.body.type);
+  if (type.error) return res.status(400).json({ error: type.error });
+  const q = normalizeQuestions(req.body && req.body.questions, type.value);
   if (q.error) return res.status(400).json({ error: q.error });
   const neg = normalizeNegative(req.body && req.body.negativeMarks);
   if (neg.error) return res.status(400).json({ error: neg.error });
-  const type = normalizeType(req.body && req.body.type);
-  if (type.error) return res.status(400).json({ error: type.error });
   const category = normalizeCategory(req.body && req.body.category);
   if (category.error) return res.status(400).json({ error: category.error });
 
@@ -691,12 +702,12 @@ router.put('/quizzes/:id', requireAdmin, (req, res) => {
   const title = ((req.body && req.body.title) || '').trim();
   if (!title) return res.status(400).json({ error: 'Title is required.' });
   const description = ((req.body && req.body.description) || '').trim().slice(0, 500);
-  const q = normalizeQuestions(req.body && req.body.questions);
+  const type = normalizeType(req.body && req.body.type);
+  if (type.error) return res.status(400).json({ error: type.error });
+  const q = normalizeQuestions(req.body && req.body.questions, type.value);
   if (q.error) return res.status(400).json({ error: q.error });
   const neg = normalizeNegative(req.body && req.body.negativeMarks);
   if (neg.error) return res.status(400).json({ error: neg.error });
-  const type = normalizeType(req.body && req.body.type);
-  if (type.error) return res.status(400).json({ error: type.error });
   const category = normalizeCategory(req.body && req.body.category);
   if (category.error) return res.status(400).json({ error: category.error });
 

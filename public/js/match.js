@@ -2,7 +2,9 @@
    Works for logged-out recipients — it only talks to the public /api/match/* endpoints.
    Open links (open compatibility quizzes) can be answered by any registered
    member: the sharer sees every responder's result, a responder sees only
-   their own compatibility with the sharer, and guests are asked to log in. */
+   their own compatibility with the sharer, and guests are asked to log in.
+   Standard-quiz links (data.scored) compare how many answers each person got
+   right instead of how many they picked in common. */
 (function () {
   'use strict';
 
@@ -49,8 +51,8 @@
     root.appendChild(el(`
       <div class="match-empty">
         <div class="match-emoji">⏳</div>
-        <h2>Waiting for your match</h2>
-        <p class="match-sub">You answered “${esc(data.quizTitle)}”. Share the link with someone — this page updates automatically the moment they finish, and you’ll both see your compatibility results.</p>
+        <h2>${data.scored ? 'Waiting for your challenger' : 'Waiting for your match'}</h2>
+        <p class="match-sub">You answered “${esc(data.quizTitle)}”. Share the link with someone — this page updates automatically the moment they finish, and you’ll both see ${data.scored ? 'who got more answers right' : 'your compatibility results'}.</p>
         ${pointsRule(data.points)}
         <p class="match-expiry">${expiryLine(data.expiresAt, data.ttlHours)}</p>
         <div class="waiting-dots">Listening for your result…</div>
@@ -160,7 +162,9 @@
         <h2>${esc(data.aName)} invited you</h2>
         <p class="match-sub">${data.open
           ? `Answer “${esc(data.quizTitle)}” to see how compatible you are with ${esc(data.aName)}. This is an open quiz — other members may answer too, but you’ll only see your own result.`
-          : `Answer “${esc(data.quizTitle)}” to see how compatible the two of you are — you’ll both see the results.`}</p>
+          : data.scored
+            ? `${esc(data.aName)} took “${esc(data.quizTitle)}” — can you get more answers right? You’ll both see the scores.`
+            : `Answer “${esc(data.quizTitle)}” to see how compatible the two of you are — you’ll both see the results.`}</p>
         ${data.quizDescription ? `<p class="hint">${esc(data.quizDescription)}</p>` : ''}
         ${data.points ? (data.loggedIn
           ? `<p class="hint">🏆 Finish the quiz to earn <strong>${data.points.responder} points</strong> — and ${esc(data.aName)} earns ${data.points.sharer}.</p>`
@@ -187,7 +191,7 @@
       form.appendChild(block);
     });
 
-    const submit = el('<button class="primary">See our compatibility</button>');
+    const submit = el(`<button class="primary">${data.scored ? 'See who scored more' : 'See our compatibility'}</button>`);
     const msg = el('<div class="msg"></div>');
     form.appendChild(submit);
     form.appendChild(msg);
@@ -229,11 +233,53 @@
     return '<p class="hint">No points for this one — you two already earned points together on this quiz.</p>';
   }
 
+  // Standard quiz: both scores side by side, and who was right per question
+  // (never the options themselves, so the page isn't an answer key).
+  function renderScored(data) {
+    const r = data.result;
+    const pct = r.graded ? Math.round((Math.max(r.aCorrect, r.bCorrect) / r.graded) * 100) : 0;
+    const verdict =
+      r.aCorrect === r.bCorrect ? 'It’s a tie! 🤝' :
+      `${r.aCorrect > r.bCorrect ? r.aName : r.bName} wins! 🏆`;
+    root.appendChild(el(`
+      <div class="match-result">
+        <div class="match-emoji">🧠</div>
+        <div class="score-ring" style="--pct:${pct}">
+          <div class="score-num">${r.aCorrect}<span>–</span>${r.bCorrect}</div>
+        </div>
+        <h2>${esc(r.aName)} vs ${esc(r.bName)}</h2>
+        <p class="match-sub">${esc(verdict)}</p>
+        <p class="hint">On “${esc(data.quizTitle)}”, ${esc(r.aName)} got ${r.aCorrect} of ${r.graded} right and ${esc(r.bName)} got ${r.bCorrect} of ${r.graded}.</p>
+        ${pointsResult(data)}
+      </div>
+    `));
+    const mark = (right) => (right ? '✅' : '❌');
+    const list = el('<div class="breakdown"></div>');
+    r.breakdown.forEach((b, i) => {
+      if (!b.graded) return;
+      list.appendChild(el(`
+        <div class="bd-row ${b.aRight && b.bRight ? 'is-match' : 'no-match'}">
+          <div class="bd-q">${i + 1}. ${esc(b.prompt)}</div>
+          <div class="bd-answers">
+            <span class="bd-a">${esc(r.aName)}: ${mark(b.aRight)}</span>
+            <span class="bd-a">${esc(r.bName)}: ${mark(b.bRight)}</span>
+          </div>
+        </div>
+      `));
+    });
+    root.appendChild(list);
+  }
+
   function renderResult(data) {
     if (pollTimer) clearTimeout(pollTimer);
     const r = data.result;
     const quizTitle = data.quizTitle;
     root.innerHTML = '';
+    if (r.scored) {
+      renderScored(data);
+      renderChatCta(data);
+      return;
+    }
     const pct = r.percent;
     const verdict =
       pct >= 80 ? 'Great minds think alike! 🎓' :
@@ -268,8 +314,11 @@
       `));
     });
     root.appendChild(list);
+    renderChatCta(data);
+  }
 
-    // Chat call-to-action based on who's viewing and whether they can chat.
+  // Chat call-to-action based on who's viewing and whether they can chat.
+  function renderChatCta(data) {
     const chat = data.chat || {};
     const cta = el('<div class="match-cta"></div>');
     if (chat.canChat && chat.otherUsername) {

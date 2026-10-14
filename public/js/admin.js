@@ -765,9 +765,13 @@
     await loadQuizList();
   }
 
-  function optionRowHtml(value) {
+  // Standard quizzes mark one option of each question as correct (the radio is
+  // hidden for compatibility quizzes, which have no right answers).
+  let qbSeq = 0;
+  function optionRowHtml(value, group, correct) {
     return `
       <div class="qb-option-row">
+        <label class="qb-correct" title="Correct answer"><input type="radio" name="${group}"${correct ? ' checked' : ''} /> Correct</label>
         <input type="text" class="qb-opt" value="${esc(value || '')}" placeholder="Option text" />
         <button type="button" class="danger small qb-rm-opt">✕</button>
       </div>`;
@@ -797,16 +801,17 @@
       </div>
     `);
     const optsBox = block.querySelector('.qb-options');
+    const group = 'qbCorrect' + (qbSeq += 1);
     const removeOpt = (row) => {
       if (optsBox.children.length <= 2) return alert('At least two options are required.');
       row.remove();
     };
-    const addOptRow = (value) => {
-      const row = el(optionRowHtml(value));
+    const addOptRow = (value, correct) => {
+      const row = el(optionRowHtml(value, group, correct));
       row.querySelector('.qb-rm-opt').addEventListener('click', () => removeOpt(row));
       optsBox.appendChild(row);
     };
-    (q.options && q.options.length ? q.options : ['', '']).forEach((opt) => addOptRow(opt));
+    (q.options && q.options.length ? q.options : ['', '']).forEach((opt, i) => addOptRow(opt, q.answer === i));
     block.querySelector('.qb-add-opt').addEventListener('click', () => addOptRow(''));
     block.querySelector('.qb-rm-q').addEventListener('click', () => block.remove());
     return block;
@@ -836,15 +841,15 @@
       <p class="count">Every quiz belongs to one category. Points earned in it count toward the overall Kings &amp; Queens board and, except for Others, that category's own leaderboard.</p>
       <label>Quiz type</label>
       <select id="quizType">
-        <option value="standard"${!quiz || quiz.type === 'standard' ? ' selected' : ''}>Standard Quiz — timed questions, no sharing</option>
+        <option value="standard"${!quiz || quiz.type === 'standard' ? ' selected' : ''}>Standard Quiz — right answers score; share a link to go head to head</option>
         <option value="compatibility"${quiz && quiz.type === 'compatibility' ? ' selected' : ''}>Compatibility Quiz — share a link after attempting</option>
         <option value="open_compatibility"${quiz && quiz.type === 'open_compatibility' ? ' selected' : ''}>Open Compatibility Quiz — share a link anyone registered can answer</option>
       </select>
-      <p class="count">Standard: members answer the timed questions and earn each question's points. Members see a badge only on compatibility and open compatibility quizzes.</p>
+      <p class="count">Standard: mark the correct answer of every question. Only a correct answer given in time earns that question's points. After attempting, the member shares a link (active for 24 hours); one person answers it and both see who got more right. When a signed-in member answers, the sharer earns 10 points and the responder 5 (once per quiz for each pair). Members see a badge only on compatibility and open compatibility quizzes.</p>
       <p class="count">Open Compatibility: after attempting, the member shares a link (active for 24 hours) that any registered member can answer. The sharer sees their compatibility with every responder; each responder sees only their own compatibility with the sharer. The sharer earns 3 points and the responder 1 for each response (once per quiz for each pair).</p>
       <p class="count">Compatibility: after attempting, the member shares a link (active for 24 hours). When a signed-in member answers it, both see their compatibility results; the sharer earns 10 points and the responder 5 (once per quiz for each pair).</p>
       <label>Questions</label>
-      <p class="count">There are no right or wrong answers. In a compatibility quiz, two people answer the same questions and get a score based on how many answers they pick in common. Set how many points each question is worth and how long members have to answer it: answering in time earns that question's points toward the leaderboard, and a question left unanswered when time runs out earns none.</p>
+      <p class="count" id="quizQHint"></p>
       <div id="quizQuestions"></div>
       <label>Negative marking (points deducted per unanswered question)</label>
       <input id="quizNegative" type="number" min="0" max="1000" step="1" value="${quiz ? Number(quiz.negativeMarks) || 0 : 0}" />
@@ -860,6 +865,16 @@
     const qBox = host.querySelector('#quizQuestions');
     const questions = quiz && quiz.questions && quiz.questions.length ? quiz.questions : [null];
     questions.forEach((q, i) => qBox.appendChild(questionBlock(i, q)));
+    const typeSel = host.querySelector('#quizType');
+    const syncGraded = () => {
+      const graded = typeSel.value === 'standard';
+      qBox.classList.toggle('qb-graded', graded);
+      host.querySelector('#quizQHint').textContent = graded
+        ? 'Tick the correct option of every question. Set how many points each question is worth and how long members have to answer it: a correct answer given in time earns that question’s points toward the leaderboard; a wrong answer, or none before time runs out, earns none.'
+        : 'There are no right or wrong answers. In a compatibility quiz, two people answer the same questions and get a score based on how many answers they pick in common. Set how many points each question is worth and how long members have to answer it: answering in time earns that question’s points toward the leaderboard, and a question left unanswered when time runs out earns none.';
+    };
+    typeSel.addEventListener('change', syncGraded);
+    syncGraded();
     wireSeo(host, () => host.querySelector('#quizTitle').value);
 
     host.querySelector('#addQuestion').addEventListener('click', () => {
@@ -875,10 +890,16 @@
       const questionsOut = [];
       qBox.querySelectorAll('.qb-question').forEach((block) => {
         const prompt = block.querySelector('.qb-prompt').value.trim();
-        const options = Array.from(block.querySelectorAll('.qb-opt')).map((i) => i.value.trim()).filter(Boolean);
+        // Empty option rows are dropped, so the correct answer's index is
+        // counted among the filled-in ones.
+        const rows = Array.from(block.querySelectorAll('.qb-option-row'))
+          .map((r) => ({ text: r.querySelector('.qb-opt').value.trim(), correct: r.querySelector('.qb-correct input').checked }))
+          .filter((r) => r.text);
+        const options = rows.map((r) => r.text);
+        const answer = rows.findIndex((r) => r.correct);
         const points = Number(block.querySelector('.qb-points').value || 0);
         const seconds = Number(block.querySelector('.qb-seconds').value || 0);
-        questionsOut.push({ prompt, options, points, seconds });
+        questionsOut.push({ prompt, options, points, seconds, answer: answer >= 0 ? answer : null });
       });
       try {
         const negativeMarks = Number(host.querySelector('#quizNegative').value || 0);

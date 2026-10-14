@@ -5539,7 +5539,9 @@
       if (!d || !d.token) return;
       const pts = d.points ? ` · +${d.points} points` : '';
       const t = el(`<a class="toast toast-link" href="/m/${encodeURIComponent(d.token)}" target="_blank" rel="noopener"></a>`);
-      t.textContent = `🧩 ${d.bName} answered “${d.quizTitle}” — ${d.percent}% match${pts}. See results ↗`;
+      t.textContent = d.scored
+        ? `🧠 ${d.bName} took on your “${d.quizTitle}” — you ${d.aCorrect}, them ${d.bCorrect} of ${d.graded}${pts}. See results ↗`
+        : `🧩 ${d.bName} answered “${d.quizTitle}” — ${d.percent}% match${pts}. See results ↗`;
       document.body.appendChild(t);
       setTimeout(() => { if (t.parentNode) t.parentNode.removeChild(t); }, 10000);
     });
@@ -7853,17 +7855,27 @@
     body.appendChild(list);
   }
 
+  // Result line of a shared-quiz notification: right answers head to head for
+  // a standard quiz, compatibility otherwise.
+  function matchLine(it) {
+    if (it.scored) {
+      const v = it.myCorrect === it.theirCorrect ? 'It’s a tie' : it.myCorrect > it.theirCorrect ? 'You won' : `${esc(it.otherName)} won`;
+      return `<strong>${v}</strong> — you got ${it.myCorrect} of ${it.graded} right, ${esc(it.otherName)} got ${it.theirCorrect}.`;
+    }
+    return `You’re <strong>${it.percent}% compatible</strong> (${it.score} of ${it.total} answers in common).`;
+  }
+
   function notificationEl(it) {
     let icon = '🔔';
     let html = '';
     if (it.kind === 'match_shared') {
       icon = '🧩';
       html = `<strong>${esc(it.otherName)}</strong> attempted the quiz you shared, <em>“${esc(it.quizTitle)}”</em>. ` +
-        `You’re <strong>${it.percent}% compatible</strong> (${it.score} of ${it.total} answers in common).`;
+        matchLine(it);
     } else if (it.kind === 'match_answered') {
       icon = '🧩';
       html = `You attempted <strong>${esc(it.otherName)}</strong>’s shared quiz <em>“${esc(it.quizTitle)}”</em>. ` +
-        `You’re <strong>${it.percent}% compatible</strong> (${it.score} of ${it.total} answers in common).`;
+        matchLine(it);
     } else if (it.kind === 'follow') {
       icon = '➕';
       html = `<strong>${esc(it.otherName)}</strong> started following you.`;
@@ -8050,7 +8062,7 @@
       const card = el(`
         <div class="tile quiz-tile-link" role="link" tabindex="0" title="Open this quiz in a new tab">
           ${q.categoryLabel ? `<span class="quiz-type quiz-cat">${esc(q.categoryLabel)}</span>` : ''}
-          ${q.shareable ? `<span class="quiz-type">${esc(q.typeLabel)}</span>` : ''}
+          ${q.badge ? `<span class="quiz-type">${esc(q.typeLabel)}</span>` : ''}
           <h3>${esc(q.title)}</h3>
           <p class="rich">${esc(q.description || '')}</p>
           <ul class="quiz-stats">

@@ -471,7 +471,9 @@
             if (hintEl) hintEl.hidden = true;
             if (result) {
               var summary = (d.maxPoints ? 'You earned <strong>' + d.points + ' of ' + d.maxPoints + ' points</strong>' : 'You finished the quiz') +
-                ' and answered ' + d.answered + ' of ' + d.total + ' question' + (d.total === 1 ? '' : 's') + ' in time.';
+                (d.graded
+                  ? ' and got <strong>' + d.correct + ' of ' + d.graded + '</strong> answer' + (d.graded === 1 ? '' : 's') + ' right.'
+                  : ' and answered ' + d.answered + ' of ' + d.total + ' question' + (d.total === 1 ? '' : 's') + ' in time.');
               result.hidden = false;
               if (!link) {
                 result.innerHTML = '<h2>Your answers are locked in 🎉</h2>' +
@@ -487,8 +489,10 @@
                 (d.open
                   ? 'Any getxmatch member can answer it. You’ll see your compatibility with each of them, and each of them sees their own result with you. ' +
                     'You earn <strong>' + d.sharePoints.sharer + ' points</strong> for every member who answers, and they earn <strong>' + d.sharePoints.responder + ' point' + (d.sharePoints.responder === 1 ? '' : 's') + '</strong>.</p>'
-                  : 'When someone answers it, you’ll both see your compatibility results. If they’re a signed-in member, ' +
-                    'you earn <strong>10 points</strong> and they earn <strong>5 points</strong>.</p>') +
+                  : (d.graded
+                    ? 'Challenge someone to beat your score — when they answer it, you’ll both see who got more right. If they’re a signed-in member, '
+                    : 'When someone answers it, you’ll both see your compatibility results. If they’re a signed-in member, ') +
+                    'you earn <strong>' + d.sharePoints.sharer + ' points</strong> and they earn <strong>' + d.sharePoints.responder + ' points</strong>.</p>') +
                 '<div class="gx-share">' +
                 '<input type="text" readonly value="' + esc(link) + '" />' +
                 '<button type="button" class="cta" id="gxCopy">Copy link</button>' +
