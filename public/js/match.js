@@ -180,7 +180,7 @@
         <div class="match-empty">
           <div class="match-emoji">⚔️</div>
           <h2>${esc(data.aName)} challenged you to “${esc(data.quizTitle)}”</h2>
-          <p class="match-sub">${esc(data.aName)} scored ${plural(data.aPoints, 'point')}. Beat that to win their points.</p>
+          <p class="match-sub">Outscore ${esc(data.aName)} to win their points. You’ll see both scores at the end.</p>
           ${stakes}
           <p style="margin-top:14px"><a class="primary chat-cta" href="/">Log in or join getxmatch</a></p>
           <p class="hint">Challenges are for members — log in, then open this link again.</p>
@@ -204,7 +204,7 @@
       <div class="match-empty">
         <div class="match-emoji">⚔️</div>
         <h2>${esc(data.aName)} challenged you to “${esc(data.quizTitle)}”</h2>
-        <p class="match-sub">${esc(data.aName)} scored <strong>${plural(data.aPoints, 'point')}</strong>. Score more to win them.</p>
+        <p class="match-sub">Outscore ${esc(data.aName)} to win their points. Their score stays hidden until you finish — then you’ll both see who won.</p>
         ${data.quizDescription ? `<p class="hint">${esc(data.quizDescription)}</p>` : ''}
         ${stakes}
         <p class="hint">You’ll take the same ${plural(data.questionCount, 'question')} in full screen, with the same timers. Only one person can accept this challenge${data.accepted ? ' — you already did, so finish it now' : ''}.</p>
@@ -306,12 +306,14 @@
     return '<p class="hint">No points for this one — you two already earned points together on this quiz.</p>';
   }
 
-  // Standard quiz: both scores side by side, and who was right per question
-  // (never the options themselves, so the page isn't an answer key).
+  // Standard quiz: just the two scores — nothing per question, so the page
+  // never gives away which answers were right.
   function renderScored(data) {
     const r = data.result;
-    const pct = r.graded ? Math.round((Math.max(r.aCorrect, r.bCorrect) / r.graded) * 100) : 0;
     const c = r.challenge;
+    const pct = c
+      ? (Math.max(c.aPoints, c.bPoints) > 0 ? Math.round((Math.min(Math.max(c.aPoints, 0), Math.max(c.bPoints, 0)) / Math.max(c.aPoints, c.bPoints)) * 100) : 100)
+      : r.graded ? Math.round((Math.max(r.aCorrect, r.bCorrect) / r.graded) * 100) : 0;
     // Challenges are decided on points; older links on right answers.
     const verdict = c
       ? (c.forfeit ? `${r.aName} wins — ${r.bName} left the quiz and forfeited. 🏆`
@@ -327,25 +329,10 @@
         </div>
         <h2>${esc(r.aName)} vs ${esc(r.bName)}</h2>
         <p class="match-sub">${esc(verdict)}</p>
-        <p class="hint">On “${esc(data.quizTitle)}”, ${c ? `${esc(r.aName)} scored ${plural(c.aPoints, 'point')} (${r.aCorrect} of ${r.graded} right) and ${esc(r.bName)} ${plural(c.bPoints, 'point')} (${r.bCorrect} of ${r.graded} right).` : `${esc(r.aName)} got ${r.aCorrect} of ${r.graded} right and ${esc(r.bName)} got ${r.bCorrect} of ${r.graded}.`}</p>
+        <p class="hint">On “${esc(data.quizTitle)}”, ${c ? `${esc(r.aName)} scored ${plural(c.aPoints, 'point')} and ${esc(r.bName)} ${plural(c.bPoints, 'point')}.` : `${esc(r.aName)} got ${r.aCorrect} of ${r.graded} right and ${esc(r.bName)} got ${r.bCorrect} of ${r.graded}.`}</p>
         ${pointsResult(data)}
       </div>
     `));
-    const mark = (right) => (right ? '✅' : '❌');
-    const list = el('<div class="breakdown"></div>');
-    r.breakdown.forEach((b, i) => {
-      if (!b.graded) return;
-      list.appendChild(el(`
-        <div class="bd-row ${b.aRight && b.bRight ? 'is-match' : 'no-match'}">
-          <div class="bd-q">${i + 1}. ${esc(b.prompt)}</div>
-          <div class="bd-answers">
-            <span class="bd-a">${esc(r.aName)}: ${mark(b.aRight)}</span>
-            <span class="bd-a">${esc(r.bName)}: ${mark(b.bRight)}</span>
-          </div>
-        </div>
-      `));
-    });
-    root.appendChild(list);
   }
 
   function renderResult(data) {

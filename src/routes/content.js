@@ -144,8 +144,10 @@ function questionMeta(q) {
 }
 
 // Where a session is in the quiz: the current question and how long is left
-// on it (by the server's clock), plus points earned so far.
-function sessionState(sess, questions) {
+// on it (by the server's clock), plus points earned so far. In a standard
+// quiz (`graded`) the points stay hidden until the end — a running score
+// would give away which answers were right.
+function sessionState(sess, questions, graded) {
   const index = sess.q_index || 0;
   const done = index >= questions.length;
   let remainingMs = null;
@@ -157,7 +159,7 @@ function sessionState(sess, questions) {
     index,
     done,
     remainingMs,
-    points: sess.points || 0,
+    points: graded && !done ? null : sess.points || 0,
     maxPoints: questions.reduce((a, q) => a + questionMeta(q).points, 0),
   };
 }
@@ -194,7 +196,8 @@ router.get('/quizzes/:id/proctor', requireAuth, (req, res) => {
     if (!m || m.quiz_id !== quizId) challenge = { error: 'This challenge link is not valid.' };
     else {
       const no = challenges.whyNot(m, req.user.id);
-      challenge = { aName: m.a_name, aPoints: m.a_points || 0, error: no ? no.error : null };
+      // The sharer's score stays hidden until the challenge is over.
+      challenge = { aName: m.a_name, error: no ? no.error : null };
     }
   }
   res.json({
@@ -213,7 +216,7 @@ router.get('/quizzes/:id/proctor', requireAuth, (req, res) => {
 // An unfinished session is resumed rather than replaced, so reloading the page
 // doesn't wipe an earlier strike.
 router.post('/quizzes/:id/proctor/start', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT id, questions FROM quizzes WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, questions, type FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Quiz not found.' });
   const until = activeLockout(req.user.id, row.id);
   if (until) return lockedResponse(res, until);
@@ -254,7 +257,7 @@ router.post('/quizzes/:id/proctor/start', requireAuth, (req, res) => {
     strikes: sess.strikes,
     maxStrikes: PROCTOR_MAX_STRIKES,
     penalty: PROCTOR_PENALTY,
-    state: sessionState(sess, questions),
+    state: sessionState(sess, questions, isGraded(row.type)),
   });
 });
 
@@ -330,7 +333,7 @@ router.post('/quizzes/:id/proctor/answer', requireAuth, (req, res) => {
   const index = Number(req.body && req.body.index);
   // Out of step (e.g. a retry after the answer already landed): resync.
   if (index !== sess.q_index || sess.q_index >= questions.length) {
-    return res.json({ accepted: false, state: sessionState(sess, questions) });
+    return res.json({ accepted: false, state: sessionState(sess, questions, isGraded(row.type)) });
   }
 
   const q = questions[index];
@@ -349,7 +352,16 @@ router.post('/quizzes/:id/proctor/answer', requireAuth, (req, res) => {
   const next = { ...sess, q_index: index + 1, q_started_at: now, points: (sess.points || 0) + earned, answers: JSON.stringify(answers) };
   db.prepare('UPDATE quiz_proctor_sessions SET q_index = ?, q_started_at = ?, points = ?, answers = ? WHERE token = ?')
     .run(next.q_index, next.q_started_at, next.points, next.answers, token);
-  res.json({ accepted: true, answered: answer >= 0, wrong, late, earned, state: sessionState(next, questions) });
+  // A standard quiz never says whether an answer was right: `earned` is only
+  // sent for a skipped question (its negative marks), and the score at the end.
+  const graded = isGraded(row.type);
+  res.json({
+    accepted: true,
+    answered: answer >= 0,
+    late,
+    earned: graded && answer >= 0 ? null : earned,
+    state: sessionState(next, questions, graded),
+  });
 });
 
 // POST /api/content/quizzes/:id/match  { session }

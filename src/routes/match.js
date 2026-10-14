@@ -12,9 +12,8 @@
 // a responder sees only their own compatibility with the sharer.
 //
 // Standard quizzes have right answers, so their (one-to-one) links compare
-// how many each person got right instead. Their breakdown shows only whether
-// each person was right, never the options, so the link can't be used as an
-// answer key for the quiz itself. Since challenges (quiz_matches.challenge),
+// how many each person got right instead, with no per-question breakdown, so
+// the link never gives away which answers were right. Since challenges (quiz_matches.challenge),
 // a standard link is taken on by one member in the full-screen quiz itself
 // (/quizzes/:id?challenge=<token>) and the winner takes the loser's points;
 // see src/quizChallenge.js. This router only shows its state and result.
@@ -127,14 +126,11 @@ function resultPayload(m, questions, key) {
     let aCorrect = 0;
     let bCorrect = 0;
     let graded = 0;
-    const breakdown = questions.map((q, i) => {
-      if (key[i] == null) return { prompt: q.prompt, graded: false };
+    questions.forEach((q, i) => {
+      if (key[i] == null) return;
       graded += 1;
-      const aRight = aAns[i] === key[i];
-      const bRight = bAns[i] === key[i];
-      if (aRight) aCorrect += 1;
-      if (bRight) bCorrect += 1;
-      return { prompt: q.prompt, graded: true, aRight, bRight };
+      if (aAns[i] === key[i]) aCorrect += 1;
+      if (bAns[i] === key[i]) bCorrect += 1;
     });
     return {
       scored: true,
@@ -146,7 +142,6 @@ function resultPayload(m, questions, key) {
       percent: m.total ? Math.round((m.score / m.total) * 100) : 0,
       aName: m.a_name,
       bName: m.b_name,
-      breakdown,
       completedAt: m.completed_at,
     };
   }
@@ -330,7 +325,8 @@ function openAnswer(req, res, m, quiz, questions, bAns) {
 function challengeGet(req, res, m0, quiz, questions) {
   const m = challenges.settleStale(m0);
   const isInitiator = !!(req.user && m.a_user_id && req.user.id === m.a_user_id);
-  const base = { challenge: true, scored: true, quizTitle: quiz.title, aName: m.a_name, aPoints: m.a_points || 0, isInitiator };
+  // The sharer's score is shown to the challenger only once it's over.
+  const base = { challenge: true, scored: true, quizTitle: quiz.title, aName: m.a_name, isInitiator };
 
   if (m.completed_at) {
     const ctx = chatContext(m, req.user);
@@ -346,6 +342,7 @@ function challengeGet(req, res, m0, quiz, questions) {
   if (isInitiator) {
     return res.json({
       ...base,
+      aPoints: m.a_points || 0,
       state: 'waiting',
       expired: Date.now() > m.expires_at,
       acceptedBy: m.b_user_id ? m.b_name : null,

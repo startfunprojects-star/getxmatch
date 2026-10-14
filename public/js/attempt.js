@@ -275,7 +275,8 @@
       var fs = fieldsets[qIndex];
       var secs = parseInt(fs.getAttribute('data-seconds'), 10) || 0;
       progressEl.textContent = 'Question ' + (qIndex + 1) + ' of ' + fieldsets.length;
-      earnedEl.textContent = state.maxPoints ? state.points + ' / ' + state.maxPoints + ' pts' : '';
+      // Standard quizzes keep the score hidden until the end (points is null).
+      earnedEl.textContent = !state.maxPoints ? '' : state.points == null ? 'Score shown at the end' : state.points + ' / ' + state.maxPoints + ' pts';
       submitBtn.textContent = qIndex === fieldsets.length - 1 ? 'Finish quiz' : 'Next';
       submitBtn.disabled = false;
       step.hidden = false;
@@ -383,8 +384,8 @@
               if (!d.reattempt) showNote(lead + 'You can still take the quiz on your own.');
             } else {
               startBtn.textContent = 'Accept challenge in full screen';
-              showNote('⚔️ <strong>' + esc(d.challenge.aName) + ' challenged you</strong> and scored ' + d.challenge.aPoints +
-                ' point' + (d.challenge.aPoints === 1 ? '' : 's') + '. Score more to win their points — if you score less, ' +
+              showNote('⚔️ <strong>' + esc(d.challenge.aName) + ' challenged you.</strong> Their score stays hidden until you finish. ' +
+                'Score more to win their points — if you score less, ' +
                 esc(d.challenge.aName) + ' takes yours. A tie moves no points. Leaving full screen twice forfeits the challenge.');
               return;
             }
@@ -490,7 +491,7 @@
                 res.hidden = false;
                 res.innerHTML = '<h2>Challenge complete ⚔️</h2>' +
                   '<p>You scored <strong>' + d.points + ' of ' + d.maxPoints + ' points</strong>' +
-                  (d.graded ? ' and got ' + d.correct + ' of ' + d.graded + ' right' : '') + '.</p>' +
+                  '.</p>' +
                   (d.token ? '<p style="margin-top:14px"><a class="cta" href="/m/' + encodeURIComponent(d.token) + '">See who won →</a></p>' : '');
               }
               return;
@@ -502,7 +503,7 @@
             if (result) {
               var summary = (d.maxPoints ? 'You earned <strong>' + d.points + ' of ' + d.maxPoints + ' points</strong>' : 'You finished the quiz') +
                 (d.graded
-                  ? ' and got <strong>' + d.correct + ' of ' + d.graded + '</strong> answer' + (d.graded === 1 ? '' : 's') + ' right.'
+                  ? '.'
                   : ' and answered ' + d.answered + ' of ' + d.total + ' question' + (d.total === 1 ? '' : 's') + ' in time.');
               result.hidden = false;
               if (!link) {
