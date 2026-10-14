@@ -102,8 +102,11 @@ const PROCTOR_PENALTY = 10;
 const PROCTOR_SESSION_MS = 2 * 60 * 60 * 1000;
 // Starting a quiz again after any earlier attempt (finished, stopped or
 // abandoned) costs this many points, straight away. Resuming an unfinished
-// session is free.
+// session is free. A standard quiz costs more: its reattempts can't be used
+// to challenge anyone either (see /match below).
 const REATTEMPT_PENALTY = 10;
+const STANDARD_REATTEMPT_PENALTY = 30;
+const reattemptPenalty = (type) => (isGraded(type) ? STANDARD_REATTEMPT_PENALTY : REATTEMPT_PENALTY);
 // One user action (e.g. Alt+Tab) fires blur + visibility + fullscreen events
 // together; strikes closer than this are treated as the same incident.
 const PROCTOR_GRACE_MS = 1500;
@@ -189,6 +192,8 @@ function lockedResponse(res, until) {
 // GET /api/content/quizzes/:id/proctor — rules + whether the viewer is locked out.
 router.get('/quizzes/:id/proctor', requireAuth, (req, res) => {
   const quizId = Number(req.params.id);
+  const quiz = db.prepare('SELECT type FROM quizzes WHERE id = ?').get(quizId);
+  const type = quiz ? quiz.type : null;
   // ?challenge=<token>: the member opened a challenge link (standard quiz).
   let challenge;
   if (req.query.challenge) {
@@ -203,9 +208,11 @@ router.get('/quizzes/:id/proctor', requireAuth, (req, res) => {
   res.json({
     challenge,
     lockedUntil: activeLockout(req.user.id, quizId),
-    // Starting now would cost REATTEMPT_PENALTY points.
+    // Starting now would cost reattemptPenalty points (and, for a standard
+    // quiz, give no challenge link).
     reattempt: !activeSession(req.user.id, quizId) && attemptedBefore(req.user.id, quizId),
-    reattemptPenalty: REATTEMPT_PENALTY,
+    reattemptPenalty: reattemptPenalty(type),
+    reattemptNoChallenge: isGraded(type),
     maxStrikes: PROCTOR_MAX_STRIKES,
     penalty: PROCTOR_PENALTY,
     lockHours: PROCTOR_LOCK_MS / 3600000,
@@ -238,9 +245,9 @@ router.post('/quizzes/:id/proctor/start', requireAuth, (req, res) => {
   }
   if (!sess) {
     if (!matchId && attemptedBefore(req.user.id, row.id)) {
-      charged = REATTEMPT_PENALTY;
+      charged = reattemptPenalty(row.type);
       db.prepare('INSERT INTO quiz_penalties (user_id, quiz_id, points, reason, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(req.user.id, row.id, REATTEMPT_PENALTY, 'Quiz reattempt', now);
+        .run(req.user.id, row.id, charged, 'Quiz reattempt', now);
     }
     // The first question's clock starts now.
     sess = { token: crypto.randomBytes(18).toString('base64url'), strikes: 0, q_index: 0, q_started_at: now, points: 0, match_id: matchId };
@@ -399,11 +406,19 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
   if (sess.match_id) return finishChallenge(req, res, row, sess, questions, answers, state);
 
   // Every quiz type gives a share link. A standard quiz's link is a
-  // challenge (one member takes it on; the winner takes the loser's points).
+  // challenge (one member takes it on; the winner takes the loser's points),
+  // and only a member's first attempt at the quiz can challenge anyone — not
+  // a reattempt, nor anything after an earlier stopped or abandoned try.
   // An open link can be answered by any registered member.
-  const shareable = isShareable(row.type);
+  const graded = isGraded(row.type);
+  const firstTry = !(
+    db.prepare('SELECT 1 FROM quiz_attempts WHERE user_id = ? AND quiz_id = ? LIMIT 1').get(req.user.id, row.id) ||
+    db.prepare('SELECT 1 FROM quiz_proctor_sessions WHERE user_id = ? AND quiz_id = ? AND token != ? LIMIT 1').get(req.user.id, row.id, sessToken)
+  );
+  const challengeBlocked = graded && !firstTry;
+  const shareable = isShareable(row.type) && !challengeBlocked;
   const open = isOpen(row.type);
-  const challenge = isGraded(row.type);
+  const challenge = graded && shareable;
   const token = shareable ? crypto.randomBytes(9).toString('base64url') : null; // ~12 url-safe chars
   if (shareable) db.prepare(
     `INSERT INTO quiz_matches
@@ -434,6 +449,7 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
     expiresAt: shareable ? now + MATCH_TTL_MS : null,
     open,
     challenge,
+    challengeBlocked,
     sharePoints: open
       ? { sharer: WEIGHTS.openShareAnswered, responder: WEIGHTS.openAnswer }
       : { sharer: WEIGHTS.shareCompleted, responder: WEIGHTS.answerShared },

@@ -464,9 +464,9 @@ ${hasQuestions ? `
       <li>Pressing Esc, switching tabs or apps, minimising the window, connecting another display or using remote-control/automation tools counts as leaving the quiz.</li>
       <li>The first time, you get a warning and return to full screen.</li>
       <li><strong>The second time, the quiz stops, you can't attempt it again for 24 hours and 10 points are deducted from your score.</strong></li>
-      <li><strong>You can retake a quiz, but every reattempt costs 10 points as soon as you start it</strong> (your best attempt still counts).</li>
+      <li><strong>You can retake a quiz, but every reattempt costs ${graded ? 30 : 10} points as soon as you start it</strong> (your best attempt still counts).${graded ? ' A reattempt can’t be used to challenge anyone.' : ''}</li>
       ${open ? `<li>This is an open compatibility quiz: when you finish, you get a link to share that stays active for 24 hours. Any registered member can answer it — you see your compatibility with each of them, and each of them sees only their own result with you. You earn 3 points for every member who answers, and they earn 1.</li>` : ''}
-      ${graded ? `<li>When you finish, you get a challenge link that stays active for 24 hours. One member who hasn't taken this quiz can accept it and plays it in full screen with the same timers. <strong>Whoever scores more points wins the other's points for this quiz</strong>; a tie moves no points.</li>` : ''}
+      ${graded ? `<li>When you finish, you get a challenge link that stays active for 24 hours. Only your first attempt gives a challenge link. One member who hasn't taken this quiz can accept it and plays it in full screen with the same timers. <strong>Whoever scores more points wins the other's points for this quiz</strong>; a tie moves no points.</li>` : ''}
       ${compat && !open ? `<li>This is a compatibility quiz: when you finish, you get a link to share that stays active for 24 hours. When a signed-in member answers it, you both see your compatibility results — you earn 10 points and they earn 5.</li>` : ''}
     </ul>
     <button type="button" class="cta gx-start">Start quiz in full screen</button>
@@ -1105,6 +1105,7 @@ router.get('/how-it-works', (req, res) => {
 <ul>
   <li><strong>Quizzes:</strong> the points set on each question you answer in time (your best attempt per quiz counts). Some quizzes take points off for questions left unanswered when time runs out.</li>
   <li><strong>Compatibility quiz links:</strong> 10 points when someone answers the link you shared, and 5 points for answering someone else's — once per quiz for each pair of members.</li>
+  <li><strong>Quiz challenges:</strong> after your first attempt at a standard quiz you can challenge one member who hasn't taken it. Whoever scores more wins the other's points for that quiz. Reattempting a standard quiz costs 30 points and can't be used to challenge anyone.</li>
   <li><strong>Open compatibility quiz links:</strong> 3 points for every member who answers the link you shared, and 1 point for answering someone else's — once per quiz for each pair of members.</li>
   <li><strong>Polls:</strong> 5 points for each poll you vote in (changing your vote doesn't earn more).</li>
   <li><strong>Highway:</strong> 4 points for every like your posts receive.</li>

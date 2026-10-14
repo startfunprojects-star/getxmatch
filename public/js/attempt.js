@@ -395,7 +395,8 @@
             var cost = d.reattemptPenalty || 10;
             startBtn.textContent = 'Reattempt quiz (−' + cost + ' points)';
             showNote(lead + '<strong>You’ve attempted this quiz before.</strong> Starting it again deducts ' + cost +
-              ' points from your score straight away. Your best attempt still counts.');
+              ' points from your score straight away. Your best attempt still counts.' +
+              (d.reattemptNoChallenge ? ' A reattempt doesn’t give you a challenge link — only your first attempt can challenge someone.' : ''));
           }
         })
         .catch(function () {});
@@ -510,6 +511,7 @@
                 result.innerHTML = '<h2>Your answers are locked in 🎉</h2>' +
                   '<p>' + summary + '</p>' +
                   '<p>Your points count toward the leaderboard (your best attempt at each quiz counts).</p>' +
+                  (d.challengeBlocked ? '<p>You’ve attempted this quiz before, so this attempt can’t be used to challenge anyone — only a first attempt can.</p>' : '') +
                   '<p style="margin-top:14px"><a class="cta" href="/quizzes">More quizzes →</a></p>';
                 return;
               }
