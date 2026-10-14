@@ -130,6 +130,9 @@
     var form = document.getElementById('gxQuizForm');
     if (!form) return;
     var base = '/api/content/quizzes/' + id;
+    // Opened from a standard-quiz challenge link (/quizzes/:id?challenge=…).
+    var challengeToken = '';
+    try { challengeToken = new URLSearchParams(window.location.search).get('challenge') || ''; } catch (_e) {}
     var intro = root.querySelector('.gx-proctor-intro');
     var startBtn = root.querySelector('.gx-start');
     var bar = root.querySelector('.gx-proctor-bar');
@@ -366,17 +369,31 @@
     });
 
     if (loggedIn) {
-      fetch(base + '/proctor', { credentials: 'same-origin' })
+      fetch(base + '/proctor' + (challengeToken ? '?challenge=' + encodeURIComponent(challengeToken) : ''), { credentials: 'same-origin' })
         .then(function (res) { return res.ok ? res.json() : null; })
         .then(function (d) {
           if (!d) return;
           if (d.penalty) penalty = d.penalty;
           if (d.lockedUntil) { showLocked(d.lockedUntil); return; }
+          var lead = '';
+          if (d.challenge) {
+            if (d.challenge.error) {
+              challengeToken = '';
+              lead = '<strong>' + esc(d.challenge.error) + '</strong> ';
+              if (!d.reattempt) showNote(lead + 'You can still take the quiz on your own.');
+            } else {
+              startBtn.textContent = 'Accept challenge in full screen';
+              showNote('⚔️ <strong>' + esc(d.challenge.aName) + ' challenged you</strong> and scored ' + d.challenge.aPoints +
+                ' point' + (d.challenge.aPoints === 1 ? '' : 's') + '. Score more to win their points — if you score less, ' +
+                esc(d.challenge.aName) + ' takes yours. A tie moves no points. Leaving full screen twice forfeits the challenge.');
+              return;
+            }
+          }
           // Already attempted: starting again costs points straight away.
           if (d.reattempt) {
             var cost = d.reattemptPenalty || 10;
             startBtn.textContent = 'Reattempt quiz (−' + cost + ' points)';
-            showNote('<strong>You’ve attempted this quiz before.</strong> Starting it again deducts ' + cost +
+            showNote(lead + '<strong>You’ve attempted this quiz before.</strong> Starting it again deducts ' + cost +
               ' points from your score straight away. Your best attempt still counts.');
           }
         })
@@ -389,7 +406,7 @@
       if (p) { showNote(esc(p) + ' — turn it off, then start the quiz.'); return; }
       startBtn.disabled = true;
       var fsReady = enterFs(); // inside the click so the browser allows it
-      postJson(base + '/proctor/start', {})
+      postJson(base + '/proctor/start', challengeToken ? { challenge: challengeToken } : {})
         .then(function (r) {
           var d = r.data || {};
           if (r.status === 401) { loggedIn = false; startBtn.disabled = false; exitFs(); promptRegister('attempt this quiz'); return; }
@@ -465,6 +482,19 @@
             exitFs();
             bar.hidden = true;
             step.hidden = true;
+            if (d.challengeDone) {
+              form.hidden = true;
+              if (hintEl) hintEl.hidden = true;
+              var res = root.querySelector('.gx-result');
+              if (res) {
+                res.hidden = false;
+                res.innerHTML = '<h2>Challenge complete ⚔️</h2>' +
+                  '<p>You scored <strong>' + d.points + ' of ' + d.maxPoints + ' points</strong>' +
+                  (d.graded ? ' and got ' + d.correct + ' of ' + d.graded + ' right' : '') + '.</p>' +
+                  (d.token ? '<p style="margin-top:14px"><a class="cta" href="/m/' + encodeURIComponent(d.token) + '">See who won →</a></p>' : '');
+              }
+              return;
+            }
             var link = d.token ? window.location.origin + '/m/' + d.token : '';
             var result = root.querySelector('.gx-result');
             form.hidden = true;
@@ -489,15 +519,17 @@
                 (d.open
                   ? 'Any getxmatch member can answer it. You’ll see your compatibility with each of them, and each of them sees their own result with you. ' +
                     'You earn <strong>' + d.sharePoints.sharer + ' points</strong> for every member who answers, and they earn <strong>' + d.sharePoints.responder + ' point' + (d.sharePoints.responder === 1 ? '' : 's') + '</strong>.</p>'
-                  : (d.graded
-                    ? 'Challenge someone to beat your score — when they answer it, you’ll both see who got more right. If they’re a signed-in member, '
-                    : 'When someone answers it, you’ll both see your compatibility results. If they’re a signed-in member, ') +
-                    'you earn <strong>' + d.sharePoints.sharer + ' points</strong> and they earn <strong>' + d.sharePoints.responder + ' points</strong>.</p>') +
+                  : d.challenge
+                    ? 'Challenge one member who hasn’t taken this quiz yet: they play it in full screen with the same timers. ' +
+                      '<strong>Whoever scores more wins the other’s points for this quiz</strong> — if they beat you, you lose your ' + d.points +
+                      ' point' + (d.points === 1 ? '' : 's') + ' to them. A tie moves no points. Only one person can accept.</p>'
+                    : 'When someone answers it, you’ll both see your compatibility results. If they’re a signed-in member, ' +
+                      'you earn <strong>' + d.sharePoints.sharer + ' points</strong> and they earn <strong>' + d.sharePoints.responder + ' points</strong>.</p>') +
                 '<div class="gx-share">' +
                 '<input type="text" readonly value="' + esc(link) + '" />' +
                 '<button type="button" class="cta" id="gxCopy">Copy link</button>' +
                 '</div>' +
-                '<p style="margin-top:14px"><a class="cta" href="' + esc(link) + '">' + (d.open ? 'See who answered →' : 'Open the match page →') + '</a></p>';
+                '<p style="margin-top:14px"><a class="cta" href="' + esc(link) + '">' + (d.open ? 'See who answered →' : d.challenge ? 'Open the challenge page →' : 'Open the match page →') + '</a></p>';
               var copyBtn = document.getElementById('gxCopy');
               var input = result.querySelector('.gx-share input');
               if (copyBtn && input) {

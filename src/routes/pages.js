@@ -445,7 +445,7 @@ router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
     : (loggedIn
         ? (open ? 'Answer every question, then submit to get a link any member can answer — see your compatibility with each of them.'
           : compat ? 'Answer every question, then submit to get a private link to compare with someone.'
-          : 'Answer every question correctly and in time to earn its points, then share a link to challenge someone.')
+          : 'Answer every question correctly and in time to earn its points, then share a link to challenge someone — the winner takes the loser’s points.')
         : 'Register or sign in to attempt this quiz.');
   const bodyHtml = `
 ${breadcrumbHtml([{ name: 'Home', path: '/' }, { name: 'Quizzes', path: '/quizzes' }, { name: row.title, path: chk.canonical }])}
@@ -466,7 +466,7 @@ ${hasQuestions ? `
       <li><strong>The second time, the quiz stops, you can't attempt it again for 24 hours and 10 points are deducted from your score.</strong></li>
       <li><strong>You can retake a quiz, but every reattempt costs 10 points as soon as you start it</strong> (your best attempt still counts).</li>
       ${open ? `<li>This is an open compatibility quiz: when you finish, you get a link to share that stays active for 24 hours. Any registered member can answer it — you see your compatibility with each of them, and each of them sees only their own result with you. You earn 3 points for every member who answers, and they earn 1.</li>` : ''}
-      ${graded ? `<li>When you finish, you get a link to share that stays active for 24 hours. Whoever answers it goes head to head with you — you both see who got more answers right. If they're a signed-in member, you earn 10 points and they earn 5.</li>` : ''}
+      ${graded ? `<li>When you finish, you get a challenge link that stays active for 24 hours. One member who hasn't taken this quiz can accept it and plays it in full screen with the same timers. <strong>Whoever scores more points wins the other's points for this quiz</strong>; a tie moves no points.</li>` : ''}
       ${compat && !open ? `<li>This is a compatibility quiz: when you finish, you get a link to share that stays active for 24 hours. When a signed-in member answers it, you both see your compatibility results — you earn 10 points and they earn 5.</li>` : ''}
     </ul>
     <button type="button" class="cta gx-start">Start quiz in full screen</button>

@@ -841,11 +841,11 @@
       <p class="count">Every quiz belongs to one category. Points earned in it count toward the overall Kings &amp; Queens board and, except for Others, that category's own leaderboard.</p>
       <label>Quiz type</label>
       <select id="quizType">
-        <option value="standard"${!quiz || quiz.type === 'standard' ? ' selected' : ''}>Standard Quiz — right answers score; share a link to go head to head</option>
+        <option value="standard"${!quiz || quiz.type === 'standard' ? ' selected' : ''}>Standard Quiz — right answers score; challenge one member, winner takes the points</option>
         <option value="compatibility"${quiz && quiz.type === 'compatibility' ? ' selected' : ''}>Compatibility Quiz — share a link after attempting</option>
         <option value="open_compatibility"${quiz && quiz.type === 'open_compatibility' ? ' selected' : ''}>Open Compatibility Quiz — share a link anyone registered can answer</option>
       </select>
-      <p class="count">Standard: mark the correct answer of every question. Only a correct answer given in time earns that question's points. After attempting, the member shares a link (active for 24 hours); one person answers it and both see who got more right. When a signed-in member answers, the sharer earns 10 points and the responder 5 (once per quiz for each pair). Members see a badge only on compatibility and open compatibility quizzes.</p>
+      <p class="count">Standard: mark the correct answer of every question. Only a correct answer given in time earns that question's points. After attempting, the member gets a challenge link (active for 24 hours). One member who has never attempted the quiz can accept it and plays it in full screen with the same timers; whoever scores more points wins and takes the loser's points for that quiz (a tie moves no points). Members see a badge only on compatibility and open compatibility quizzes.</p>
       <p class="count">Open Compatibility: after attempting, the member shares a link (active for 24 hours) that any registered member can answer. The sharer sees their compatibility with every responder; each responder sees only their own compatibility with the sharer. The sharer earns 3 points and the responder 1 for each response (once per quiz for each pair).</p>
       <p class="count">Compatibility: after attempting, the member shares a link (active for 24 hours). When a signed-in member answers it, both see their compatibility results; the sharer earns 10 points and the responder 5 (once per quiz for each pair).</p>
       <label>Questions</label>

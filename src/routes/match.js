@@ -14,7 +14,10 @@
 // Standard quizzes have right answers, so their (one-to-one) links compare
 // how many each person got right instead. Their breakdown shows only whether
 // each person was right, never the options, so the link can't be used as an
-// answer key for the quiz itself.
+// answer key for the quiz itself. Since challenges (quiz_matches.challenge),
+// a standard link is taken on by one member in the full-screen quiz itself
+// (/quizzes/:id?challenge=<token>) and the winner takes the loser's points;
+// see src/quizChallenge.js. This router only shows its state and result.
 
 const express = require('express');
 
@@ -23,6 +26,7 @@ const { optionalAuth } = require('../auth');
 const { WEIGHTS } = require('../points');
 const { MATCH_TTL_MS, isGraded, correctOption } = require('../quizTypes');
 const { notifyUser, broadcastLeaderboardChange } = require('../socket');
+const challenges = require('../quizChallenge');
 const { addMatchNotifications } = require('./notifications');
 
 const router = express.Router();
@@ -319,6 +323,57 @@ function openAnswer(req, res, m, quiz, questions, bAns) {
   res.json(openResponderDone(m, r, quiz, questions));
 }
 
+/* ---------------------------------------------------------------------------
+   Standard-quiz challenges
+--------------------------------------------------------------------------- */
+
+function challengeGet(req, res, m0, quiz, questions) {
+  const m = challenges.settleStale(m0);
+  const isInitiator = !!(req.user && m.a_user_id && req.user.id === m.a_user_id);
+  const base = { challenge: true, scored: true, quizTitle: quiz.title, aName: m.a_name, aPoints: m.a_points || 0, isInitiator };
+
+  if (m.completed_at) {
+    const ctx = chatContext(m, req.user);
+    const result = { ...resultPayload(m, questions, answerKey(quiz, questions)), challenge: challenges.summary(m) };
+    const c = result.challenge;
+    const you = ctx.viewer === 'a'
+      ? (c.winner === 'a' ? c.transfer : c.winner === 'b' ? -c.transfer : 0)
+      : ctx.viewer === 'b'
+        ? (c.winner === 'b' ? c.transfer : c.winner === 'a' ? -c.transfer : 0)
+        : 0;
+    return res.json({ ...base, state: 'done', result, points: { challenge: true, you }, ...ctx });
+  }
+  if (isInitiator) {
+    return res.json({
+      ...base,
+      state: 'waiting',
+      expired: Date.now() > m.expires_at,
+      acceptedBy: m.b_user_id ? m.b_name : null,
+      expiresAt: m.expires_at,
+      ttlHours: MATCH_TTL_MS / 3600000,
+    });
+  }
+  if (!req.user) {
+    if (Date.now() > m.expires_at && !m.b_user_id) return res.json({ state: 'expired', quizTitle: quiz.title, isInitiator: false });
+    return res.json({ ...base, state: 'login_required' });
+  }
+  const no = challenges.whyNot(m, req.user.id);
+  if (no) {
+    if (no.code === 'expired') return res.json({ state: 'expired', quizTitle: quiz.title, isInitiator: false });
+    return res.json({ ...base, state: 'unavailable', reason: no.error });
+  }
+  return res.json({
+    ...base,
+    state: 'challenge',
+    quizDescription: quiz.description,
+    questionCount: questions.length,
+    accepted: m.b_user_id === req.user.id,
+    quizUrl: `/quizzes/${m.quiz_id}?challenge=${encodeURIComponent(m.token)}`,
+    expiresAt: m.expires_at,
+    ttlHours: MATCH_TTL_MS / 3600000,
+  });
+}
+
 // GET /api/match/:token — current state of a shared link.
 router.get('/:token', optionalAuth, (req, res) => {
   const m = loadMatch(req.params.token);
@@ -328,6 +383,7 @@ router.get('/:token', optionalAuth, (req, res) => {
   if (!quiz) return res.status(404).json({ error: 'This quiz no longer exists.' });
   const questions = parseJson(quiz.questions, []);
   if (m.is_open) return openGet(req, res, m, quiz, questions);
+  if (m.challenge) return challengeGet(req, res, m, quiz, questions);
   const isInitiator = !!(req.user && m.a_user_id && req.user.id === m.a_user_id);
   const key = answerKey(quiz, questions);
 
@@ -392,6 +448,7 @@ router.post('/:token/answer', optionalAuth, (req, res) => {
     if (!bAns) return res.status(400).json({ error: 'Please answer every question.' });
     return openAnswer(req, res, m, quiz, questions, bAns);
   }
+  if (m.challenge) return res.status(400).json({ error: 'Challenges are taken in the full-screen quiz — open the link again to start.' });
   if (m.completed_at) return res.status(409).json({ error: 'This quiz has already been answered.' });
   if (Date.now() > m.expires_at) return res.status(410).json({ error: 'This link has expired.' });
   if (req.user && m.a_user_id && req.user.id === m.a_user_id) {

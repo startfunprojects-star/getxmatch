@@ -1562,7 +1562,7 @@ a.share-link:hover { text-decoration: underline; }
 
 /* Match result: chat CTA + waiting state */
 .match-cta { text-align: center; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
-.chat-cta { display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 999px; color: #fff; font-weight: 700; text-decoration: none; }
+.chat-cta { display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 999px; background: var(--grad); background-size: 140% 140%; box-shadow: var(--glow); color: #fff; font-weight: 700; text-decoration: none; }
 .match-cta .hint { margin-top: 10px; }
 .waiting-dots { color: var(--muted); margin-top: 14px; font-size: 14px; }
 

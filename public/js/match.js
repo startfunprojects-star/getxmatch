@@ -4,7 +4,9 @@
    member: the sharer sees every responder's result, a responder sees only
    their own compatibility with the sharer, and guests are asked to log in.
    Standard-quiz links (data.scored) compare how many answers each person got
-   right instead of how many they picked in common. */
+   right instead of how many they picked in common. Those links are challenges
+   (data.challenge): one member who hasn't taken the quiz accepts it and plays
+   it in full screen on the quiz page; the winner takes the loser's points. */
 (function () {
   'use strict';
 
@@ -28,6 +30,7 @@
     try { data = await api.get('/api/match/' + encodeURIComponent(token)); }
     catch (e) { return renderError(e.message); }
 
+    if (data.challenge) return renderChallenge(data);
     if (data.state === 'done') return renderResult(data);
     if (data.state === 'expired') return renderError('This link has expired. Ask your friend to send a fresh one.');
     if (data.state === 'waiting') return renderWaiting(data);
@@ -147,6 +150,70 @@
     if (!data.expired) pollTimer = setTimeout(load, 8000);
   }
 
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+  // A standard-quiz challenge, in whatever state it's in.
+  function renderChallenge(data) {
+    if (pollTimer) clearTimeout(pollTimer);
+    if (data.state === 'done') return renderResult(data);
+    if (data.state === 'expired') return renderError('This challenge has expired. Ask your friend to send a fresh one.');
+    const stakes = `<p class="hint">🏆 Whoever scores more points wins and takes the other’s points for this quiz. A tie moves no points.</p>`;
+    root.innerHTML = '';
+    if (data.state === 'waiting') {
+      root.appendChild(el(`
+        <div class="match-empty">
+          <div class="match-emoji">⚔️</div>
+          <h2>${data.acceptedBy ? `${esc(data.acceptedBy)} accepted your challenge` : 'Waiting for a challenger'}</h2>
+          <p class="match-sub">You scored <strong>${plural(data.aPoints, 'point')}</strong> on “${esc(data.quizTitle)}”. ${data.acceptedBy
+            ? 'They’re taking the quiz now — this page updates the moment they finish.'
+            : 'Share this link with one person who hasn’t taken the quiz yet. Only one person can accept it.'}</p>
+          ${stakes}
+          ${data.acceptedBy ? '' : `<p class="match-expiry">${data.expired ? '⏳ This link has expired — no one can accept it now.' : expiryLine(data.expiresAt, data.ttlHours)}</p>`}
+          ${data.expired && !data.acceptedBy ? '' : '<div class="waiting-dots">Listening for the result…</div>'}
+        </div>
+      `));
+      if (!(data.expired && !data.acceptedBy)) pollTimer = setTimeout(load, 5000);
+      return;
+    }
+    if (data.state === 'login_required') {
+      root.appendChild(el(`
+        <div class="match-empty">
+          <div class="match-emoji">⚔️</div>
+          <h2>${esc(data.aName)} challenged you to “${esc(data.quizTitle)}”</h2>
+          <p class="match-sub">${esc(data.aName)} scored ${plural(data.aPoints, 'point')}. Beat that to win their points.</p>
+          ${stakes}
+          <p style="margin-top:14px"><a class="primary chat-cta" href="/">Log in or join getxmatch</a></p>
+          <p class="hint">Challenges are for members — log in, then open this link again.</p>
+        </div>
+      `));
+      return;
+    }
+    if (data.state === 'unavailable') {
+      root.appendChild(el(`
+        <div class="match-empty">
+          <div class="match-emoji">🙅</div>
+          <h2>${esc(data.reason || 'You can’t accept this challenge.')}</h2>
+          <p class="match-sub">“${esc(data.quizTitle)}” — a challenge from ${esc(data.aName)}.</p>
+          <p class="hint"><a href="/quizzes">Find a quiz to challenge your own friends →</a></p>
+        </div>
+      `));
+      return;
+    }
+    // state 'challenge': this member can take it on.
+    root.appendChild(el(`
+      <div class="match-empty">
+        <div class="match-emoji">⚔️</div>
+        <h2>${esc(data.aName)} challenged you to “${esc(data.quizTitle)}”</h2>
+        <p class="match-sub">${esc(data.aName)} scored <strong>${plural(data.aPoints, 'point')}</strong>. Score more to win them.</p>
+        ${data.quizDescription ? `<p class="hint">${esc(data.quizDescription)}</p>` : ''}
+        ${stakes}
+        <p class="hint">You’ll take the same ${plural(data.questionCount, 'question')} in full screen, with the same timers. Only one person can accept this challenge${data.accepted ? ' — you already did, so finish it now' : ''}.</p>
+        <p style="margin-top:14px"><a class="primary chat-cta" href="${esc(data.quizUrl)}">${data.accepted ? 'Continue the challenge' : 'Accept the challenge'} →</a></p>
+        <p class="match-expiry">${expiryLine(data.expiresAt, data.ttlHours)}</p>
+      </div>
+    `));
+  }
+
   // How points work for a shared compatibility link.
   function pointsRule(p) {
     if (!p) return '';
@@ -223,6 +290,12 @@
   function pointsResult(data) {
     const p = data.points;
     if (!p) return '';
+    if (p.challenge) {
+      if (data.viewer !== 'a' && data.viewer !== 'b') return '';
+      if (p.you > 0) return `<p class="match-points">🏆 You won ${plural(p.you, 'point')}!</p>`;
+      if (p.you < 0) return `<p class="hint">You lost ${plural(-p.you, 'point')} to your opponent.</p>`;
+      return '<p class="hint">No points changed hands.</p>';
+    }
     if (p.awarded) {
       if (data.viewer === 'a' || data.viewer === 'b') return `<p class="match-points">🏆 +${p.you} point${p.you === 1 ? '' : 's'} added to your score.</p>`;
       return '';
@@ -238,18 +311,23 @@
   function renderScored(data) {
     const r = data.result;
     const pct = r.graded ? Math.round((Math.max(r.aCorrect, r.bCorrect) / r.graded) * 100) : 0;
-    const verdict =
-      r.aCorrect === r.bCorrect ? 'It’s a tie! 🤝' :
-      `${r.aCorrect > r.bCorrect ? r.aName : r.bName} wins! 🏆`;
+    const c = r.challenge;
+    // Challenges are decided on points; older links on right answers.
+    const verdict = c
+      ? (c.forfeit ? `${r.aName} wins — ${r.bName} left the quiz and forfeited. 🏆`
+        : c.winner === 'tie' ? 'It’s a tie — no points change hands. 🤝'
+        : `${c.winner === 'a' ? r.aName : r.bName} wins${c.transfer ? ` and takes ${plural(c.transfer, 'point')}` : ''}! 🏆`)
+      : r.aCorrect === r.bCorrect ? 'It’s a tie! 🤝'
+      : `${r.aCorrect > r.bCorrect ? r.aName : r.bName} wins! 🏆`;
     root.appendChild(el(`
       <div class="match-result">
         <div class="match-emoji">🧠</div>
         <div class="score-ring" style="--pct:${pct}">
-          <div class="score-num">${r.aCorrect}<span>–</span>${r.bCorrect}</div>
+          <div class="score-num">${c ? c.aPoints : r.aCorrect}<span>–</span>${c ? c.bPoints : r.bCorrect}</div>
         </div>
         <h2>${esc(r.aName)} vs ${esc(r.bName)}</h2>
         <p class="match-sub">${esc(verdict)}</p>
-        <p class="hint">On “${esc(data.quizTitle)}”, ${esc(r.aName)} got ${r.aCorrect} of ${r.graded} right and ${esc(r.bName)} got ${r.bCorrect} of ${r.graded}.</p>
+        <p class="hint">On “${esc(data.quizTitle)}”, ${c ? `${esc(r.aName)} scored ${plural(c.aPoints, 'point')} (${r.aCorrect} of ${r.graded} right) and ${esc(r.bName)} ${plural(c.bPoints, 'point')} (${r.bCorrect} of ${r.graded} right).` : `${esc(r.aName)} got ${r.aCorrect} of ${r.graded} right and ${esc(r.bName)} got ${r.bCorrect} of ${r.graded}.`}</p>
         ${pointsResult(data)}
       </div>
     `));

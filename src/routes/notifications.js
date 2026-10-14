@@ -39,13 +39,30 @@ function addMatchNotifications({ m, quizTitle, bUserId, bName, result, sharerPoi
   const base = { token: m.token, quizTitle, percent: result.percent, score: result.score, total: result.total };
   // Standard quizzes: right answers out of `graded`. Stored from each side's
   // point of view (mine = the recipient's own score).
-  const scored = (mine, theirs) => (result.scored ? { scored: true, myCorrect: mine, theirCorrect: theirs, graded: result.graded } : {});
+  // Challenges also record each side's points and what they won or lost.
+  const c = result.challenge;
+  const scored = (mine, theirs, side) => {
+    if (!result.scored) return {};
+    const out = { scored: true, myCorrect: mine, theirCorrect: theirs, graded: result.graded };
+    if (c) {
+      const other = side === 'a' ? 'b' : 'a';
+      Object.assign(out, {
+        challenge: true,
+        myPoints: side === 'a' ? c.aPoints : c.bPoints,
+        theirPoints: side === 'a' ? c.bPoints : c.aPoints,
+        outcome: c.winner === 'tie' ? 'tie' : c.winner === side ? 'won' : 'lost',
+        delta: c.winner === side ? c.transfer : c.winner === other ? -c.transfer : 0,
+        forfeit: c.forfeit,
+      });
+    }
+    return out;
+  };
   const insert = db.prepare('INSERT INTO notifications (user_id, kind, data, created_at) VALUES (?, ?, ?, ?)');
   if (m.a_user_id) {
-    insert.run(m.a_user_id, 'match_shared', JSON.stringify({ ...base, ...scored(result.aCorrect, result.bCorrect), otherName: bName, otherUserId: bUserId, points: sharerPoints }), now);
+    insert.run(m.a_user_id, 'match_shared', JSON.stringify({ ...base, ...scored(result.aCorrect, result.bCorrect, 'a'), otherName: bName, otherUserId: bUserId, points: sharerPoints }), now);
   }
   if (bUserId) {
-    insert.run(bUserId, 'match_answered', JSON.stringify({ ...base, ...scored(result.bCorrect, result.aCorrect), otherName: m.a_name, otherUserId: m.a_user_id, points: responderPoints }), now);
+    insert.run(bUserId, 'match_answered', JSON.stringify({ ...base, ...scored(result.bCorrect, result.aCorrect, 'b'), otherName: m.a_name, otherUserId: m.a_user_id, points: responderPoints }), now);
   }
 }
 
@@ -92,6 +109,12 @@ function buildItems(userId) {
         myCorrect: d.myCorrect,
         theirCorrect: d.theirCorrect,
         graded: d.graded,
+        challenge: !!d.challenge,
+        myPoints: d.myPoints,
+        theirPoints: d.theirPoints,
+        outcome: d.outcome,
+        delta: d.delta,
+        forfeit: !!d.forfeit,
         points: d.points || 0,
         link: `/m/${d.token}`,
       });

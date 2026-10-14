@@ -5539,7 +5539,10 @@
       if (!d || !d.token) return;
       const pts = d.points ? ` · +${d.points} points` : '';
       const t = el(`<a class="toast toast-link" href="/m/${encodeURIComponent(d.token)}" target="_blank" rel="noopener"></a>`);
-      t.textContent = d.scored
+      const won = d.points > 0 ? ` · you won ${d.points} points` : d.points < 0 ? ` · you lost ${-d.points} points` : '';
+      t.textContent = d.challenge
+        ? `⚔️ ${d.bName} ${d.forfeit ? 'forfeited' : 'finished'} your “${d.quizTitle}” challenge — ${d.winner === 'tie' ? 'it’s a tie' : d.winner === 'a' ? 'you won' : 'they won'} (${d.aPoints}–${d.bPoints})${won}. See results ↗`
+        : d.scored
         ? `🧠 ${d.bName} took on your “${d.quizTitle}” — you ${d.aCorrect}, them ${d.bCorrect} of ${d.graded}${pts}. See results ↗`
         : `🧩 ${d.bName} answered “${d.quizTitle}” — ${d.percent}% match${pts}. See results ↗`;
       document.body.appendChild(t);
@@ -7858,6 +7861,13 @@
   // Result line of a shared-quiz notification: right answers head to head for
   // a standard quiz, compatibility otherwise.
   function matchLine(it) {
+    if (it.challenge) {
+      const v = it.outcome === 'tie' ? 'It’s a tie' : it.outcome === 'won' ? 'You won' : `${esc(it.otherName)} won`;
+      const moved = it.delta > 0 ? ` You won <strong>${it.delta} points</strong>.` : it.delta < 0 ? ` You lost <strong>${-it.delta} points</strong>.` : ' No points changed hands.';
+      const how = it.forfeit ? (it.outcome === 'won' ? ` — ${esc(it.otherName)} left the quiz and forfeited.` : ' — you left the quiz and forfeited.')
+        : ` — you scored ${it.myPoints}, ${esc(it.otherName)} scored ${it.theirPoints}.`;
+      return `<strong>${v}</strong>${how}${moved}`;
+    }
     if (it.scored) {
       const v = it.myCorrect === it.theirCorrect ? 'It’s a tie' : it.myCorrect > it.theirCorrect ? 'You won' : `${esc(it.otherName)} won`;
       return `<strong>${v}</strong> — you got ${it.myCorrect} of ${it.graded} right, ${esc(it.otherName)} got ${it.theirCorrect}.`;

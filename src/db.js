@@ -1215,4 +1215,32 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_friend_approvals_child ON friend_approvals (child_id);
 `);
 
+// --- Standard-quiz challenges (src/quizChallenge.js). A standard quiz's share
+// link is a challenge (quiz_matches.challenge = 1) that exactly one other
+// member accepts by taking the quiz in full screen; the proctor session is
+// tied to the link by match_id. a_points / b_points are the points each side
+// scored; the winner takes the loser's points, recorded as a pair of rows in
+// quiz_challenge_points (+ for the winner, − for the loser). b_forfeit = 1 when
+// the challenger was stopped for leaving full screen.
+(() => {
+  const mcols = db.prepare('PRAGMA table_info(quiz_matches)').all().map((c) => c.name);
+  if (!mcols.includes('challenge')) db.exec('ALTER TABLE quiz_matches ADD COLUMN challenge INTEGER NOT NULL DEFAULT 0;');
+  if (!mcols.includes('a_points')) db.exec('ALTER TABLE quiz_matches ADD COLUMN a_points INTEGER;');
+  if (!mcols.includes('b_points')) db.exec('ALTER TABLE quiz_matches ADD COLUMN b_points INTEGER;');
+  if (!mcols.includes('b_forfeit')) db.exec('ALTER TABLE quiz_matches ADD COLUMN b_forfeit INTEGER NOT NULL DEFAULT 0;');
+  const scols = db.prepare('PRAGMA table_info(quiz_proctor_sessions)').all().map((c) => c.name);
+  if (!scols.includes('match_id')) db.exec('ALTER TABLE quiz_proctor_sessions ADD COLUMN match_id INTEGER;');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS quiz_challenge_points (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      quiz_id    INTEGER REFERENCES quizzes(id) ON DELETE SET NULL,
+      match_id   INTEGER REFERENCES quiz_matches(id) ON DELETE SET NULL,
+      points     INTEGER NOT NULL,          -- + won, − lost
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_quiz_challenge_points_user ON quiz_challenge_points (user_id);
+  `);
+})();
+
 module.exports = db;

@@ -9,7 +9,8 @@
 // Besides the overall ranking ("Kings & Queens"), each quiz category
 // (src/quizCategories.js) has its own board, ranked by the points earned in
 // that category's quizzes: the best attempt at each quiz, minus the penalties
-// (stopped quizzes, reattempts) taken on them.
+// (stopped quizzes, reattempts) taken on them, plus or minus the points won or
+// lost in standard-quiz challenges (src/quizChallenge.js).
 
 const db = require('./db');
 const { QUIZ_CATEGORIES } = require('./quizCategories');
@@ -78,6 +79,8 @@ function scoreRows(userId) {
               (SELECT COUNT(*) FROM blog_likes bl JOIN blogs bb ON bb.id = bl.blog_id
                 WHERE bb.user_id = u.id)                                       AS blog_likes,
               (CASE WHEN u.referred_by IS NULL THEN 0 ELSE 1 END)              AS was_referred,
+              (SELECT COALESCE(SUM(points), 0) FROM quiz_challenge_points qc
+                WHERE qc.user_id = u.id)                                       AS challenge_points,
               (SELECT COALESCE(SUM(points), 0) FROM quiz_penalties qp
                 WHERE qp.user_id = u.id)                                       AS penalty
        FROM users u
@@ -99,6 +102,7 @@ function scoreRows(userId) {
           r.rating_count * WEIGHTS.rating +
           r.friends * WEIGHTS.friend +
           r.quiz_points +
+          r.challenge_points +
           r.likes * WEIGHTS.like +
           r.polls * WEIGHTS.poll +
           r.shares_completed * WEIGHTS.shareCompleted +
@@ -123,6 +127,7 @@ function scoreRows(userId) {
       friends: r.friends,
       quizzes: r.quizzes,
       quizPoints: r.quiz_points,
+      challengePoints: r.challenge_points,
       likes: r.likes,
       blogLikes: r.blog_likes,
       polls: r.polls,
@@ -166,6 +171,12 @@ function rankedUsers() {
       WHERE q.category IS NOT NULL
       GROUP BY qp.user_id, q.category`
   ).all()) addCat(r.user_id, r.category, -r.pts);
+  for (const r of db.prepare(
+    `SELECT qc.user_id, q.category, SUM(qc.points) AS pts
+       FROM quiz_challenge_points qc JOIN quizzes q ON q.id = qc.quiz_id
+      WHERE q.category IS NOT NULL
+      GROUP BY qc.user_id, q.category`
+  ).all()) addCat(r.user_id, r.category, r.pts);
   for (const row of scored) row.categoryPoints = byCat.get(row.id) || {};
 
   return rankBy(scored, (r) => r.points);
