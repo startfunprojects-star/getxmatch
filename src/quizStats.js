@@ -2,8 +2,9 @@
 
 // Summary shown on each quiz card: question count, total time, negative
 // marking, how many people attempted it and its top scorers. Top scorers rank
-// each member's best attempt by points (highest first); equal points are
-// broken by time taken (fastest first).
+// each member's latest attempt (the one that counts on the leaderboard) by
+// points (highest first); equal points are broken by time taken (fastest
+// first).
 
 const db = require('./db');
 
@@ -24,7 +25,7 @@ const topStmt = () =>
     `SELECT b.user_id, b.score, b.duration_ms, u.username, p.display_name, p.avatar
        FROM (SELECT user_id, score, duration_ms,
                     ROW_NUMBER() OVER (PARTITION BY user_id
-                                       ORDER BY score DESC, duration_ms IS NULL, duration_ms ASC, id ASC) AS rn
+                                       ORDER BY created_at DESC, id DESC) AS rn
                FROM quiz_attempts WHERE quiz_id = ?) b
        JOIN users u ON u.id = b.user_id
        JOIN profiles p ON p.user_id = u.id

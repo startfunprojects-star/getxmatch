@@ -2275,7 +2275,7 @@
       <div class="admin-card">
         <h2>Leaderboards</h2>
         <p class="count"><strong>Kings &amp; Queens</strong> ranks members by overall points (highest first; equal points share a rank). Points come from ratings, Highway likes, friends, quiz points, polls (5 per poll voted in), completed compatibility links (10 to the sharer, 5 to the responder), referrals (4 to the referrer, 2 to the new member) accepted friend requests (the addressee earns double their friend fee; the requester pays it) and followers (1 point each; following is free), minus deductions for stopped quizzes and quiz reattempts (10 each). Points can go below zero.</p>
-        <p class="count">Each quiz category board ranks members by the best attempt at each of that category’s quizzes, minus the penalties taken on them. “Others” quizzes count toward Kings &amp; Queens only.</p>
+        <p class="count">Each quiz category board ranks members by their latest attempt at each of that category’s quizzes, minus the penalties taken on them. “Others” quizzes count toward Kings &amp; Queens only.</p>
         <div class="lb-tabs" id="lbTabs"></div>
       </div>
       <div class="admin-card" id="lbBoard"><div class="count">Loading…</div></div>`;

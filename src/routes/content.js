@@ -485,7 +485,8 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
     challenge ? state.points : null
   );
   db.prepare("UPDATE quiz_proctor_sessions SET status = 'completed' WHERE token = ?").run(sessToken);
-  // The attempt's points feed the leaderboard (best attempt per quiz counts).
+  // The attempt's points feed the leaderboard (the latest attempt per quiz
+  // counts, replacing any earlier one).
   // duration_ms breaks ties between equal top scores on the quiz card.
   db.prepare('INSERT INTO quiz_attempts (quiz_id, user_id, score, total, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(row.id, req.user.id, state.points, state.maxPoints, now - sess.created_at, now);

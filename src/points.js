@@ -8,7 +8,7 @@
 //
 // Besides the overall ranking ("Kings & Queens"), each quiz category
 // (src/quizCategories.js) has its own board, ranked by the points earned in
-// that category's quizzes: the best attempt at each quiz, minus the penalties
+// that category's quizzes: the latest attempt at each quiz, minus the penalties
 // (stopped quizzes, reattempts) taken on them, plus or minus the points won or
 // lost in standard-quiz challenges (src/quizChallenge.js).
 
@@ -16,7 +16,17 @@ const db = require('./db');
 const { QUIZ_CATEGORIES } = require('./quizCategories');
 
 // Points per unit of each activity. Quizzes add the points the admin set on
-// each question the member answered in time (best attempt per quiz).
+// each question the member answered in time. Only the member's latest
+// finished attempt at each quiz counts — a retake replaces the earlier score,
+// higher or lower.
+//
+// One row per (user_id, quiz_id): the score of that member's latest attempt.
+const LATEST_ATTEMPTS = `
+  SELECT user_id, quiz_id, score FROM (
+    SELECT user_id, quiz_id, score,
+           ROW_NUMBER() OVER (PARTITION BY user_id, quiz_id ORDER BY created_at DESC, id DESC) AS rn
+      FROM quiz_attempts)
+   WHERE rn = 1`;
 const WEIGHTS = {
   ratingAvg: 20, // × average star rating received (0–5)
   rating: 5, // per rating received
@@ -85,9 +95,8 @@ function scoreRows(userId) {
                 WHERE qp.user_id = u.id)                                       AS penalty
        FROM users u
        JOIN profiles p ON p.user_id = u.id
-       LEFT JOIN (SELECT user_id, SUM(best) AS quiz_points
-                    FROM (SELECT user_id, quiz_id, MAX(score) AS best
-                            FROM quiz_attempts GROUP BY user_id, quiz_id)
+       LEFT JOIN (SELECT user_id, SUM(score) AS quiz_points
+                    FROM (${LATEST_ATTEMPTS})
                    GROUP BY user_id) qb ON qb.user_id = u.id
        ${userId == null ? '' : 'WHERE u.id = ?'}`
     )
@@ -159,8 +168,8 @@ function rankedUsers() {
     m[cat] = (m[cat] || 0) + pts;
   };
   for (const r of db.prepare(
-    `SELECT b.user_id, q.category, SUM(b.best) AS pts
-       FROM (SELECT user_id, quiz_id, MAX(score) AS best FROM quiz_attempts GROUP BY user_id, quiz_id) b
+    `SELECT b.user_id, q.category, SUM(b.score) AS pts
+       FROM (${LATEST_ATTEMPTS}) b
        JOIN quizzes q ON q.id = b.quiz_id
       WHERE q.category IS NOT NULL
       GROUP BY b.user_id, q.category`
