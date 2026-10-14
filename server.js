@@ -105,11 +105,12 @@ app.get(/^\/admin(\/.*)?$/, (req, res) => {
   res.sendFile(path.join(publicDir, 'admin.html'));
 });
 
-// Shared compatibility-quiz link (/m/<token>). Its own tiny standalone page so
-// it works for logged-out recipients without the auth-gated main SPA.
-app.get(/^\/m(\/.*)?$/, (req, res) => {
-  res.sendFile(path.join(publicDir, 'match.html'));
-});
+// Shared quiz link (/m/<token>). Its own tiny standalone page so it works for
+// logged-out recipients without the auth-gated main SPA. It carries link
+// preview tags, and /og/m/<token>.png is the preview card (src/matchPreview.js).
+const matchPreview = require('./src/matchPreview');
+app.get('/og/m/:token.png', matchPreview.imageRoute);
+app.get(/^\/m(\/.*)?$/, matchPreview.pageRoute);
 
 // Parent / guardian controls for members under 18 (token links from emails).
 app.use('/guardian', require('./src/routes/guardian'));

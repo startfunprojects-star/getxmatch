@@ -452,9 +452,87 @@ function clipCorners(c, x, y, w, h, r, rgb) {
   }
 }
 
+/* ---------------------------------------------------------------------------
+   Shared quiz link card (/m/<token>): who invited you, to which quiz, what
+   kind of quiz it is, and how long the link stays open.
+     label   top-left kind, e.g. 'Quiz challenge'
+     status  top-right pill, e.g. 'Active 24 hrs' (statusOn = accent pill)
+     heading e.g. 'Alice challenged you'
+     title   the quiz title (drawn in quotes)
+     info    up to two short muted lines (category, rules)
+     footer  bottom-left accent line, e.g. 'Link active for 24 hours'
+--------------------------------------------------------------------------- */
+function renderInviteCard({ label, status, statusOn, heading, title, info = [], footer }, cacheKey) {
+  if (cacheKey && cache.has(cacheKey)) return cache.get(cacheKey);
+  const c = canvas(W, H, BG);
+  fillRect(c, 40, 40, W - 80, H - 80, PANEL);
+  fillRect(c, 40, 40, 14, H - 80, ACCENT);
+  const marginX = 100;
+  const right = W - 80;
+  const maxW = right - marginX;
+  // Largest scale (from..to) at which `text` fits `w` on one line.
+  const fitScale = (text, w, from, to) => {
+    for (let s = from; s > to; s -= 1) if (textWidth(text, s) <= w) return s;
+    return to;
+  };
+
+  // Top row: status pill (right), kind label (left, shrunk to fit beside it).
+  let labelW = maxW;
+  if (status) {
+    const st = clean(status);
+    const pw = textWidth(st, 4) + 40;
+    const px = right - pw;
+    fillRoundRect(c, px, 84, pw, 56, 28, statusOn ? ACCENT : TRACK);
+    drawText(c, st, px + 20, 98, 4, statusOn ? PANEL : MUTED);
+    labelW = px - marginX - 30;
+  }
+  const lab = clean(label);
+  const ls = fitScale(lab, labelW, 6, 3);
+  const labText = fitText(lab, ls, labelW);
+  drawText(c, labText, marginX, 112 - Math.round((GLYPH_H * ls) / 2), ls, ACCENT);
+  fillRect(c, marginX, 150, textWidth(labText, ls), 4, ACCENT);
+
+  // Heading: the largest scale (10 → 5) that fits in two lines within its band.
+  const head = clean(heading) || 'YOU ARE INVITED';
+  const bandTop = 182;
+  const bandH = 172;
+  const lineHAt = (s) => GLYPH_H * s + 4 * s;
+  let scale = 5;
+  let lines = wrapClamped(head, 5, maxW, 2);
+  for (let s = 10; s >= 5; s -= 1) {
+    const wrapped = wrapAll(head, s, maxW);
+    if (wrapped.length <= 2 && wrapped.length * lineHAt(s) - 4 * s <= bandH) { scale = s; lines = wrapped; break; }
+  }
+  let y = bandTop;
+  for (const line of lines) {
+    drawText(c, line, marginX, y, scale, WHITE);
+    y += lineHAt(scale);
+  }
+
+  // Quiz title (one line, in quotes), then up to two muted info lines.
+  const t = `"${clean(title) || 'QUIZ'}"`;
+  const ts = fitScale(t, maxW, 5, 4);
+  drawText(c, fitText(t, ts, maxW), marginX, 376, ts, ACCENT);
+  info.slice(0, 2).forEach((line, i) => {
+    drawText(c, fitText(clean(line), 4, maxW), marginX, 432 + i * 40, 4, MUTED);
+  });
+
+  // Footer row: link lifetime (accent, left) + brand (right).
+  fillRect(c, marginX, 512, maxW, 2, TRACK);
+  const brand = 'GETXMATCH.COM';
+  const bw = textWidth(brand, 4);
+  drawText(c, brand, right - bw, 532, 4, MUTED);
+  if (footer) drawText(c, fitText(clean(footer), 4, maxW - bw - 40), marginX, 532, 4, ACCENT);
+
+  const png = encodePng(c);
+  cachePut(cacheKey, png);
+  return png;
+}
+
 module.exports = {
   renderCard,
   renderPollCard,
+  renderInviteCard,
   W,
   H,
   // Drawing primitives, reused by the profile QR card (src/qrCard.js).
