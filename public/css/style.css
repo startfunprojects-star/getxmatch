@@ -256,6 +256,8 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .chat-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
 .chat-head .name { font-weight: 700; }
 .chat-head .status { font-size: 12px; color: var(--muted); }
+.chat-head-id { min-width: 0; flex: 1; }
+.chat-head-id .name, .chat-head-id .status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-body { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 8px; }
 /* `unicode-bidi: plaintext` lets each message resolve its own base direction
    from its first strong character (like dir="auto"), so right-to-left scripts
@@ -791,12 +793,12 @@ img.zoomable.zoomed:active { cursor: grabbing; }
   background: rgba(0, 0, 0, .6); border-radius: 999px; backdrop-filter: blur(6px);
 }
 .zoom-ctl button {
+  display: inline-flex; align-items: center; justify-content: center; line-height: 1;
   min-width: 38px; height: 34px; padding: 0 10px; border: 0; border-radius: 999px;
   background: transparent; color: #fff; font-size: 18px; font-weight: 700; cursor: pointer;
 }
 .zoom-ctl .zoom-level { font-size: 12px; font-variant-numeric: tabular-nums; min-width: 54px; }
 .zoom-ctl button:hover { background: rgba(255, 255, 255, .18); }
-.slideshow .zoom-ctl { bottom: 74px; }      /* sits above the play / count bar */
 .slideshow .ss-nav, .slideshow .ss-bar, .slideshow .ss-caption { z-index: 3; } /* stay above a zoomed image */
 .pv-media { position: relative; overflow: hidden; }
 .pv-media.pv-reel .zoom-ctl { display: none; }
@@ -842,7 +844,7 @@ img.zoomable.zoomed:active { cursor: grabbing; }
   position: fixed; top: 50%; transform: translateY(-50%); z-index: 2;
   display: none; align-items: center; justify-content: center;
   width: 52px; height: 52px; border-radius: 999px; border: 0;
-  background: rgba(255,255,255,.14); color: #fff; font-size: 30px; line-height: 1;
+  background: rgba(255,255,255,.14); color: #fff; font-size: 26px; line-height: 1; padding: 0;
   cursor: pointer; transition: background .15s ease;
 }
 .photo-viewer.pv-multi .pv-nav { display: flex; }
@@ -855,7 +857,7 @@ img.zoomable.zoomed:active { cursor: grabbing; }
   .photo-viewer .pv-media { max-height: 42vh; }
   .photo-viewer .pv-media img { max-height: 42vh; }
   .photo-viewer .pv-media video { max-height: 42vh; }
-  .photo-viewer .pv-nav { width: 42px; height: 42px; font-size: 24px; }
+  .photo-viewer .pv-nav { width: 42px; height: 42px; font-size: 22px; }
   .photo-viewer .pv-prev { left: 6px; }
   .photo-viewer .pv-next { right: 6px; }
 }
@@ -892,7 +894,8 @@ img.zoomable.zoomed:active { cursor: grabbing; }
 .slideshow .ss-nav {
   position: absolute; top: 50%; transform: translateY(-50%);
   width: 52px; height: 52px; border-radius: 50%;
-  background: rgba(255,255,255,.12); color: #fff; font-size: 30px; line-height: 1;
+  background: rgba(255,255,255,.12); color: #fff; font-size: 26px; line-height: 1;
+  display: grid; place-items: center; padding: 0;
   z-index: 3; cursor: pointer; transition: background .15s ease;
 }
 .slideshow .ss-nav:hover { background: rgba(255,255,255,.24); }
@@ -900,18 +903,25 @@ img.zoomable.zoomed:active { cursor: grabbing; }
 .slideshow .ss-next { right: 18px; }
 .slideshow .ss-bar {
   position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-  display: inline-flex; align-items: center; gap: 12px; z-index: 3;
-  padding: 6px 14px; border-radius: 999px; background: rgba(0,0,0,.55);
+  display: inline-flex; align-items: center; gap: 12px; z-index: 3; white-space: nowrap;
+  padding: 6px 8px 6px 6px; border-radius: 999px; background: rgba(0,0,0,.6); backdrop-filter: blur(6px);
 }
 .slideshow .ss-play {
-  width: 34px; height: 34px; border-radius: 50%;
-  background: rgba(255,255,255,.14); color: #fff; font-size: 15px; cursor: pointer;
+  width: 34px; height: 34px; border-radius: 50%; padding: 0; display: grid; place-items: center;
+  background: rgba(255,255,255,.14); color: #fff; font-size: 14px; line-height: 1; cursor: pointer;
 }
+/* Zoom −/+ live inside the slideshow toolbar, after a divider. */
+.slideshow .ss-bar .zoom-ctl {
+  position: static; transform: none; padding: 0 0 0 10px; gap: 4px;
+  background: none; backdrop-filter: none; border-left: 1px solid rgba(255,255,255,.2); border-radius: 0;
+}
+.slideshow .ss-bar .zoom-ctl button { height: 34px; min-width: 34px; padding: 0 8px; line-height: 1; }
+.slideshow .ss-bar .zoom-ctl .zoom-level { min-width: 50px; }
 .slideshow .ss-play.on { background: var(--accent); }
 .slideshow .ss-count { color: #fff; font-size: 13px; font-weight: 700; letter-spacing: .5px; }
 
 @media (max-width: 620px) {
-  .slideshow .ss-nav { width: 42px; height: 42px; font-size: 24px; }
+  .slideshow .ss-nav { width: 42px; height: 42px; font-size: 22px; }
   .slideshow .ss-prev { left: 6px; }
   .slideshow .ss-next { right: 6px; }
 }
@@ -1280,10 +1290,32 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
 .lb-id { min-width: 0; flex: 1; cursor: pointer; }
 .lb-id .name { font-weight: 700; }
 .lb-id .handle { color: var(--muted); font-size: 13px; }
-.lb-stats { display: flex; gap: 12px; align-items: center; font-size: 13px; color: var(--muted); flex-wrap: wrap; justify-content: flex-end; }
-.lb-score { flex: none; font-weight: 800; color: var(--text); background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+.lb-stats { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); flex-wrap: wrap; justify-content: flex-end; }
+.lb-stat {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 8px;
+  background: var(--bg-3); border: 1px solid var(--border); white-space: nowrap;
+}
+.lb-stat b { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+.lb-rank-num {
+  display: inline-grid; place-items: center; min-width: 30px; height: 30px; padding: 0 6px; border-radius: 999px;
+  background: var(--bg-3); border: 1px solid var(--border); color: var(--muted);
+  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+/* Score column: a right-aligned figure over a small caps unit, same width on every row. */
+.lb-score {
+  flex: none; min-width: 84px; display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
+  padding: 6px 12px; border-radius: 12px; line-height: 1.1; white-space: nowrap;
+  background: var(--bg-3); border: 1px solid var(--border);
+}
+.lb-score-val { font-size: 18px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.lb-score-unit { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.lb-score-1 { border-color: color-mix(in srgb, var(--gold) 65%, transparent); background: color-mix(in srgb, var(--gold) 14%, var(--bg-3)); }
+.lb-score-1 .lb-score-val { color: color-mix(in srgb, var(--gold) 80%, var(--text)); }
+.lb-score-2 { border-color: color-mix(in srgb, #9aa4b2 60%, transparent); background: color-mix(in srgb, #9aa4b2 12%, var(--bg-3)); }
+.lb-score-3 { border-color: color-mix(in srgb, #b87333 55%, transparent); background: color-mix(in srgb, #b87333 11%, var(--bg-3)); }
 .lb-action { flex: none; }
-.lb-score.neg { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.lb-score.neg { border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: color-mix(in srgb, var(--danger) 8%, var(--bg-3)); }
+.lb-score.neg .lb-score-val { color: var(--danger); }
 
 /* Leaderboard boards: a tab per board; Kings & Queens is picked out in gold. */
 .lb-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
@@ -1307,7 +1339,6 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
 }
 .lb-kq .lb-board-head h3 { color: color-mix(in srgb, var(--gold) 70%, var(--text)); letter-spacing: .01em; }
 .lb-kq .lb-row.lb-top { background: color-mix(in srgb, var(--gold) 9%, transparent); }
-.lb-kq .lb-row.lb-top .lb-score { border-color: color-mix(in srgb, var(--gold) 60%, transparent); }
 
 /* ---------- Events feed ---------- */
 .feed { display: flex; flex-direction: column; }
@@ -1490,11 +1521,23 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
     display: flex; align-items: center; gap: 10px; flex: none;
     padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-2);
   }
+  #mobileBack { display: inline-flex; align-items: center; gap: 4px; line-height: 1; padding-left: 7px; }
+  #mobileBack svg { font-size: 16px; flex: none; }
   .mobile-bar-title { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Chat header buttons wrap instead of running off-screen. */
-  .chat-head { flex-wrap: wrap; padding: 10px 12px; }
+  .chat-head { flex-wrap: wrap; padding: 10px 12px; row-gap: 8px; }
+  /* The name gets the whole first row (beside the avatar[s]); the buttons wrap
+     onto the rows below it instead of squeezing the name to nothing. */
+  .chat-head-id { flex: 1 1 calc(100% - 60px); }
+  /* Activity status (or its icon chips) gets its own row above the picker. */
+  .chat-wrap .chat-activity-bar { flex-wrap: wrap; row-gap: 8px; padding: 8px 12px; }
+  .chat-activity-bar .activity-status { flex-basis: 100%; }
+  .chat-activity-bar .activity-pick { flex: 1; justify-content: flex-end; }
   .access-note { margin: 0 16px 16px; }
   .lb-stats { display: none; }
+  .lb-row { gap: 10px; padding: 10px 8px; }
+  .lb-score { min-width: 68px; padding: 5px 9px; }
+  .lb-score-val { font-size: 16px; }
 }
 
 /* ===========================================================================
@@ -1676,6 +1719,16 @@ a.share-link:hover { text-decoration: underline; }
 .activity-status .act-me { color: var(--accent); font-weight: 600; }
 .activity-status .act-them { color: var(--accent-2); font-weight: 600; }
 .activity-status .act-sep { margin: 0 8px; color: var(--faint); }
+.activity-status { display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.activity-status::-webkit-scrollbar { display: none; }
+.activity-status > .hint { flex: none; }
+.act-chip {
+  flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--bg-3);
+  color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: border-color .16s ease, background .16s ease;
+}
+.act-chip:hover { filter: none; border-color: var(--accent-2); background: var(--bg-elev); }
 
 /* Share-to-activity image button: a compact, ghosted icon chip. */
 #activityImgBtn {

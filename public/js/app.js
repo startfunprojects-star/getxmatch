@@ -3,6 +3,11 @@
   'use strict';
 
   const root = document.getElementById('app');
+  // Stroke chevrons for arrow buttons: unlike the ‹ › glyphs they sit dead
+  // centre in a round button whatever the font.
+  const CHEVRON_LEFT = '<svg viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>';
+  const CHEVRON_RIGHT = '<svg viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+
   const state = {
     me: null,
     socket: null,
@@ -1300,7 +1305,7 @@
         </aside>
         <div class="main-col">
           <div class="mobile-bar">
-            <button class="ghost small" id="mobileBack" title="Back to the dashboard">← Dashboard</button>
+            <button class="ghost small" id="mobileBack" title="Back to the dashboard">${CHEVRON_LEFT}<span>Dashboard</span></button>
             <span class="mobile-bar-title" id="mobileBarTitle"></span>
           </div>
           <section class="main" id="main"></section>
@@ -1852,7 +1857,7 @@
         <div class="chat-tabs" id="chatTabs"></div>
         <div class="chat-head">
           <div class="group-avatars">${joined.map((m) => `<img class="avatar sm" src="${avatarUrl(m.avatar)}" title="${esc(m.displayName)}"/>`).join('')}</div>
-          <div style="min-width:0;flex:1">
+          <div class="chat-head-id">
             <div class="name">${esc(group.name)}</div>
             <div class="status">${joined.length}/${group.max} member${joined.length === 1 ? '' : 's'}${pending.length ? ` · ${pending.length} invited` : ''}</div>
           </div>
@@ -2050,6 +2055,22 @@
   // admin chose) for the member's chosen country, above the activity feed. The
   // country picker here also sets which country's news the feed shows. An ad
   // from the "alerts_inline" placement sits after the first few alerts.
+  // A "Show N more" button for a list whose rows past the first `keep` start
+  // hidden; once expanded it flips to "Show less" and collapses them again.
+  function showMoreToggle(list, keep, moreLabel) {
+    const btn = el('<button class="ghost small alerts-more" type="button" aria-expanded="false"></button>');
+    btn.textContent = moreLabel;
+    let open = false;
+    btn.addEventListener('click', () => {
+      open = !open;
+      list.querySelectorAll('.alert-item').forEach((r, i) => { if (i >= keep) r.classList.toggle('hidden', !open); });
+      btn.textContent = open ? 'Show less' : moreLabel;
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (!open) list.closest('.alerts-panel')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+    return btn;
+  }
+
   async function renderAlertsInto(box, data) {
     if (!box) return;
     if (!data) {
@@ -2108,12 +2129,7 @@
     });
     if (ad && !ad.parentNode) list.appendChild(ad);
     if (items.length > SHOW) {
-      const more = el(`<button class="ghost small alerts-more" type="button">Show ${items.length - SHOW} more</button>`);
-      more.addEventListener('click', () => {
-        list.querySelectorAll('.alert-item.hidden').forEach((r) => r.classList.remove('hidden'));
-        more.remove();
-      });
-      panel.appendChild(more);
+      panel.appendChild(showMoreToggle(list, SHOW, `Show ${items.length - SHOW} more`));
     }
 
     // Job openings from the admin's job-board feeds, for the country the
@@ -2159,12 +2175,7 @@
         jl.appendChild(row);
       });
       if (jobItems.length > SHOW) {
-        const more = el(`<button class="ghost small alerts-more" type="button">Show ${jobItems.length - SHOW} more jobs</button>`);
-        more.addEventListener('click', () => {
-          jl.querySelectorAll('.alert-item.hidden').forEach((r) => r.classList.remove('hidden'));
-          more.remove();
-        });
-        sec.appendChild(more);
+        sec.appendChild(showMoreToggle(jl, SHOW, `Show ${jobItems.length - SHOW} more jobs`));
       }
       panel.appendChild(sec);
     }
@@ -2234,11 +2245,23 @@
     if (!status) return;
     const ca = state.chatActivity || {};
     const parts = [];
-    if (ca.mine) parts.push(`<span class="act-me">You're ${esc(ca.mine)} ${esc(peerName)}</span>`);
-    if (ca.theirs) parts.push(`<span class="act-them">${esc(peerName)}'s ${esc(ca.theirs)} you</span>`);
+    if (ca.mine) parts.push(`<span class="act-me">${chatActivityIcon(ca.mine)} You're ${esc(ca.mine)} ${esc(peerName)}</span>`);
+    if (ca.theirs) parts.push(`<span class="act-them">${chatActivityIcon(ca.theirs)} ${esc(peerName)}'s ${esc(ca.theirs)} you</span>`);
     status.innerHTML = parts.length
       ? parts.join('<span class="act-sep">·</span>')
-      : '<span class="hint">Set what you’re doing — it shows on Recent Activity.</span>';
+      : '<span class="hint">Set what you’re doing:</span>' +
+        (state.activities || []).map((a) =>
+          `<button type="button" class="act-chip" data-activity="${esc(a)}" title="${esc(a)}">` +
+          `<span aria-hidden="true">${chatActivityIcon(a)}</span>${esc(chatActivityLabel(a))}</button>`).join('');
+  }
+
+  // Icon + short label for each chat activity verb (src/activities.js).
+  const CHAT_ACTIVITY_ICONS = {
+    'chatting with': '💬', 'video calling': '📹', 'getting to know': '🤝', 'vibing with': '🎶', 'texting': '📱',
+  };
+  function chatActivityIcon(activity) { return CHAT_ACTIVITY_ICONS[activity] || '✨'; }
+  function chatActivityLabel(activity) {
+    return String(activity).replace(/\s+with$/, '');
   }
 
   // Reflect the user's own current activity into the picker. Reads the live DOM
@@ -2258,7 +2281,7 @@
 
     // Predefined verbs only (no free text — it shows on the public feed).
     select.innerHTML = '<option value="">— nothing —</option>' +
-      activities.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
+      activities.map((a) => `<option value="${esc(a)}">${chatActivityIcon(a)} ${esc(a)}</option>`).join('');
     bar.classList.remove('hidden');
 
     // Share an image / GIF (to Recent Activity) straight from the chat status bar.
@@ -2301,6 +2324,11 @@
     renderActivityStatus(peerName);
 
     select.addEventListener('change', () => send(select.value)); // a verb, or "" to clear
+    // One-tap chips shown while nothing is set.
+    view.querySelector('#activityStatus').addEventListener('click', (e) => {
+      const chip = e.target.closest('.act-chip');
+      if (chip) send(chip.dataset.activity);
+    });
   }
 
   async function openChat(peer) {
@@ -2327,7 +2355,7 @@
         <div class="chat-tabs" id="chatTabs"></div>
         <div class="chat-head">
           <img class="avatar sm" id="peerAvatar" src="${avatarUrl(peer.avatar)}" style="cursor:pointer" />
-          <div style="min-width:0;flex:1">
+          <div class="chat-head-id">
             <div class="name" id="peerName" style="cursor:pointer">${esc(peer.displayName || peer.username)}</div>
             <div class="status">@${esc(peer.username)}</div>
           </div>
@@ -6325,12 +6353,12 @@
     const box = el(`
       <div class="lightbox slideshow">
         <button class="lb-close" title="Close">✕</button>
-        <button class="ss-nav ss-prev" title="Previous (←)" aria-label="Previous">‹</button>
+        <button class="ss-nav ss-prev" title="Previous (←)" aria-label="Previous">${CHEVRON_LEFT}</button>
         <div class="ss-stage">
           <img class="ss-img" alt="" />
           <div class="ss-caption"></div>
         </div>
-        <button class="ss-nav ss-next" title="Next (→)" aria-label="Next">›</button>
+        <button class="ss-nav ss-next" title="Next (→)" aria-label="Next">${CHEVRON_RIGHT}</button>
         <div class="ss-bar">
           <button class="ss-play" title="Play / pause slideshow">▶</button>
           <span class="ss-count"></span>
@@ -6344,6 +6372,8 @@
     const playBtn = box.querySelector('.ss-play');
 
     const zoom = attachZoom(img, box);
+    // Zoom −/+ sit in the same bottom toolbar as play and the counter.
+    box.querySelector('.ss-bar').appendChild(box.querySelector('.zoom-ctl'));
     const paint = () => {
       const it = items[i];
       zoom.reset(); // each picture starts unzoomed
@@ -6436,7 +6466,7 @@
     const box = el(`
       <div class="lightbox photo-viewer${multi ? ' pv-multi' : ''}">
         <button class="lb-close" title="Close">✕</button>
-        <button class="pv-nav pv-prev" title="Previous (←)" aria-label="Previous">‹</button>
+        <button class="pv-nav pv-prev" title="Previous (←)" aria-label="Previous">${CHEVRON_LEFT}</button>
         <div class="pv-shell">
           <div class="pv-media"><img alt="" /><video class="hidden" controls playsinline preload="metadata"></video></div>
           <div class="pv-panel">
@@ -6449,7 +6479,7 @@
             <div id="pvPhotoForm"></div>
           </div>
         </div>
-        <button class="pv-nav pv-next" title="Next (→)" aria-label="Next">›</button>
+        <button class="pv-nav pv-next" title="Next (→)" aria-label="Next">${CHEVRON_RIGHT}</button>
       </div>
     `);
     const mediaImg = box.querySelector('.pv-media img');
@@ -9488,6 +9518,12 @@
   }
 
   /* ---------- Leaderboard ---------- */
+  // 1234 → "1,234"; negatives keep a proper minus sign.
+  function fmtPoints(n) {
+    const v = Number(n) || 0;
+    return (v < 0 ? '−' : '') + Math.abs(v).toLocaleString();
+  }
+
   async function renderLeaderboard() {
     const main = openMainView();
     main.appendChild(sectionShell('Leaderboard', 'Kings & Queens ranks everyone by overall points. The four quiz boards rank members by the points they earned in that category’s quizzes. Points can go below zero: a stopped quiz and every quiz reattempt cost 10 points. Earn points from quizzes, ratings, Highway likes, friends and accepted friend requests (the sender pays your friend fee, you earn double), polls (5 per poll), compatibility links (10 for sharing, 5 for answering) and followers (1 each).'));
@@ -9534,7 +9570,7 @@
         list.appendChild(el(`<div class="empty-main">${kq ? 'No ranked members yet.' : `No one has points in ${esc(board.label)} yet — take one of its quizzes to be first!`}</div>`));
       }
       board.rows.forEach((r) => {
-        const medal = r.rank === 1 ? (kq ? '👑' : '🥇') : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : `#${r.rank}`;
+        const medal = r.rank === 1 ? (kq ? '👑' : '🥇') : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : `<span class="lb-rank-num">${r.rank}</span>`;
         const row = el(`
           <div class="lb-row${r.isMe ? ' me' : ''}${kq && r.rank <= 3 ? ' lb-top' : ''}">
             <div class="lb-rank">${medal}</div>
@@ -9545,15 +9581,17 @@
             </div>
             <div class="lb-stats">
               ${kq ? `
-              <span title="Average rating">⭐ ${r.ratingAvg || '—'}</span>
-              <span title="Likes received on the Highway">❤️ ${r.likes || 0}</span>
-              <span title="Friends">👥 ${r.friends}</span>
-              <span title="Quizzes">🧠 ${r.quizzes}</span>
-              <span title="Polls voted in">📊 ${r.polls || 0}</span>
-              <span title="Followers">➕ ${r.followers || 0}</span>` : `
-              <span title="Overall points (Kings &amp; Queens)">👑 ${r.totalPoints} overall</span>`}
+              <span class="lb-stat" title="Average rating">⭐ <b>${r.ratingAvg || '—'}</b></span>
+              <span class="lb-stat" title="Likes received on the Highway">❤️ <b>${fmtPoints(r.likes || 0)}</b></span>
+              <span class="lb-stat" title="Friends">👥 <b>${fmtPoints(r.friends || 0)}</b></span>
+              <span class="lb-stat" title="Quizzes">🧠 <b>${fmtPoints(r.quizzes || 0)}</b></span>
+              <span class="lb-stat" title="Polls voted in">📊 <b>${fmtPoints(r.polls || 0)}</b></span>
+              <span class="lb-stat" title="Followers">➕ <b>${fmtPoints(r.followers || 0)}</b></span>` : `
+              <span class="lb-stat" title="Overall points (Kings &amp; Queens)">👑 <b>${fmtPoints(r.totalPoints)}</b> overall</span>`}
             </div>
-            <div class="lb-score${r.points < 0 ? ' neg' : ''}" title="${kq ? `Overall points${r.penalty ? ` (${r.penalty} deducted for stopped quizzes and reattempts)` : ''}` : `Points in ${esc(board.label)} quizzes`}">${r.points} pts</div>
+            <div class="lb-score${r.points < 0 ? ' neg' : ''}${r.rank <= 3 ? ' lb-score-' + r.rank : ''}" title="${kq ? `Overall points${r.penalty ? ` (${r.penalty} deducted for stopped quizzes and reattempts)` : ''}` : `Points in ${esc(board.label)} quizzes`}">
+              <span class="lb-score-val">${fmtPoints(r.points)}</span><span class="lb-score-unit">${Math.abs(r.points) === 1 ? 'point' : 'points'}</span>
+            </div>
             <div class="lb-action"></div>
           </div>
         `);
