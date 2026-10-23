@@ -80,8 +80,10 @@ router.get('/quizzes', requireAuth, (req, res) => {
 
 // GET /api/content/quizzes/:id — full quiz (prompts + options; no answers exist).
 router.get('/quizzes/:id', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT id, title, description, questions, seo FROM quizzes WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, title, description, questions, seo, type FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Quiz not found.' });
+  // A standard quiz's questions are only served one at a time, during an attempt.
+  if (isGraded(row.type)) return res.status(403).json({ error: 'Open this quiz’s page to attempt it.' });
   const questions = parseJson(row.questions, []).map((q) => ({
     prompt: q.prompt,
     options: Array.isArray(q.options) ? q.options : [],
@@ -188,17 +190,30 @@ function sessionState(sess, questions, graded) {
   let remainingMs = null;
   let q = null;
   let opts = null;
+  let question = null;
   if (!done) {
     const ord = sessionOrder(sess, questions);
     q = ord.order[index];
     opts = ord.opts[q];
-    const { seconds } = questionMeta(questions[q]);
-    if (seconds) remainingMs = Math.max(0, seconds * 1000 - (Date.now() - (sess.q_started_at || Date.now())));
+    const meta = questionMeta(questions[q]);
+    if (meta.seconds) remainingMs = Math.max(0, meta.seconds * 1000 - (Date.now() - (sess.q_started_at || Date.now())));
+    // Only the current question is ever sent (never the page or any earlier
+    // request), so a quiz can't be read and looked up before its timers run.
+    const src = questions[q] || {};
+    const options = Array.isArray(src.options) ? src.options : [];
+    question = {
+      prompt: String(src.prompt || ''),
+      options: (opts || options.map((_o, k) => k)).map((oi) => ({ value: oi, text: String(options[oi] == null ? '' : options[oi]) })),
+      points: meta.points,
+      seconds: meta.seconds,
+    };
   }
   return {
     index,
+    total: questions.length,
     q,
     opts,
+    question,
     done,
     remainingMs,
     points: graded && !done ? null : sess.points || 0,

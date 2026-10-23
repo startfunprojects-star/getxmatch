@@ -55,6 +55,8 @@ app.use(
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
+// Device cookie for the multi-account checks (src/devices.js).
+app.use(require('./src/devices').deviceCookie);
 
 // Persisted profile & gallery images.
 // Uploaded pictures and videos load inside pages only: opening one directly

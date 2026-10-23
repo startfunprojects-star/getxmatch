@@ -74,6 +74,7 @@ function requireAuth(req, res, next) {
     });
   }
   req.user = user;
+  if (req.deviceId) require('./devices').recordDevice(user.id, req.deviceId, req.ip);
   next();
 }
 
@@ -82,6 +83,7 @@ function requireAuth(req, res, next) {
 function optionalAuth(req, res, next) {
   const user = userFromToken(req.cookies ? req.cookies[config.cookieName] : null);
   req.user = user && suspensionRemaining(user) === 0 ? user : null;
+  if (req.user && req.deviceId) require('./devices').recordDevice(req.user.id, req.deviceId, req.ip);
   next();
 }
 

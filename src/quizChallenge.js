@@ -7,9 +7,20 @@
 // Whoever scores more points wins and takes the loser's points for that
 // attempt (the loser drops by the same amount). A tie moves no points. A
 // challenger stopped for leaving full screen forfeits.
+//
+// Collusion checks (someone feeding points to themselves with a second
+// account): accounts linked by a shared device can't challenge each other, an
+// account must be a day old to accept, and one pair of members can finish at
+// most PAIR_LIMIT challenges a week.
 
 const db = require('./db');
 const { correctOption } = require('./quizTypes');
+const { areLinked } = require('./devices');
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MIN_ACCOUNT_AGE_MS = DAY_MS;
+const PAIR_LIMIT = 3;
+const PAIR_WINDOW_MS = 7 * DAY_MS;
 
 function parseJson(raw, fallback) {
   if (!raw) return fallback;
@@ -41,8 +52,22 @@ function attemptedOutside(userId, quizId, matchId) {
   );
 }
 
+// Challenges the two members finished against each other (either way round)
+// in the last PAIR_WINDOW_MS.
+function recentPairChallenges(a, b) {
+  return db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM quiz_matches
+        WHERE challenge = 1 AND completed_at > ?
+          AND ((a_user_id = ? AND b_user_id = ?) OR (a_user_id = ? AND b_user_id = ?))`
+    )
+    .get(Date.now() - PAIR_WINDOW_MS, a, b, b, a).n;
+}
+
 // Why `userId` can't take this challenge, or null if they can.
 //   own | done | expired | taken (someone else accepted it) | attempted
+//   | linked (same device as the sharer) | new (account under a day old)
+//   | pair (PAIR_LIMIT challenges between them this week)
 function whyNot(m, userId) {
   if (m.a_user_id === userId) return { code: 'own', error: 'This is your own challenge — share the link with someone else.' };
   if (m.completed_at) return { code: 'done', error: 'This challenge is already over.' };
@@ -50,6 +75,17 @@ function whyNot(m, userId) {
   if (Date.now() > m.expires_at) return { code: 'expired', error: 'This challenge link has expired.' };
   if (attemptedOutside(userId, m.quiz_id, m.id)) {
     return { code: 'attempted', error: 'You’ve already taken this quiz, so you can’t accept a challenge on it.' };
+  }
+  if (m.b_user_id === userId) return null; // already accepted: let them carry on
+  if (areLinked(m.a_user_id, userId)) {
+    return { code: 'linked', error: 'This challenge was shared from an account used on the same device as yours, so you can’t accept it.' };
+  }
+  const me = db.prepare('SELECT created_at FROM users WHERE id = ?').get(userId);
+  if (me && Date.now() - me.created_at < MIN_ACCOUNT_AGE_MS) {
+    return { code: 'new', error: 'New accounts can accept challenges one day after signing up.' };
+  }
+  if (m.a_user_id && recentPairChallenges(m.a_user_id, userId) >= PAIR_LIMIT) {
+    return { code: 'pair', error: `You and ${displayName(m.a_user_id)} have already played ${PAIR_LIMIT} challenges this week. Try again in a few days.` };
   }
   return null;
 }

@@ -55,42 +55,65 @@ const WEIGHTS = {
   blogLike: 1, // per like received on a blog post you wrote (src/blogs.js)
 };
 
+// SQL: members x and y aren't linked accounts (seen on the same device, see
+// src/devices.js). Points linked accounts give each other don't count, so a
+// member can't farm them with accounts of their own.
+const notLinked = (x, y) => `NOT EXISTS (SELECT 1 FROM linked_accounts la WHERE la.a_id = ${x} AND la.b_id = ${y})`;
+// Challenge points from matches between linked accounts don't count either.
+const CHALLENGE_OK = `NOT EXISTS (SELECT 1 FROM quiz_matches cm JOIN linked_accounts la
+                                     ON la.a_id = cm.a_user_id AND la.b_id = cm.b_user_id
+                                  WHERE cm.id = qc.match_id)`;
+
 // Point totals for every member, or just `userId` when given.
 function scoreRows(userId) {
   const rows = db
     .prepare(
       `SELECT u.id, u.username, p.display_name, p.avatar, p.country,
-              (SELECT COUNT(*) FROM ratings r WHERE r.ratee_id = u.id)         AS rating_count,
-              (SELECT AVG(stars) FROM ratings r WHERE r.ratee_id = u.id)       AS rating_avg,
+              (SELECT COUNT(*) FROM ratings r WHERE r.ratee_id = u.id
+                  AND ${notLinked('r.rater_id', 'u.id')})                     AS rating_count,
+              (SELECT AVG(stars) FROM ratings r WHERE r.ratee_id = u.id
+                  AND ${notLinked('r.rater_id', 'u.id')})                     AS rating_avg,
               (SELECT COUNT(*) FROM friendships f
                  WHERE (f.requester_id = u.id OR f.addressee_id = u.id)
-                   AND f.status = 'accepted')                                  AS friends,
+                   AND f.status = 'accepted'
+                   AND ${notLinked('f.requester_id', 'f.addressee_id')})       AS friends,
               (SELECT COUNT(DISTINCT quiz_id) FROM quiz_attempts q
                 WHERE q.user_id = u.id)                                        AS quizzes,
               COALESCE(qb.quiz_points, 0)                                      AS quiz_points,
               (SELECT COUNT(*) FROM highway_likes hl
                  JOIN highway_posts hp ON hp.id = hl.post_id
-                WHERE hp.user_id = u.id)                                       AS likes,
+                WHERE hp.user_id = u.id AND hl.user_id != u.id
+                  AND ${notLinked('hl.user_id', 'u.id')})                     AS likes,
               (SELECT COUNT(*) FROM poll_votes pv WHERE pv.user_id = u.id)     AS polls,
-              (SELECT COUNT(*) FROM follows fo WHERE fo.followee_id = u.id)    AS followers,
+              (SELECT COUNT(*) FROM follows fo WHERE fo.followee_id = u.id
+                  AND ${notLinked('fo.follower_id', 'u.id')})                 AS followers,
               (SELECT COALESCE(SUM(fee), 0) FROM friendships ff
-                WHERE ff.addressee_id = u.id AND ff.status = 'accepted')       AS friend_fees_in,
+                WHERE ff.addressee_id = u.id AND ff.status = 'accepted'
+                  AND ${notLinked('ff.requester_id', 'u.id')})                AS friend_fees_in,
               (SELECT COALESCE(SUM(fee), 0) FROM friendships ff
-                WHERE ff.requester_id = u.id AND ff.status = 'accepted')       AS friend_fees_out,
+                WHERE ff.requester_id = u.id AND ff.status = 'accepted'
+                  AND ${notLinked('ff.addressee_id', 'u.id')})                AS friend_fees_out,
               (SELECT COUNT(*) FROM quiz_matches qm
-                WHERE qm.a_user_id = u.id AND qm.points_awarded = 1)           AS shares_completed,
+                WHERE qm.a_user_id = u.id AND qm.points_awarded = 1
+                  AND ${notLinked('qm.b_user_id', 'u.id')})                   AS shares_completed,
               (SELECT COUNT(*) FROM quiz_matches qm
-                WHERE qm.b_user_id = u.id AND qm.points_awarded = 1)           AS shared_answered,
+                WHERE qm.b_user_id = u.id AND qm.points_awarded = 1
+                  AND ${notLinked('qm.a_user_id', 'u.id')})                   AS shared_answered,
               (SELECT COUNT(*) FROM open_match_responses om
-                WHERE om.a_user_id = u.id AND om.points_awarded = 1)           AS open_shares_answered,
+                WHERE om.a_user_id = u.id AND om.points_awarded = 1
+                  AND ${notLinked('om.user_id', 'u.id')})                     AS open_shares_answered,
               (SELECT COUNT(*) FROM open_match_responses om
-                WHERE om.user_id = u.id AND om.points_awarded = 1)             AS open_answered,
-              (SELECT COUNT(*) FROM users ru WHERE ru.referred_by = u.id)      AS referrals,
+                WHERE om.user_id = u.id AND om.points_awarded = 1
+                  AND ${notLinked('om.a_user_id', 'u.id')})                   AS open_answered,
+              (SELECT COUNT(*) FROM users ru WHERE ru.referred_by = u.id
+                  AND ${notLinked('ru.id', 'u.id')})                          AS referrals,
               (SELECT COUNT(*) FROM blog_likes bl JOIN blogs bb ON bb.id = bl.blog_id
-                WHERE bb.user_id = u.id)                                       AS blog_likes,
-              (CASE WHEN u.referred_by IS NULL THEN 0 ELSE 1 END)              AS was_referred,
+                WHERE bb.user_id = u.id AND bl.user_id != u.id
+                  AND ${notLinked('bl.user_id', 'u.id')})                     AS blog_likes,
+              (CASE WHEN u.referred_by IS NULL OR NOT ${notLinked('u.referred_by', 'u.id')}
+                    THEN 0 ELSE 1 END)                                         AS was_referred,
               (SELECT COALESCE(SUM(points), 0) FROM quiz_challenge_points qc
-                WHERE qc.user_id = u.id)                                       AS challenge_points,
+                WHERE qc.user_id = u.id AND ${CHALLENGE_OK})                  AS challenge_points,
               (SELECT COALESCE(SUM(points), 0) FROM quiz_penalties qp
                 WHERE qp.user_id = u.id)                                       AS penalty
        FROM users u
@@ -183,7 +206,7 @@ function rankedUsers() {
   for (const r of db.prepare(
     `SELECT qc.user_id, q.category, SUM(qc.points) AS pts
        FROM quiz_challenge_points qc JOIN quizzes q ON q.id = qc.quiz_id
-      WHERE q.category IS NOT NULL
+      WHERE q.category IS NOT NULL AND ${CHALLENGE_OK}
       GROUP BY qc.user_id, q.category`
   ).all()) addCat(r.user_id, r.category, r.pts);
   for (const row of scored) row.categoryPoints = byCat.get(row.id) || {};

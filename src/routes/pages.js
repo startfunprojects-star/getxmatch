@@ -398,27 +398,19 @@ router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
 
   const loggedIn = !!req.user;
   const questions = parseJson(row.questions, []);
-  // Per-question points and time limit, as set by the admin (0 = none).
+  // Per-question points, as set by the admin (0 = none).
   const qPoints = (q) => (Number.isInteger(q.points) && q.points > 0 ? q.points : 0);
-  const qSeconds = (q) => (Number.isInteger(q.seconds) && q.seconds > 0 ? q.seconds : 0);
   const totalPoints = questions.reduce((a, q) => a + qPoints(q), 0);
   const negMarks = row.negative_marks || 0;
-  const qHtml = questions.map((q, i) => {
-    const opts = Array.isArray(q.options) ? q.options : [];
-    const optHtml = opts.map((o, oi) =>
-      `<label class="gx-qopt"><input type="radio" name="q${i}" value="${oi}" /><span>${esc(o)}</span></label>`
-    ).join('');
-    const meta = [
-      qPoints(q) ? `${qPoints(q)} point${qPoints(q) === 1 ? '' : 's'}` : '',
-      qSeconds(q) ? `${qSeconds(q)} seconds` : 'No time limit',
-    ].filter(Boolean).join(' · ');
-    return `
-    <fieldset class="gx-q" data-q="${i}" data-points="${qPoints(q)}" data-seconds="${qSeconds(q)}">
-      <legend><span class="gx-qn">${i + 1}.</span> ${esc(q.prompt)}</legend>
-      <p class="gx-qmeta">${meta}</p>
-      ${optHtml}
+  // The questions aren't in the page: during an attempt the server sends each
+  // one as it starts (public/js/attempt.js fills this fieldset), so a quiz
+  // can't be read from the page source and looked up before its timers run.
+  const qHtml = `
+    <fieldset class="gx-q">
+      <legend><span class="gx-qn"></span> <span class="gx-qprompt"></span></legend>
+      <p class="gx-qmeta"></p>
+      <div class="gx-qopts"></div>
     </fieldset>`;
-  }).join('');
 
   const seoDescriptor = resolveSeo(s, {
     canonicalPath: chk.canonical,
@@ -433,7 +425,8 @@ router.get('/quizzes/:id/:slug?', optionalAuth, (req, res, next) => {
       '@context': 'https://schema.org', '@type': 'Quiz',
       name: row.title, description: row.description || undefined, url: absUrl(chk.canonical),
       numberOfQuestions: questions.length,
-      hasPart: questions.map((q) => ({
+      // A standard quiz's questions (they have right answers) stay private.
+      hasPart: graded ? undefined : questions.map((q) => ({
         '@type': 'Question',
         name: q.prompt,
         suggestedAnswer: (Array.isArray(q.options) ? q.options : []).map((o) => ({ '@type': 'Answer', text: o })),

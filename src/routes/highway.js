@@ -309,6 +309,9 @@ router.post('/:id/like', requireAuth, (req, res) => {
   }
   const existing = db.prepare('SELECT id FROM highway_likes WHERE post_id = ? AND user_id = ?').get(post.id, req.user.id);
   const liking = !existing;
+  // Likes earn the author points, so a member can't like their own post
+  // (an old self-like can still be taken back).
+  if (liking && post.user_id === req.user.id) return res.status(400).json({ error: 'You can’t like your own post.' });
   if (existing) {
     db.prepare('DELETE FROM highway_likes WHERE id = ?').run(existing.id);
   } else {

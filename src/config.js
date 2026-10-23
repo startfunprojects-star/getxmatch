@@ -31,6 +31,12 @@ const config = {
   otpTtlMs: (parseInt(process.env.OTP_TTL_MIN, 10) || 10) * 60 * 1000,
   otpMaxAttempts: parseInt(process.env.OTP_MAX_ATTEMPTS, 10) || 5,
 
+  // Multi-account limits (src/devices.js): new accounts per network (IP) per
+  // 24 hours — generous, since a campus or office shares one IP — and per
+  // browser/device per 30 days.
+  signupMaxPerIpDay: parseInt(process.env.SIGNUP_MAX_PER_IP_DAY, 10) || 10,
+  signupMaxPerDevice: parseInt(process.env.SIGNUP_MAX_PER_DEVICE, 10) || 2,
+
   // Admin password reset link lifetime.
   adminResetTtlMs: (parseInt(process.env.ADMIN_RESET_TTL_MIN, 10) || 60) * 60 * 1000,
 

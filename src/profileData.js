@@ -430,7 +430,7 @@ function buildProfile(userId, viewerId) {
     // Total likes this user has received on their Highway posts (shared images
     // included). Shown on the profile and factored into leaderboard ranking.
     likes: db
-      .prepare('SELECT COUNT(*) AS n FROM highway_likes hl JOIN highway_posts hp ON hp.id = hl.post_id WHERE hp.user_id = ?')
+      .prepare('SELECT COUNT(*) AS n FROM highway_likes hl JOIN highway_posts hp ON hp.id = hl.post_id WHERE hp.user_id = ? AND hl.user_id != hp.user_id')
       .get(row.id).n,
     comments: full ? commentsFor(row.id, viewerId) : [],
     // Followers / following, the fee a new follower pays, and whether the

@@ -147,7 +147,9 @@
     var earnedEl = step.querySelector('.gx-earned');
     var timerEl = step.querySelector('.gx-timer');
     var timebar = step.querySelector('.gx-timebar');
-    var fieldsets = form.querySelectorAll('.gx-q');
+    // One fieldset, filled with each question as the server sends it.
+    var fs = form.querySelector('.gx-q');
+    var total = 0;
     var submitBtn = form.querySelector('.gx-submit');
 
     var session = null;
@@ -268,31 +270,40 @@
 
     // Show the question at position `state.index` with its countdown
     // (remainingMs is measured by the server, so the local clock's accuracy
-    // doesn't matter). Every attempt has its own random order: state.q is the
-    // question to show there and state.opts its options in display order (the
-    // radio values stay the original option indexes).
+    // doesn't matter). state.question is the only copy of the question the
+    // page gets: its prompt, and its options in this attempt's random order
+    // (each radio's value is the option's original index).
     function showQuestion(state) {
       stopQuestionTimer();
       qIndex = state.index;
-      var shown = state.q != null ? state.q : qIndex;
-      for (var i = 0; i < fieldsets.length; i++) fieldsets[i].hidden = i !== shown;
-      var fs = fieldsets[shown];
-      var num = fs.querySelector('.gx-qn');
-      if (num) num.textContent = (qIndex + 1) + '.';
-      if (state.opts) {
-        var byValue = {};
-        var labels = fs.querySelectorAll('.gx-qopt');
-        for (var k = 0; k < labels.length; k++) {
-          var inp = labels[k].querySelector('input');
-          if (inp) { byValue[inp.value] = labels[k]; inp.checked = false; }
-        }
-        state.opts.forEach(function (oi) { if (byValue[oi]) fs.appendChild(byValue[oi]); });
-      }
-      var secs = parseInt(fs.getAttribute('data-seconds'), 10) || 0;
-      progressEl.textContent = 'Question ' + (qIndex + 1) + ' of ' + fieldsets.length;
+      if (state.total) total = state.total;
+      var qq = state.question || { prompt: '', options: [], points: 0, seconds: 0 };
+      fs.querySelector('.gx-qn').textContent = (qIndex + 1) + '.';
+      fs.querySelector('.gx-qprompt').textContent = qq.prompt;
+      fs.querySelector('.gx-qmeta').textContent = [
+        qq.points ? qq.points + ' point' + (qq.points === 1 ? '' : 's') : '',
+        qq.seconds ? qq.seconds + ' seconds' : 'No time limit',
+      ].filter(Boolean).join(' · ');
+      var optsBox = fs.querySelector('.gx-qopts');
+      optsBox.innerHTML = '';
+      qq.options.forEach(function (o) {
+        var label = document.createElement('label');
+        label.className = 'gx-qopt';
+        var inp = document.createElement('input');
+        inp.type = 'radio';
+        inp.name = 'gxq';
+        inp.value = String(o.value);
+        var span = document.createElement('span');
+        span.textContent = o.text;
+        label.appendChild(inp);
+        label.appendChild(span);
+        optsBox.appendChild(label);
+      });
+      var secs = qq.seconds || 0;
+      progressEl.textContent = 'Question ' + (qIndex + 1) + ' of ' + total;
       // Standard quizzes keep the score hidden until the end (points is null).
       earnedEl.textContent = !state.maxPoints ? '' : state.points == null ? 'Score shown at the end' : state.points + ' / ' + state.maxPoints + ' pts';
-      submitBtn.textContent = qIndex === fieldsets.length - 1 ? 'Finish quiz' : 'Next';
+      submitBtn.textContent = qIndex === total - 1 ? 'Finish quiz' : 'Next';
       submitBtn.disabled = false;
       step.hidden = false;
       if (secs && state.remainingMs != null) {
@@ -591,7 +602,7 @@
     // Send the current question's answer (or a timeout) and move on.
     function sendAnswer(timedOut) {
       if (!active || answering) return;
-      var picked = form.querySelector('.gx-q:not([hidden]) input[type="radio"]:checked');
+      var picked = form.querySelector('.gx-q input[type="radio"]:checked');
       if (!picked && !timedOut) { showNote('Pick an answer, or wait for the timer to skip this question.'); return; }
       answering = true;
       stopQuestionTimer();

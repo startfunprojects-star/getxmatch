@@ -14,6 +14,7 @@ const mail = require('../mail');
 const account = require('../account');
 const guardian = require('../guardian');
 const { isMinor } = require('../relations');
+const { canonicalEmail, isDisposableEmail } = require('../emailCanon');
 const { requireAuth, signToken, setAuthCookie, clearAuthCookie } = require('../auth');
 const { disconnectUser } = require('../socket');
 
@@ -91,7 +92,8 @@ router.post('/email/start', requireAuth, sensitiveLimiter, async (req, res) => {
   if (!passwordOk(u, req.body && req.body.password)) return res.status(400).json({ error: 'Your password is not correct.' });
   if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
   if (email === u.email) return res.status(400).json({ error: 'That is already your email address.' });
-  if (db.prepare('SELECT 1 FROM users WHERE email = ? AND id != ?').get(email, u.id)) {
+  if (isDisposableEmail(email)) return res.status(400).json({ error: 'Please use your own email address — temporary inboxes aren’t accepted.' });
+  if (db.prepare('SELECT 1 FROM users WHERE (email = ? OR email_canon = ?) AND id != ?').get(email, canonicalEmail(email), u.id)) {
     return res.status(409).json({ error: 'That email is already used by another account.' });
   }
   const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
@@ -122,11 +124,11 @@ router.post('/email/verify', requireAuth, sensitiveLimiter, (req, res) => {
     const left = config.otpMaxAttempts - (pending.attempts + 1);
     return res.status(400).json({ error: `Incorrect code.${left > 0 ? ` ${left} attempt(s) left.` : ''}` });
   }
-  if (db.prepare('SELECT 1 FROM users WHERE email = ? AND id != ?').get(pending.new_email, u.id)) {
+  if (db.prepare('SELECT 1 FROM users WHERE (email = ? OR email_canon = ?) AND id != ?').get(pending.new_email, canonicalEmail(pending.new_email), u.id)) {
     drop();
     return res.status(409).json({ error: 'That email is already used by another account.' });
   }
-  db.prepare('UPDATE users SET email = ? WHERE id = ?').run(pending.new_email, u.id);
+  db.prepare('UPDATE users SET email = ?, email_canon = ? WHERE id = ?').run(pending.new_email, canonicalEmail(pending.new_email), u.id);
   drop();
   if (u.email) mail.sendEmailChangedNotice(u.email, pending.new_email, u.username).catch(() => {});
   res.json({ ok: true, email: pending.new_email });

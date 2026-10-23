@@ -7667,7 +7667,7 @@
     const likes = p.likes || { count: 0, mine: false };
     const foot = el(`
       <div class="hw-foot">
-        <button class="hw-like${likes.mine ? ' on' : ''}" type="button" title="Like this post">
+        <button class="hw-like${likes.mine ? ' on' : ''}" type="button" title="${p.mine ? 'You can’t like your own post' : 'Like this post'}"${p.mine && !likes.mine ? ' disabled' : ''}>
           <span class="hw-like-ico">${likes.mine ? '❤️' : '🤍'}</span>
         </button>
         <button class="hw-like-n" type="button" title="See who liked this">${likesLabel(likes.count)}</button>

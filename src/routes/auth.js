@@ -12,6 +12,7 @@ const { sendSignupOtp, sendPasswordResetCode, sendPasswordChangedNotice } = requ
 const { disconnectUser } = require('../socket');
 const F = require('../profileFields');
 const { signToken, setAuthCookie, clearAuthCookie, requireAuth } = require('../auth');
+const devices = require('../devices');
 
 const router = express.Router();
 
@@ -80,6 +81,8 @@ router.post('/signup/start', authLimiter, async (req, res) => {
   if (existing) {
     return res.status(409).json({ error: 'That username or email is already taken.' });
   }
+  const blocked = devices.signupBlock(emailLc, req.deviceId, req.ip);
+  if (blocked) return res.status(409).json({ error: blocked });
 
   if (referralCode && !referrals.referrerId(referralCode)) {
     return res.status(400).json({ error: 'That referral code is not valid. Check it or leave it blank.' });
@@ -151,13 +154,21 @@ router.post('/signup/verify', authLimiter, (req, res) => {
     db.prepare('DELETE FROM email_otps WHERE email = ?').run(emailLc);
     return res.status(409).json({ error: 'That username or email is already taken.' });
   }
+  // Re-checked here: the limits may have been reached since the code was sent.
+  const blocked = devices.signupBlock(emailLc, req.deviceId, req.ip);
+  if (blocked) {
+    db.prepare('DELETE FROM email_otps WHERE email = ?').run(emailLc);
+    return res.status(409).json({ error: blocked });
+  }
 
   const now = Date.now();
   const info = db
-    .prepare(`INSERT INTO users (username, email, password_hash, created_at, education, education_stream, work_status)
-              VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .prepare(`INSERT INTO users (username, email, password_hash, created_at, education, education_stream, work_status,
+                                 email_canon, signup_ip, signup_device)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(pending.username, emailLc, pending.password_hash, now,
-      pending.education, pending.education_stream, pending.work_status);
+      pending.education, pending.education_stream, pending.work_status,
+      devices.canonicalEmail(emailLc), req.ip || null, req.deviceId || null);
   db.prepare('DELETE FROM email_otps WHERE email = ?').run(emailLc);
 
   const user = {
@@ -166,6 +177,7 @@ router.post('/signup/verify', authLimiter, (req, res) => {
   };
   referrals.ensureCode(user.id);
   if (pending.referral_code) referrals.applyReferral(user.id, pending.referral_code);
+  devices.recordDevice(user.id, req.deviceId, req.ip);
   recordLogin(user.id);
   setAuthCookie(res, signToken(user));
 

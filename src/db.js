@@ -1249,4 +1249,41 @@ db.exec(`
   `);
 })();
 
+// --- Migration: multi-account checks (src/devices.js). user_devices records
+// every browser (device cookie) a member signs in from; two members seen on
+// the same device are linked_accounts (one row each way), and points they
+// give each other don't count. users.email_canon is the email with Gmail dots
+// and "+tags" removed, so aliases of one inbox can't open several accounts;
+// signup_ip / signup_device cap how many accounts one network or device opens.
+(function migrateMultiAccount() {
+  const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!cols.includes('email_canon')) db.exec('ALTER TABLE users ADD COLUMN email_canon TEXT;');
+  if (!cols.includes('signup_ip')) db.exec('ALTER TABLE users ADD COLUMN signup_ip TEXT;');
+  if (!cols.includes('signup_device')) db.exec('ALTER TABLE users ADD COLUMN signup_device TEXT;');
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_users_email_canon ON users (email_canon);
+    CREATE INDEX IF NOT EXISTS idx_users_signup_ip ON users (signup_ip, created_at);
+    CREATE INDEX IF NOT EXISTS idx_users_signup_device ON users (signup_device, created_at);
+    CREATE TABLE IF NOT EXISTS user_devices (
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      device_id  TEXT NOT NULL,
+      ip         TEXT,
+      first_seen INTEGER NOT NULL,
+      last_seen  INTEGER NOT NULL,
+      PRIMARY KEY (user_id, device_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_devices_device ON user_devices (device_id);
+    CREATE TABLE IF NOT EXISTS linked_accounts (
+      a_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      b_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (a_id, b_id)
+    );
+  `);
+  const { canonicalEmail } = require('./emailCanon');
+  const rows = db.prepare('SELECT id, email FROM users WHERE email_canon IS NULL').all();
+  const set = db.prepare('UPDATE users SET email_canon = ? WHERE id = ?');
+  for (const r of rows) set.run(canonicalEmail(r.email), r.id);
+})();
+
 module.exports = db;
