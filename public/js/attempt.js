@@ -448,6 +448,146 @@
         .catch(function () { startBtn.disabled = false; exitFs(); showNote('Network error — please try again.'); });
     });
 
+    // Celebration for a correct answer (the server picks which ones): firework
+    // bursts, confetti, a pop-up cheer and a synthesised "hurray". It sits in
+    // `root` so it shows in full screen, and never takes clicks.
+    var CHEERS = ['Yeee! 🎉', 'Hurray! 🥳', 'Woohoo! 🔥', 'Boom! 💥', 'Nailed it! 🎯', 'Yesss! ✨'];
+    var COLORS = ['#ff4d6d', '#ffd166', '#06d6a0', '#4cc9f0', '#b388ff', '#ff9f1c', '#ffffff'];
+    var audioCtx = null;
+
+    function playHurray() {
+      try {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        if (!audioCtx) audioCtx = new AC();
+        var ac = audioCtx;
+        if (ac.state === 'suspended') ac.resume();
+        var t0 = ac.currentTime;
+        var out = ac.createGain();
+        out.gain.value = 0.5;
+        out.connect(ac.destination);
+        var noise = function (len) {
+          var buf = ac.createBuffer(1, Math.floor(ac.sampleRate * len), ac.sampleRate);
+          var data = buf.getChannelData(0);
+          for (var i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
+          var src = ac.createBufferSource();
+          src.buffer = buf;
+          return src;
+        };
+        // Firework pops: short bursts of filtered noise.
+        [0, 0.18, 0.32, 0.5].forEach(function (at) {
+          var s = noise(0.25);
+          var f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 900 + Math.random() * 1500;
+          var g = ac.createGain();
+          g.gain.setValueAtTime(0.9, t0 + at);
+          g.gain.exponentialRampToValueAtTime(0.001, t0 + at + 0.22);
+          s.connect(f); f.connect(g); g.connect(out);
+          s.start(t0 + at); s.stop(t0 + at + 0.25);
+        });
+        // "Hurray": a quick rising major arpeggio.
+        [523.25, 659.25, 783.99, 1046.5].forEach(function (hz, i) {
+          var o = ac.createOscillator(); o.type = 'triangle'; o.frequency.value = hz;
+          var g = ac.createGain();
+          var at = t0 + 0.1 + i * 0.09;
+          g.gain.setValueAtTime(0, at);
+          g.gain.linearRampToValueAtTime(0.25, at + 0.02);
+          g.gain.exponentialRampToValueAtTime(0.001, at + (i === 3 ? 0.7 : 0.25));
+          o.connect(g); g.connect(out);
+          o.start(at); o.stop(at + 0.75);
+        });
+        // Crowd cheer: band-passed noise that swells and fades.
+        var crowd = noise(1.4);
+        var bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1400; bp.Q.value = 0.8;
+        var cg = ac.createGain();
+        cg.gain.setValueAtTime(0, t0 + 0.1);
+        cg.gain.linearRampToValueAtTime(0.35, t0 + 0.4);
+        cg.gain.exponentialRampToValueAtTime(0.001, t0 + 1.5);
+        crowd.connect(bp); bp.connect(cg); cg.connect(out);
+        crowd.start(t0 + 0.1); crowd.stop(t0 + 1.5);
+      } catch (_e) { /* sound is a nice-to-have */ }
+    }
+
+    function celebrate() {
+      playHurray();
+      var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var cheer = document.createElement('div');
+      cheer.textContent = CHEERS[Math.floor(Math.random() * CHEERS.length)];
+      cheer.style.cssText = 'position:fixed;left:50%;top:38%;z-index:2147483647;pointer-events:none;' +
+        'font:800 clamp(34px,8vw,72px)/1 system-ui,sans-serif;color:#fff;white-space:nowrap;' +
+        'text-shadow:0 3px 0 #ff4d6d,0 6px 18px rgba(0,0,0,.45);transform:translate(-50%,-50%) scale(.3);opacity:0;' +
+        'transition:transform .35s cubic-bezier(.2,1.6,.4,1),opacity .35s';
+      root.appendChild(cheer);
+      requestAnimationFrame(function () { cheer.style.transform = 'translate(-50%,-50%) scale(1)'; cheer.style.opacity = '1'; });
+      setTimeout(function () { cheer.style.opacity = '0'; cheer.style.transform = 'translate(-50%,-70%) scale(1.1)'; }, 1300);
+      setTimeout(function () { cheer.remove(); }, 1750);
+      if (still) return;
+
+      var canvas = document.createElement('canvas');
+      canvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:2147483646;pointer-events:none';
+      root.appendChild(canvas);
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      var W = window.innerWidth, H = window.innerHeight;
+      canvas.width = W * dpr; canvas.height = H * dpr;
+      var ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      var rand = function (a, b) { return a + Math.random() * (b - a); };
+      var color = function () { return COLORS[Math.floor(Math.random() * COLORS.length)]; };
+      var parts = [];
+      // Confetti from both bottom corners.
+      [[0, -1], [W, 1]].forEach(function (side) {
+        for (var i = 0; i < 70; i += 1) {
+          var ang = rand(55, 80) * Math.PI / 180;
+          var sp = rand(0.8, 1.25) * Math.sqrt(0.45 * H); // reaches most of the way up on any screen
+          parts.push({ kind: 'confetti', x: side[0], y: H, vx: -side[1] * Math.cos(ang) * sp, vy: -Math.sin(ang) * sp,
+            w: rand(6, 11), h: rand(3, 6), rot: rand(0, 6.28), vr: rand(-0.3, 0.3), c: color(), life: rand(110, 160) });
+        }
+      });
+      // Firework rockets that burst into sparks.
+      var rockets = [];
+      for (var r = 0; r < 3; r += 1) {
+        rockets.push({ x: rand(W * 0.2, W * 0.8), y: H, ty: rand(H * 0.15, H * 0.4), vy: -rand(11, 14), delay: r * 12, c: color() });
+      }
+      var frame = 0;
+      (function loop() {
+        frame += 1;
+        ctx.clearRect(0, 0, W, H);
+        rockets.forEach(function (k) {
+          if (k.done || frame < k.delay) return;
+          k.y += k.vy;
+          ctx.fillStyle = '#fff';
+          ctx.beginPath(); ctx.arc(k.x, k.y, 2.5, 0, 6.28); ctx.fill();
+          if (k.y <= k.ty) {
+            k.done = true;
+            for (var s = 0; s < 60; s += 1) {
+              var a = rand(0, 6.28), v = rand(2, 7);
+              parts.push({ kind: 'spark', x: k.x, y: k.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, c: Math.random() < 0.7 ? k.c : color(), life: rand(45, 70) });
+            }
+          }
+        });
+        parts.forEach(function (p) {
+          p.life -= 1;
+          if (p.life <= 0) return;
+          ctx.globalAlpha = Math.min(1, p.life / 30);
+          ctx.fillStyle = p.c;
+          if (p.kind === 'spark') {
+            p.vx *= 0.96; p.vy = p.vy * 0.96 + 0.08;
+            p.x += p.vx; p.y += p.vy;
+            ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, 6.28); ctx.fill();
+          } else {
+            p.vx *= 0.985; p.vy = p.vy * 0.985 + 0.25;
+            p.x += p.vx + Math.sin(frame / 8 + p.w) * 0.6; p.y += p.vy; p.rot += p.vr;
+            ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+            ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h * Math.abs(Math.cos(frame / 6 + p.rot)) + 1);
+            ctx.restore();
+          }
+        });
+        ctx.globalAlpha = 1;
+        parts = parts.filter(function (p) { return p.life > 0; });
+        if (frame < 200 && (parts.length || rockets.some(function (k) { return !k.done; }))) requestAnimationFrame(loop);
+        else canvas.remove();
+      })();
+    }
+
     // Send the current question's answer (or a timeout) and move on.
     function sendAnswer(timedOut) {
       if (!active || answering) return;
@@ -470,6 +610,7 @@
           var lost = d.earned < 0 ? ' ' + (-d.earned) + ' point' + (d.earned === -1 ? ' was' : 's were') + ' deducted.' : '';
           if (d.accepted && timedOut && !d.answered) showNote('Time’s up — that question was skipped.' + lost);
           else if (d.accepted && d.late) showNote('Too late — that answer arrived after the time limit and earned no points.' + lost);
+          if (d.celebrate) celebrate();
           if (d.state.done) finish();
           else showQuestion(d.state);
         })

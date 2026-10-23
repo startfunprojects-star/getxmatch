@@ -138,6 +138,8 @@ function activeLockout(userId, quizId) {
 
 // Allowance for network latency on top of a question's time limit.
 const ANSWER_GRACE_MS = 2000;
+// Share of correct answers (standard quizzes) that set off a celebration.
+const CELEBRATE_CHANCE = 0.35;
 
 function questionMeta(q) {
   return {
@@ -408,11 +410,14 @@ router.post('/quizzes/:id/proctor/answer', requireAuth, (req, res) => {
     .run(next.q_index, next.q_started_at, next.points, next.answers, token);
   // A standard quiz never says whether an answer was right: `earned` is only
   // sent for a skipped question (its negative marks), and the score at the end.
+  // The one exception is `celebrate`: on a random ~1 in 3 correct answers the
+  // page plays a celebration, so a missing one doesn't mean the answer was wrong.
   const graded = isGraded(row.type);
   res.json({
     accepted: true,
     answered: answer >= 0,
     late,
+    celebrate: graded && answer >= 0 && key != null && !wrong && Math.random() < CELEBRATE_CHANCE,
     earned: graded && answer >= 0 ? null : earned,
     state: sessionState(next, questions, graded),
   });
