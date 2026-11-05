@@ -220,6 +220,7 @@ function settleStale(m) {
   const done = complete(m, { answers: questions.map(() => -1), points: 0, forfeit: true });
   if (!done) return db.prepare('SELECT * FROM quiz_matches WHERE id = ?').get(m.id);
   announce(done, quiz.title, questions);
+  require('./socket').broadcastLeaderboardChange(); // the forfeit moves challenge points
   return done;
 }
 

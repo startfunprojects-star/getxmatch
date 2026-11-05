@@ -52,10 +52,13 @@ function recordDevice(userId, deviceId, ip) {
     .prepare('SELECT user_id FROM user_devices WHERE device_id = ? AND user_id != ?')
     .all(deviceId, userId);
   const link = db.prepare('INSERT OR IGNORE INTO linked_accounts (a_id, b_id, created_at) VALUES (?, ?, ?)');
+  let linked = 0;
   for (const o of others) {
-    link.run(userId, o.user_id, now);
-    link.run(o.user_id, userId, now);
+    linked += link.run(userId, o.user_id, now).changes;
+    linked += link.run(o.user_id, userId, now).changes;
   }
+  // Points between newly linked accounts stop counting.
+  if (linked) require('./socket').broadcastLeaderboardChange();
 }
 
 function areLinked(a, b) {

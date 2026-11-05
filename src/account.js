@@ -68,6 +68,8 @@ function deleteUser(userId) {
   if (!info.changes) return false;
   // Members they referred keep their account; the link just goes.
   db.prepare('UPDATE users SET referred_by = NULL WHERE referred_by = ?').run(userId);
+  // Their ratings, likes, friendships and follows of others go with them.
+  require('./socket').broadcastLeaderboardChange();
   for (const f of files) {
     if (!stillUsed(f)) fs.promises.unlink(path.join(config.uploadsDir, f)).catch(() => {});
   }

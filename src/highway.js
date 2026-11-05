@@ -90,8 +90,23 @@ function prune() {
         AND id NOT IN (SELECT id FROM highway_posts WHERE pinned = 0 ORDER BY created_at DESC, id DESC LIMIT ?)`
   ).all(keepUnpinned);
   const files = stale.flatMap((s) => postFiles(s.id)); // read before the rows go
+  // Pruning is housekeeping, not a removal: keep the likes (and so the
+  // author's like points) before the post and its likes go.
+  const keep = db.prepare(
+    `INSERT INTO highway_like_archive (author_id, liker_id, created_at)
+     SELECT hp.user_id, hl.user_id, hl.created_at
+       FROM highway_likes hl JOIN highway_posts hp ON hp.id = hl.post_id
+      WHERE hp.id = ? AND hl.user_id != hp.user_id`
+  );
   const del = db.prepare('DELETE FROM highway_posts WHERE id = ?');
-  stale.forEach((s) => del.run(s.id));
+  db.exec('BEGIN');
+  try {
+    stale.forEach((s) => { keep.run(s.id); del.run(s.id); });
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
   return files;
 }
 

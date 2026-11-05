@@ -428,10 +428,8 @@ function buildProfile(userId, viewerId) {
     buffer: isMe ? bufferPhotos.map((ph) => ({ id: ph.id, url: `/uploads/${ph.filename}` })) : [],
     rating: ratingSummary(row.id, viewerId),
     // Total likes this user has received on their Highway posts (shared images
-    // included). Shown on the profile and factored into leaderboard ranking.
-    likes: db
-      .prepare('SELECT COUNT(*) AS n FROM highway_likes hl JOIN highway_posts hp ON hp.id = hl.post_id WHERE hp.user_id = ? AND hl.user_id != hp.user_id')
-      .get(row.id).n,
+    // included) — the same count the leaderboard points use.
+    likes: require('./points').likesOf(row.id),
     comments: full ? commentsFor(row.id, viewerId) : [],
     // Followers / following, the fee a new follower pays, and whether the
     // viewer already follows (src/follows.js).

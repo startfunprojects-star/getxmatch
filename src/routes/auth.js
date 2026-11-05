@@ -9,7 +9,7 @@ const referrals = require('../referrals');
 const db = require('../db');
 const config = require('../config');
 const { sendSignupOtp, sendPasswordResetCode, sendPasswordChangedNotice } = require('../mail');
-const { disconnectUser } = require('../socket');
+const { disconnectUser, broadcastLeaderboardChange } = require('../socket');
 const F = require('../profileFields');
 const { signToken, setAuthCookie, clearAuthCookie, requireAuth } = require('../auth');
 const devices = require('../devices');
@@ -176,7 +176,8 @@ router.post('/signup/verify', authLimiter, (req, res) => {
     education: pending.education, education_stream: pending.education_stream, work_status: pending.work_status,
   };
   referrals.ensureCode(user.id);
-  if (pending.referral_code) referrals.applyReferral(user.id, pending.referral_code);
+  // The referrer earns points for the new member.
+  if (pending.referral_code && referrals.applyReferral(user.id, pending.referral_code)) broadcastLeaderboardChange();
   devices.recordDevice(user.id, req.deviceId, req.ip);
   recordLogin(user.id);
   setAuthCookie(res, signToken(user));

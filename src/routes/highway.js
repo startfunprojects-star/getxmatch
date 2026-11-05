@@ -266,6 +266,7 @@ router.post('/:id/report', requireAuth, (req, res) => {
     const files = hw.postFiles(post.id);
     db.prepare('DELETE FROM highway_posts WHERE id = ?').run(post.id);
     files.forEach(removeUpload);
+    broadcastLeaderboardChange(); // its likes no longer count
     moderation.suspend(post.user_id, 'highway-reported', REPORT_BLOCK_MS);
     try { disconnectUser(post.user_id); } catch (_e) { /* not online */ }
     return res.json({ ok: true, removed: true });
@@ -408,6 +409,7 @@ router.delete('/:id', requireAuth, (req, res) => {
   const files = hw.postFiles(row.id);
   db.prepare('DELETE FROM highway_posts WHERE id = ?').run(row.id);
   files.forEach(removeUpload);
+  broadcastLeaderboardChange(); // its likes no longer count
   res.json({ ok: true });
 });
 

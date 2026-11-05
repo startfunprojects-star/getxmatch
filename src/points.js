@@ -64,6 +64,18 @@ const CHALLENGE_OK = `NOT EXISTS (SELECT 1 FROM quiz_matches cm JOIN linked_acco
                                      ON la.a_id = cm.a_user_id AND la.b_id = cm.b_user_id
                                   WHERE cm.id = qc.match_id)`;
 
+// SQL: Highway likes received by member `u` — likes on their current posts
+// plus those kept from pruned posts — not counting their own or a linked
+// account's. The profile shows the same number (likesOf below).
+const likesReceived = (u) => `(
+  (SELECT COUNT(*) FROM highway_likes hl
+     JOIN highway_posts hp ON hp.id = hl.post_id
+    WHERE hp.user_id = ${u} AND hl.user_id != ${u}
+      AND ${notLinked('hl.user_id', u)})
+  + (SELECT COUNT(*) FROM highway_like_archive ha
+      WHERE ha.author_id = ${u} AND ha.liker_id != ${u}
+        AND ${notLinked('ha.liker_id', u)}))`;
+
 // Point totals for every member, or just `userId` when given.
 function scoreRows(userId) {
   const rows = db
@@ -80,10 +92,7 @@ function scoreRows(userId) {
               (SELECT COUNT(DISTINCT quiz_id) FROM quiz_attempts q
                 WHERE q.user_id = u.id)                                        AS quizzes,
               COALESCE(qb.quiz_points, 0)                                      AS quiz_points,
-              (SELECT COUNT(*) FROM highway_likes hl
-                 JOIN highway_posts hp ON hp.id = hl.post_id
-                WHERE hp.user_id = u.id AND hl.user_id != u.id
-                  AND ${notLinked('hl.user_id', 'u.id')})                     AS likes,
+              ${likesReceived('u.id')}                                         AS likes,
               (SELECT COUNT(*) FROM poll_votes pv WHERE pv.user_id = u.id)     AS polls,
               (SELECT COUNT(*) FROM follows fo WHERE fo.followee_id = u.id
                   AND ${notLinked('fo.follower_id', 'u.id')})                 AS followers,
@@ -174,6 +183,11 @@ function scoreRows(userId) {
   });
 }
 
+// Highway likes one member has received (as counted for points).
+function likesOf(userId) {
+  return db.prepare(`SELECT ${likesReceived('@u')} AS n`).get({ u: userId }).n;
+}
+
 // One member's overall points (same formula as the leaderboard).
 function pointsOf(userId) {
   const row = scoreRows(userId)[0];
@@ -251,4 +265,4 @@ function leaderboards(decorate = (r) => r) {
   return boards;
 }
 
-module.exports = { rankedUsers, leaderboards, pointsOf, WEIGHTS };
+module.exports = { rankedUsers, leaderboards, pointsOf, likesOf, WEIGHTS };

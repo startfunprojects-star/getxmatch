@@ -11,7 +11,7 @@ const rateLimit = require('express-rate-limit');
 const db = require('../db');
 const config = require('../config');
 const { sendAdminResetLink, smtpReady } = require('../mail');
-const { isOnline, broadcastNotify, disconnectUser, notifyUser } = require('../socket');
+const { isOnline, broadcastNotify, disconnectUser, notifyUser, broadcastLeaderboardChange } = require('../socket');
 const push = require('../push');
 const { buildFeed, pruneActivity } = require('./events');
 const { leaderboards } = require('../points');
@@ -721,6 +721,7 @@ router.put('/quizzes/:id', requireAdmin, (req, res) => {
 router.delete('/quizzes/:id', requireAdmin, (req, res) => {
   const info = db.prepare('DELETE FROM quizzes WHERE id = ?').run(req.params.id);
   if (!info.changes) return res.status(404).json({ error: 'Quiz not found.' });
+  broadcastLeaderboardChange(); // its attempts no longer count
   res.json({ ok: true });
 });
 
@@ -787,6 +788,7 @@ router.put('/polls/:id', requireAdmin, (req, res) => {
 router.delete('/polls/:id', requireAdmin, (req, res) => {
   const info = db.prepare('DELETE FROM polls WHERE id = ?').run(req.params.id);
   if (!info.changes) return res.status(404).json({ error: 'Poll not found.' });
+  broadcastLeaderboardChange(); // its votes no longer count
   res.json({ ok: true });
 });
 
@@ -857,6 +859,7 @@ router.delete('/blogs/:id', requireAdmin, (req, res) => {
   db.prepare("DELETE FROM highway_posts WHERE origin_kind = 'blog' AND origin_a = ?").run(row.id);
   db.prepare('DELETE FROM blogs WHERE id = ?').run(row.id);
   removeUpload(row.cover);
+  broadcastLeaderboardChange(); // its likes no longer count
   res.json({ ok: true });
 });
 
@@ -1145,6 +1148,7 @@ router.delete('/highway/:id', requireAdmin, (req, res) => {
   const files = hw.postFiles(row.id);
   db.prepare('DELETE FROM highway_posts WHERE id = ?').run(row.id);
   files.forEach(removeUpload);
+  broadcastLeaderboardChange(); // its likes no longer count
   res.json({ ok: true });
 });
 

@@ -88,7 +88,8 @@ router.post('/rate/:username', requireAuth, (req, res) => {
 router.delete('/rate/:username', requireAuth, (req, res) => {
   const target = resolveTarget(req, res);
   if (!target) return;
-  db.prepare('DELETE FROM ratings WHERE rater_id = ? AND ratee_id = ?').run(req.user.id, target.id);
+  const info = db.prepare('DELETE FROM ratings WHERE rater_id = ? AND ratee_id = ?').run(req.user.id, target.id);
+  if (info.changes) broadcastLeaderboardChange(); // the rating's points go with it
   res.json({ rating: ratingSummary(target.id, req.user.id) });
 });
 

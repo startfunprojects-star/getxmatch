@@ -1286,4 +1286,16 @@ db.exec(`
   for (const r of rows) set.run(canonicalEmail(r.email), r.id);
 })();
 
+// --- Migration: likes kept from pruned Highway posts (src/highway.js). The
+// Highway keeps only the newest posts; when an old one is pruned its likes move
+// here so the author keeps the like points they earned (src/points.js).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS highway_like_archive (
+    author_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    liker_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_highway_like_archive_author ON highway_like_archive (author_id);
+`);
+
 module.exports = db;
