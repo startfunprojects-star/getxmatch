@@ -312,6 +312,8 @@ header.site .wrap{display:flex;align-items:center;justify-content:space-between;
 .brand{font-family:var(--serif);font-weight:700;font-size:22px;letter-spacing:.1px;color:var(--text)}.brand .x{color:var(--accent2);font-style:italic}
 nav.top a{color:var(--muted);font-weight:600;margin-left:18px;font-size:15px}
 nav.top a:hover{color:var(--text);text-decoration:none}
+/* Phones: brand on its own row, the links beneath it in tidy left-aligned rows. */
+@media (max-width:640px){header.site .wrap{flex-wrap:wrap;height:auto;padding-top:10px;padding-bottom:8px;row-gap:2px}nav.top{display:flex;flex-wrap:wrap;gap:0 16px;width:100%}nav.top a{margin-left:0;font-size:14px;padding:3px 0;white-space:nowrap}}
 main{padding:28px 0 56px}
 h1,h2,h3{font-family:var(--serif);letter-spacing:0}
 h1{font-size:34px;line-height:1.2;margin:.2em 0 .4em;font-weight:700}

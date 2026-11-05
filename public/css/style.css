@@ -1535,7 +1535,14 @@ a.toast.toast-link { text-decoration: none; cursor: pointer; max-width: calc(100
   .chat-activity-bar .activity-pick { flex: 1; justify-content: flex-end; }
   .access-note { margin: 0 16px 16px; }
   .lb-stats { display: none; }
-  .lb-row { gap: 10px; padding: 10px 8px; }
+  /* Rank, avatar, name and score share the first row; the friend button drops
+     to its own row so it never pushes past the card or over the score. */
+  .lb-row { gap: 8px 10px; padding: 10px 8px; flex-wrap: wrap; }
+  .lb-rank { min-width: 30px; }
+  .lb-id .name { overflow-wrap: anywhere; line-height: 1.25; }
+  .lb-id .handle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lb-action { flex-basis: 100%; display: flex; justify-content: flex-end; }
+  .lb-action:empty { display: none; }
   .lb-score { min-width: 68px; padding: 5px 9px; }
   .lb-score-val { font-size: 16px; }
 }
