@@ -21,8 +21,7 @@ const config = require('./config');
 const mail = require('./mail');
 const { isMinor } = require('./relations');
 const { pointsOf } = require('./points');
-const { acceptedText, relEmoji } = require('./relationships');
-const { broadcastActivity, notifyUser, broadcastLeaderboardChange } = require('./socket');
+const { notifyUser, broadcastLeaderboardChange } = require('./socket');
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -145,13 +144,11 @@ function approversNeeded(aId, bId) {
   });
 }
 
-// Finish a friendship: accepted now, announced, both sides refreshed.
+// Finish a friendship: accepted now, both sides refreshed. (Friendships are
+// private: they never appear on Recent Activity.)
 function complete(row) {
   db.prepare("UPDATE friendships SET status = 'accepted', accepted_at = ? WHERE id = ?").run(Date.now(), row.id);
   const type = row.rel_type || 'friend';
-  const a = child(row.requester_id);
-  const b = child(row.addressee_id);
-  if (a && b) broadcastActivity({ at: Date.now(), icon: relEmoji(type), text: acceptedText(type, a.name, b.name) });
   broadcastLeaderboardChange(); // a new accepted friendship can reshuffle ranks
   [row.requester_id, row.addressee_id].forEach((id) => notifyUser(id, 'notify:request', { type }));
 }

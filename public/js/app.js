@@ -2036,17 +2036,11 @@
       <div class="chat-wrap">
         <div class="chat-tabs" id="chatTabs"></div>
         <div class="home-activity">
-          <div class="activity-share">
-            <button class="ghost small" id="activityShareBtn" type="button">🖼️ Share an image / GIF</button>
-            <input type="file" id="activityImgInput" accept="image/*" class="hidden" />
-            <span class="hint" id="activityShareMsg"></span>
-          </div>
           <div id="homeAlerts"></div>
           <div id="homeFeed"></div>
         </div>
       </div>`;
     renderChatTabs();
-    wireActivityShare();
     renderAlertsInto(document.getElementById('homeAlerts'));
     renderActivityInto(document.getElementById('homeFeed'), { compact: false });
   }
@@ -2183,13 +2177,12 @@
     box.appendChild(panel);
   }
 
-  // Max size for an image/GIF shared onto Recent Activity (matches the server).
+  // Max size for an image/GIF shared from the chat status bar (matches the server).
   const ACTIVITY_IMG_MAX_BYTES = 5 * 1024 * 1024;
 
-  // Validate + upload an image/GIF to the Recent Activity feed. `onStatus(text,
-  // isError)` reports progress. On success the server broadcasts an activity:new
-  // event that inserts the thumbnail live, so callers don't insert it themselves.
-  // Returns true on success. Shared by the activity home and the chat status bar.
+  // Validate + upload an image/GIF from the chat status bar; the server posts it
+  // to the Highway. `onStatus(text, isError)` reports progress. Returns true on
+  // success.
   async function shareActivityImage(file, onStatus) {
     onStatus = onStatus || function () {};
     if (!file) return false;
@@ -2211,26 +2204,6 @@
     }
   }
 
-  // Wire the "Share an image / GIF" control on the activity home.
-  function wireActivityShare() {
-    const btn = document.getElementById('activityShareBtn');
-    const input = document.getElementById('activityImgInput');
-    const msg = document.getElementById('activityShareMsg');
-    if (!btn || !input) return;
-    btn.addEventListener('click', () => input.click());
-    input.addEventListener('change', async () => {
-      const file = input.files[0];
-      if (!file) return;
-      btn.disabled = true;
-      await shareActivityImage(file, (text, isError) => {
-        msg.className = isError ? 'hint error' : 'hint';
-        msg.textContent = text;
-        if (!isError && text === 'Shared!') setTimeout(() => { if (msg) msg.textContent = ''; }, 2500);
-      });
-      input.value = '';
-      btn.disabled = false;
-    });
-  }
 
   /* ---- chat activity ("what are you doing") status bar ---- */
   async function loadActivities() {
@@ -2284,7 +2257,7 @@
       activities.map((a) => `<option value="${esc(a)}">${chatActivityIcon(a)} ${esc(a)}</option>`).join('');
     bar.classList.remove('hidden');
 
-    // Share an image / GIF (to Recent Activity) straight from the chat status bar.
+    // Share an image / GIF (to the Highway) straight from the chat status bar.
     const imgBtn = view.querySelector('#activityImgBtn');
     const imgFile = view.querySelector('#activityImgFile');
     if (imgBtn && imgFile) {
@@ -2294,7 +2267,7 @@
         if (!file) return;
         imgBtn.disabled = true;
         const ok = await shareActivityImage(file, (text, isError) => {
-          if (isError || text === 'Shared!') notify(isError ? text : 'Shared to Recent Activity.');
+          if (isError || text === 'Shared!') notify(isError ? text : 'Shared to the Highway.');
         });
         imgFile.value = '';
         imgBtn.disabled = false;
@@ -2366,7 +2339,7 @@
         </div>
         <div class="chat-activity-bar hidden" id="activityBar">
           <div class="activity-status" id="activityStatus"></div>
-          <button class="icon-btn small" id="activityImgBtn" type="button" title="Share an image / GIF to Recent Activity (max 5 MB)">🖼️</button>
+          <button class="icon-btn small" id="activityImgBtn" type="button" title="Share an image / GIF to the Highway (max 5 MB)">🖼️</button>
           <input type="file" id="activityImgFile" accept="image/*" class="hidden" />
           <label class="activity-pick">
             <span>You're…</span>
@@ -5697,19 +5670,6 @@
         reflectMineActivity(e.activity || '');
         renderActivityStatus(peerName);
       }
-    });
-
-    // A user (anywhere) set a chat activity or shared an image — stream it onto
-    // open feeds live (with a thumbnail when an image is included).
-    s.on('activity:new', (e) => {
-      if (!e || (!e.text && !e.image)) return;
-      pushLiveActivity({
-        type: e.image ? 'activity-image' : 'chat-activity',
-        icon: e.icon || activityIcon(e.activity || ''),
-        at: e.at || Date.now(),
-        text: e.text,
-        image: e.image || null,
-      });
     });
 
     // A new Highway post from anyone — prepend it to an open Highway feed.
@@ -9669,48 +9629,13 @@
     });
     container.innerHTML = '';
     container.appendChild(feed);
-    registerActivityFeed(feed);
   }
 
   /* ---- live activity feed ----
-     Logged-in clients receive each new activity row over the socket
-     ('activity:new' → pushLiveActivity); the sign-in page has no socket, so it
-     polls instead (startAuthActivityPoll).
+     The sign-in page has no socket, so it polls the public feed to stay live
+     (startAuthActivityPoll).
   */
-  const activityFeeds = []; // mounted feed elements that live socket updates flow into
   const ACTIVITY_MAX = 200; // the feed shows the latest 200 activities (mirrors FEED_SIZE in src/routes/events.js)
-
-  function activityIcon(activity) {
-    const a = String(activity).toLowerCase();
-    if (/(chat|messag|talk)/.test(a)) return '💬';
-    if (/(match|paired|connect)/.test(a)) return '🧩';
-    if (/(rat|star|review)/.test(a)) return '⭐';
-    if (/(gift|sent)/.test(a)) return '🎁';
-    if (/(view|check|look|profile)/.test(a)) return '👀';
-    if (/(friend|follow)/.test(a)) return '🤝';
-    return '✨';
-  }
-
-  // Track a mounted feed so live socket broadcasts insert into it. Prunes any
-  // feeds that have since left the page.
-  function registerActivityFeed(feed) {
-    for (let i = activityFeeds.length - 1; i >= 0; i--) {
-      if (!document.body.contains(activityFeeds[i])) activityFeeds.splice(i, 1);
-    }
-    activityFeeds.push(feed);
-  }
-
-  // Insert a freshly-happened event at the top of every mounted feed, marked
-  // "just now". Driven by socket broadcasts (server stream, chat activity, …).
-  function pushLiveActivity(ev) {
-    for (let i = activityFeeds.length - 1; i >= 0; i--) {
-      if (!document.body.contains(activityFeeds[i])) activityFeeds.splice(i, 1);
-    }
-    activityFeeds.forEach((feed) => {
-      feed.insertBefore(feedItemEl(ev, true), feed.firstChild);
-      while (feed.querySelectorAll('.feed-item').length > ACTIVITY_MAX) feed.removeChild(feed.lastChild);
-    });
-  }
 
   // Sign-in page only: poll the public feed and prepend new server-stream rows
   // (there is no socket before login). Stops once the feed leaves the page.

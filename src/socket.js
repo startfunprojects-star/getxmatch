@@ -200,15 +200,9 @@ function replyPreview(replyToId) {
   return { id: row.id, from: row.sender_id, kind: row.kind || 'text', text: String(text).slice(0, 140) };
 }
 
-// Reference to the live Server, set on init, so HTTP routes can broadcast onto
-// the Recent Activity feed (e.g. a shared image) without importing server.js.
+// Reference to the live Server, set on init, so HTTP routes can push events
+// without importing server.js.
 let ioRef = null;
-
-// Broadcast a ready-to-render feed item to every connected client. The client's
-// `activity:new` handler inserts it at the top of any open activity feed.
-function broadcastActivity(payload) {
-  if (ioRef) ioRef.emit('activity:new', payload);
-}
 
 // Push a new Highway post to every online member for whom `canSee(userId)` is
 // true. The client's `highway:new` handler prepends it to an open Highway feed.
@@ -1206,4 +1200,4 @@ function disconnectUser(userId) {
   if (ioRef) ioRef.in(`user:${userId}`).disconnectSockets(true);
 }
 
-module.exports = { initSocket, groupCallCount, postDenied, deliverMessage, isOnline, disconnectUser, broadcastActivity, broadcastHighway, notifyHighwayEvent, notifyGroup, notifyUser, broadcastLeaderboardChange, broadcastNotify };
+module.exports = { initSocket, groupCallCount, postDenied, deliverMessage, isOnline, disconnectUser, broadcastHighway, notifyHighwayEvent, notifyGroup, notifyUser, broadcastLeaderboardChange, broadcastNotify };

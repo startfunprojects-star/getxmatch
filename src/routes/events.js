@@ -1,15 +1,12 @@
 'use strict';
 
-// Recent Events feed — a unified, time-ordered activity stream aggregated from
-// real activity across the app plus admin-curated announcements:
-//   • user relationships   (new accepted friendships)
-//   • quiz attempts         (quizzes users attempted)
+// Recent Events feed — a time-ordered activity stream. The only member
+// activity on it is new gallery content; everything else members do (friend
+// requests and friendships, quizzes, shared images, profile pictures, GIFs,
+// profile edits) stays off the feed:
+//   • gallery uploads       (new gallery photos/reels by the members the viewer
+//                            follows or is friends with, and the viewer's own)
 //   • admin events          (curated announcements)
-//   • user-shared images    (photos/GIFs posted to the feed)
-//   • profile updates       (new gallery photos/reels, profile pictures, GIFs
-//                            and profile edits by members the viewer follows or
-//                            is friends with — these pictures never go to the
-//                            Highway)
 //   • news                  (headlines from the admin's RSS feeds matching the
 //                            viewer's areas of interest and chosen country —
 //                            src/news.js, src/newsCountries.js)
@@ -31,9 +28,7 @@ const jobs = require('../jobs');
 const { isMinor } = require('../relations');
 const { imageUpload } = require('../upload');
 const { nsfwGuard } = require('../nsfw');
-const { broadcastActivity } = require('../socket');
 const { shareUploadToHighway } = require('../highwayShare');
-const { acceptedText, relEmoji } = require('../relationships');
 
 const router = express.Router();
 
@@ -65,14 +60,15 @@ function userMini(id, viewerId) {
 }
 
 // GET /api/events/public — a PUBLIC, no-auth activity feed for the sign-in page.
-// Same feed the signed-in Recent Activity shows, but with the user-shared image
-// posts omitted (no thumbnails on the sign-in page). Built with a null viewer.
+// Built with a null viewer, so it carries no member activity (gallery uploads
+// are only for followers and friends): just the announcements.
 router.get('/public', (req, res) => {
-  res.json({ events: buildFeed(null, { includeImages: false }) });
+  res.json({ events: buildFeed(null) });
 });
 
-// POST /api/events/activity-image — share an image/GIF onto the Recent Activity
-// feed. Saved to disk and shown to everyone as a thumbnail (live + on reload).
+// POST /api/events/activity-image — share an image/GIF from the chat status bar.
+// It goes to the Highway only (Recent Activity shows gallery uploads, not shared
+// images); the Highway post keeps its own copy of the file.
 router.post('/activity-image', requireAuth, imageUpload.single('image'), nsfwGuard, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded.' });
   // Hard 5 MB cap for activity images, regardless of the global upload limit.
@@ -80,116 +76,30 @@ router.post('/activity-image', requireAuth, imageUpload.single('image'), nsfwGua
     fs.promises.unlink(path.join(config.uploadsDir, req.file.filename)).catch(() => {});
     return res.status(413).json({ error: 'Image must be 5 MB or smaller.' });
   }
-  const now = Date.now();
-  const info = db
-    .prepare('INSERT INTO activity_posts (user_id, image, created_at) VALUES (?, ?, ?)')
-    .run(req.user.id, req.file.filename, now);
-
-  const actor = userMini(req.user.id, req.user.id);
-  const url = `/uploads/${req.file.filename}`;
-  const event = {
-    id: 'post-' + info.lastInsertRowid,
-    type: 'activity-image',
-    at: now,
-    icon: '🖼️',
-    actor,
-    target: null,
-    text: `${actor ? actor.displayName : 'Someone'} shared an image`,
-    image: url,
-  };
   shareUploadToHighway(req.user.id, req.file.filename, '');
-  setImmediate(pruneActivity); // the oldest activity may now fall out of the feed
-  // Stream it live onto everyone's open feeds as a thumbnail.
-  broadcastActivity({ at: now, icon: '🖼️', text: event.text, image: url });
-  res.status(201).json({ event });
+  fs.promises.unlink(path.join(config.uploadsDir, req.file.filename)).catch(() => {});
+  res.status(201).json({ ok: true });
 });
 
 // Build the merged Recent Activity feed for `viewerId` (null = public / logged
-// out). `includeImages` gates the user-shared image posts — excluded from the
-// public sign-in feed so it never shows thumbnails. Actor/target metadata is
-// attached but the feed renders plain text, so a null viewer is fine.
-function buildFeed(viewerId, opts) {
+// out). Actor metadata is attached but the feed renders plain text, so a null
+// viewer is fine.
+function buildFeed(viewerId) {
   const me = viewerId;
-  const includeImages = !opts || opts.includeImages !== false;
   const events = [];
 
-  // 1) Accepted friendships.
-  db.prepare(
-    `SELECT id, requester_id, addressee_id, rel_type, created_at
-     FROM friendships WHERE status = 'accepted' ORDER BY created_at DESC LIMIT ?`
-  ).all(PER_SOURCE).forEach((f) => {
-    const a = userMini(f.requester_id, me);
-    const b = userMini(f.addressee_id, me);
-    if (!a || !b) return;
-    const type = f.rel_type || 'friend';
-    events.push({
-      id: 'friend-' + f.id,
-      type: 'friendship',
-      at: f.created_at,
-      icon: relEmoji(type),
-      actor: a,
-      target: b,
-      text: acceptedText(type, a.displayName, b.displayName),
-    });
-  });
-
-  // (Pending friend requests are private between the two members: only an
-  //  accepted friendship, above, appears on the feed.)
-
-  // (Chats are private: who talks to whom never appears on the feed.)
-
-  // 3) Quiz attempts.
-  db.prepare(
-    `SELECT qa.id, qa.user_id, qa.score, qa.total, qa.created_at, q.title
-     FROM quiz_attempts qa JOIN quizzes q ON q.id = qa.quiz_id
-     ORDER BY qa.created_at DESC LIMIT ?`
-  ).all(PER_SOURCE).forEach((qa) => {
-    const a = userMini(qa.user_id, me);
-    if (!a) return;
-    events.push({
-      id: 'quiz-' + qa.id,
-      type: 'quiz',
-      at: qa.created_at,
-      icon: '🧠',
-      actor: a,
-      target: null,
-      text: `${a.displayName} attempted the quiz “${qa.title}” and earned ${qa.score}/${qa.total} points`,
-    });
-  });
-
-  // 3c) User-shared images/GIFs — displayed as a thumbnail in the feed. Omitted
-  //     from the public sign-in feed (no thumbnails there).
-  if (includeImages) {
-    db.prepare(
-      'SELECT id, user_id, image, created_at FROM activity_posts ORDER BY created_at DESC LIMIT ?'
-    ).all(PER_SOURCE).forEach((row) => {
-      const a = userMini(row.user_id, me);
-      if (!a) return;
-      events.push({
-        id: 'post-' + row.id,
-        type: 'activity-image',
-        at: row.created_at,
-        icon: '🖼️',
-        actor: a,
-        target: null,
-        text: `${a.displayName} shared an image`,
-        image: `/uploads/${row.image}`,
-      });
-    });
-  }
-
-  // 3d) Profile updates from the members the viewer follows (or is friends
-  //     with): new gallery photos / reels, new GIFs, and profile edits. Only in
-  //     the viewer's own feed, never the public one. A photo carries a
-  //     thumbnail only when the viewer is allowed to see it on the profile.
+  // 1) New gallery photos / reels from the members the viewer follows (or is
+  //    friends with), and the viewer's own. Only in the viewer's own feed,
+  //    never the public one. A photo carries a thumbnail only when the viewer
+  //    is allowed to see it on the profile.
   if (me) {
-    const watched = `(SELECT followee_id FROM follows WHERE follower_id = @me
-                      UNION
-                      SELECT CASE WHEN requester_id = @me THEN addressee_id ELSE requester_id END
-                        FROM friendships
-                       WHERE (requester_id = @me OR addressee_id = @me) AND status = 'accepted')`;
-    // The member's own uploads show too, so they can see what went out.
-    const watchedOrMe = watched.replace('(SELECT followee_id', '(SELECT @me UNION SELECT followee_id');
+    const watchedOrMe = `(SELECT @me
+                          UNION
+                          SELECT followee_id FROM follows WHERE follower_id = @me
+                          UNION
+                          SELECT CASE WHEN requester_id = @me THEN addressee_id ELSE requester_id END
+                            FROM friendships
+                           WHERE (requester_id = @me OR addressee_id = @me) AND status = 'accepted')`;
     db.prepare(
       `SELECT id, user_id, filename, kind, created_at FROM gallery_photos
         WHERE user_id IN ${watchedOrMe} ORDER BY created_at DESC LIMIT @n`
@@ -208,73 +118,9 @@ function buildFeed(viewerId, opts) {
         image: !isReel && canSeePhoto({ id: row.id, user_id: row.user_id }, me) ? `/uploads/${row.filename}` : undefined,
       });
     });
-    // New profile pictures (the main one and the rotating picture buffer).
-    const pictureAt = new Map(); // user_id -> [times], to skip the matching "updated their profile"
-    const pictureRows = [
-      ...db.prepare(
-        `SELECT 'avatar' AS src, id, user_id, filename, created_at FROM avatar_changes
-          WHERE user_id IN ${watchedOrMe} ORDER BY created_at DESC LIMIT @n`
-      ).all({ me, n: PER_SOURCE }),
-      ...db.prepare(
-        `SELECT 'buffer' AS src, id, user_id, filename, created_at FROM profile_buffer_photos
-          WHERE user_id IN ${watchedOrMe} ORDER BY created_at DESC LIMIT @n`
-      ).all({ me, n: PER_SOURCE }),
-    ];
-    pictureRows.forEach((row) => {
-      const a = userMini(row.user_id, me);
-      if (!a) return;
-      if (!pictureAt.has(row.user_id)) pictureAt.set(row.user_id, []);
-      pictureAt.get(row.user_id).push(row.created_at);
-      events.push({
-        id: `${row.src === 'avatar' ? 'avatar' : 'pfp'}-${row.id}`,
-        type: 'profile-update',
-        at: row.created_at,
-        icon: '🖼️',
-        actor: a,
-        target: null,
-        text: row.src === 'avatar'
-          ? `${a.displayName} changed their profile picture`
-          : `${a.displayName} added a new profile picture`,
-        image: `/uploads/${row.filename}`,
-      });
-    });
-    db.prepare(
-      `SELECT id, user_id, created_at FROM user_gifs
-        WHERE user_id IN ${watched} ORDER BY created_at DESC LIMIT @n`
-    ).all({ me, n: PER_SOURCE }).forEach((row) => {
-      const a = userMini(row.user_id, me);
-      if (!a) return;
-      events.push({
-        id: 'gif-' + row.id,
-        type: 'profile-update',
-        at: row.created_at,
-        icon: '🎞️',
-        actor: a,
-        target: null,
-        text: `${a.displayName} added a new GIF feeling`,
-      });
-    });
-    db.prepare(
-      `SELECT user_id, updated_at FROM profiles
-        WHERE user_id IN ${watched} AND updated_at IS NOT NULL ORDER BY updated_at DESC LIMIT @n`
-    ).all({ me, n: PER_SOURCE }).forEach((row) => {
-      // A picture change already has its own row.
-      if ((pictureAt.get(row.user_id) || []).some((t) => Math.abs(t - row.updated_at) < 15000)) return;
-      const a = userMini(row.user_id, me);
-      if (!a) return;
-      events.push({
-        id: `profile-${row.user_id}-${row.updated_at}`,
-        type: 'profile-update',
-        at: row.updated_at,
-        icon: '✏️',
-        actor: a,
-        target: null,
-        text: `${a.displayName} updated their profile`,
-      });
-    });
   }
 
-  // 3e) News for the viewer's areas of interest (signed-in feed only; members
+  // 2) News for the viewer's areas of interest (signed-in feed only; members
   //     under 18 see family-safe sources only). Each row links out to the
   //     article on the source's own site.
   if (me) {
@@ -299,7 +145,7 @@ function buildFeed(viewerId, opts) {
     });
   }
 
-  // 4) Admin-curated announcements.
+  // 3) Admin-curated announcements.
   db.prepare('SELECT id, title, body, created_at FROM admin_events ORDER BY created_at DESC LIMIT ?')
     .all(PER_SOURCE)
     .forEach((e) => {
@@ -336,16 +182,18 @@ function buildFeed(viewerId, opts) {
 // Delete feed-only rows that have fallen out of the latest FEED_SIZE. The
 // cut-off comes from the shared feed (no viewer): a member's own feed only
 // adds rows, so nothing older than it can be in anyone's latest FEED_SIZE.
+// Images shared onto the feed in the past (activity_posts) no longer show on it
+// — each has its own copy on the Highway — so those rows and files go too.
 function pruneActivity() {
   try {
+    const shared = db.prepare('SELECT image FROM activity_posts').all();
+    db.prepare('DELETE FROM activity_posts').run();
+    shared.forEach((r) => {
+      if (r.image) fs.promises.unlink(path.join(config.uploadsDir, path.basename(r.image))).catch(() => {});
+    });
     const feed = buildFeed(null);
     if (feed.length < FEED_SIZE) return;
     const cutoff = feed[FEED_SIZE - 1].at;
-    const old = db.prepare('SELECT id, image FROM activity_posts WHERE created_at < ?').all(cutoff);
-    db.prepare('DELETE FROM activity_posts WHERE created_at < ?').run(cutoff);
-    old.forEach((r) => {
-      if (r.image) fs.promises.unlink(path.join(config.uploadsDir, path.basename(r.image))).catch(() => {});
-    });
     db.prepare('DELETE FROM admin_events WHERE created_at < ?').run(cutoff);
     db.prepare('DELETE FROM hidden_activities WHERE hidden_up_to < ?').run(cutoff);
   } catch (_e) { /* pruning must never break the feed */ }
