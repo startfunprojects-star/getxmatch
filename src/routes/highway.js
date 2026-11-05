@@ -19,7 +19,7 @@ const nsfw = require('../nsfw');
 const { requireSafeLinks } = require('../linkSafety');
 const { friendState } = require('../profileData');
 const { areBlocked, ignoredIds } = require('../relations');
-const { broadcastHighway, notifyHighwayEvent, broadcastLeaderboardChange } = require('../socket');
+const { broadcastHighway, notifyHighwayEvent, broadcastLeaderboardChange, notifyUser } = require('../socket');
 const hw = require('../highway');
 const { blogCard } = require('./blogs');
 
@@ -42,11 +42,21 @@ function nameOf(userId) {
   return (r && (r.display_name || r.username)) || 'Someone';
 }
 
+// Where a post's likes live: a blog post listed on the Highway shares the
+// blog's own likes (so the card and the post always show the same number);
+// every other post has its own.
+function likeSource(post) {
+  return post.origin_kind === 'blog'
+    ? { table: 'blog_likes', col: 'blog_id', key: post.origin_a }
+    : { table: 'highway_likes', col: 'post_id', key: post.id };
+}
+
 // Aggregated like state for a post, plus whether the viewer has liked it.
-function likeState(postId, viewerId) {
-  const count = db.prepare('SELECT COUNT(*) AS n FROM highway_likes WHERE post_id = ?').get(postId).n;
+function likeState(post, viewerId) {
+  const { table, col, key } = likeSource(post);
+  const count = db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${col} = ?`).get(key).n;
   const mine = viewerId
-    ? !!db.prepare('SELECT 1 FROM highway_likes WHERE post_id = ? AND user_id = ?').get(postId, viewerId)
+    ? !!db.prepare(`SELECT 1 FROM ${table} WHERE ${col} = ? AND user_id = ?`).get(key, viewerId)
     : false;
   return { count, mine };
 }
@@ -126,7 +136,7 @@ function shapePost(r, viewerId) {
     friendState: friendState(r.user_id, viewerId),
     pinned: !!r.pinned,
     pinRank: r.pinned ? (r.pin_rank || null) : null,
-    likes: likeState(r.id, viewerId),
+    likes: likeState(r, viewerId),
     commentCount: db.prepare('SELECT COUNT(*) AS n FROM highway_comments WHERE post_id = ?').get(r.id).n,
     reported: !!viewerId && !!db.prepare('SELECT 1 FROM highway_reports WHERE post_id = ? AND reporter_id = ?').get(r.id, viewerId),
     blog: r.origin_kind === 'blog' ? blogCard(r.origin_a) : undefined, // a blog post listed on the Highway
@@ -278,17 +288,18 @@ router.post('/:id/report', requireAuth, (req, res) => {
 router.get('/:id/likes', requireAuth, (req, res) => {
   const post = resolvePost(req, res);
   if (!post) return;
+  const { table, col, key } = likeSource(post);
   const rows = db
     .prepare(
       `SELECT l.user_id, l.created_at, u.username, p.display_name, p.avatar
-         FROM highway_likes l
+         FROM ${table} l
          JOIN users u ON u.id = l.user_id
          LEFT JOIN profiles p ON p.user_id = l.user_id
-        WHERE l.post_id = ?
+        WHERE l.${col} = ?
         ORDER BY l.created_at DESC
         LIMIT 500`
     )
-    .all(post.id);
+    .all(key);
   res.json({
     likes: rows.map((r) => ({
       id: r.user_id,
@@ -308,6 +319,7 @@ router.post('/:id/like', requireAuth, (req, res) => {
   if (areBlocked(req.user.id, post.user_id)) {
     return res.status(403).json({ error: 'You cannot like this post.' });
   }
+  if (post.origin_kind === 'blog') return likeListedBlog(req, res, post);
   const existing = db.prepare('SELECT id FROM highway_likes WHERE post_id = ? AND user_id = ?').get(post.id, req.user.id);
   const liking = !existing;
   // Likes earn the author points, so a member can't like their own post
@@ -330,8 +342,24 @@ router.post('/:id/like', requireAuth, (req, res) => {
     }
   } catch (_e) { /* notification failures never block the like */ }
 
-  res.json({ likes: likeState(post.id, req.user.id) });
+  res.json({ likes: likeState(post, req.user.id) });
 });
+
+// Liking a blog post's Highway card likes the blog itself (same rules and
+// points as the like button inside the post, see routes/blogs.js).
+function likeListedBlog(req, res, post) {
+  const blog = db.prepare('SELECT id, user_id, status FROM blogs WHERE id = ?').get(post.origin_a);
+  if (!blog || blog.status !== 'published') return res.status(400).json({ error: 'This post isn’t published.' });
+  const had = db.prepare('SELECT 1 FROM blog_likes WHERE blog_id = ? AND user_id = ?').get(blog.id, req.user.id);
+  if (!had && blog.user_id === req.user.id) return res.status(400).json({ error: 'You can’t like your own post.' });
+  if (had) db.prepare('DELETE FROM blog_likes WHERE blog_id = ? AND user_id = ?').run(blog.id, req.user.id);
+  else {
+    db.prepare('INSERT INTO blog_likes (blog_id, user_id, created_at) VALUES (?, ?, ?)').run(blog.id, req.user.id, Date.now());
+    if (blog.user_id) notifyUser(blog.user_id, 'blog:liked', { blogId: blog.id, by: req.user.username });
+  }
+  broadcastLeaderboardChange(); // each like is a point for the writer
+  res.json({ likes: likeState(post, req.user.id) });
+}
 
 // POST /api/highway/:id/comment  { body } — add a comment to a post.
 router.post('/:id/comment', requireAuth, requireSafeLinks('body'), (req, res) => {

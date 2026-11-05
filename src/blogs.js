@@ -54,6 +54,19 @@ const PAGE = 20;
     );
     CREATE INDEX IF NOT EXISTS idx_blog_comments ON blog_comments (blog_id, created_at);
   `);
+  // A blog's Highway card used to keep likes of its own, so the card and the
+  // post showed different numbers. The card now shares the blog's likes: fold
+  // any old card likes into the blog (the author's own excluded).
+  db.exec(`
+    INSERT OR IGNORE INTO blog_likes (blog_id, user_id, created_at)
+      SELECT b.id, hl.user_id, hl.created_at
+        FROM highway_likes hl
+        JOIN highway_posts hp ON hp.id = hl.post_id AND hp.origin_kind = 'blog'
+        JOIN blogs b ON b.id = hp.origin_a
+       WHERE b.user_id IS NULL OR hl.user_id != b.user_id;
+    DELETE FROM highway_likes
+     WHERE post_id IN (SELECT id FROM highway_posts WHERE origin_kind = 'blog');
+  `);
 })();
 
 /* ----------------------------- cleaning ----------------------------- */
