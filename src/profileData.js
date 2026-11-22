@@ -164,7 +164,7 @@ function commentsFor(subjectId, viewerId) {
 function buildGallery(userId, viewerId) {
   const photos = db
     .prepare(
-      `SELECT id, filename, kind, duration, caption, location, music, music_mixed
+      `SELECT id, filename, kind, duration, caption, location, music, music_mixed, created_at
        FROM gallery_photos WHERE user_id = ? ORDER BY created_at DESC`
     )
     .all(userId);
@@ -212,6 +212,7 @@ function buildGallery(userId, viewerId) {
       location: ph.location || '',
       music: ph.music || null,
       musicMixed: !!ph.music_mixed,
+      createdAt: ph.created_at,
       reactions,
       reactionCount: reactions.reduce((sum, r) => sum + r.count, 0),
       commentCount: commentCount.get(ph.id) || 0,

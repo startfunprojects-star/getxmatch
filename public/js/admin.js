@@ -1567,7 +1567,7 @@
     host.innerHTML = `
       <div class="admin-card">
         <h2>Highway posts</h2>
-        <p class="count">The shared community pool (newest 100). Delete any post, or pin one to a fixed position 1–10 — pinned posts show first everywhere and are never auto-removed.</p>
+        <p class="count">The newest 100 posts. Delete any post, or pin one to a fixed position 1–10 — pinned posts show first on every member's Highway.</p>
         <div id="hwAdminList" class="count">Loading…</div>
       </div>`;
     await loadHighwayAdmin();

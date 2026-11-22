@@ -1,10 +1,11 @@
 'use strict';
 
-// "Highway" — a shared public pool of posts. Any registered user can post text,
-// an image and/or links (YouTube/Instagram/Facebook/…). The pool keeps only the
-// newest 100 posts; older ones (and their uploaded images) are pruned when new
-// posts arrive. Each post shows who posted it, and viewers can send that person
-// a relationship request straight from the post.
+// "Highway" — posts from the community. Any registered user can post text,
+// photos/videos and/or links (YouTube/Instagram/Facebook/…). Each member's
+// Highway is a ranked feed recommended from recent posts by their interests and
+// likes (src/highway.js recommend()); every post is also kept on its author's
+// timeline (GET /api/highway/user/:username). Each post shows who posted it,
+// and viewers can send that person a relationship request straight from it.
 
 const fs = require('fs');
 const path = require('path');
@@ -121,6 +122,7 @@ function removeUpload(filename) {
 // determines the relationship state shown on the post.
 function shapePost(r, viewerId) {
   return {
+    why: r._why || null, // why the Highway recommended it ("Because you like Music")
     id: r.id,
     body: r.body || '',
     image: r.image ? `/uploads/${r.image}` : null,
@@ -143,17 +145,27 @@ function shapePost(r, viewerId) {
   };
 }
 
-// GET /api/highway — the pool in display order (pinned first, then newest),
-// limited to authors near the viewer (see hw.audienceFilter; pinned posts are
-// shown to everyone), with posts from users the viewer ignores filtered out.
+// GET /api/highway — the viewer's recommended feed: pinned posts first, then
+// recent posts ranked by their interests and likes (hw.recommend), leaving out
+// members they ignore or have blocked.
 router.get('/', requireAuth, (req, res) => {
   const muted = new Set(ignoredIds(req.user.id));
-  const canSee = hw.audienceFilter(req.user.id);
-  const posts = hw.allOrdered()
-    .filter((r) => !muted.has(r.user_id) && (r.pinned || canSee(r.user_id)))
+  const posts = hw.recommend(req.user.id, muted)
     .map((r) => shapePost(r, req.user.id))
     .filter((p) => p.blog !== null); // a listed blog that was unpublished
   res.json({ posts, max: hw.MAX_POSTS });
+});
+
+// GET /api/highway/user/:username — a member's timeline: all of their posts
+// (photos, videos and statements), newest first. Hidden across a block.
+router.get('/user/:username', requireAuth, (req, res) => {
+  const u = db.prepare('SELECT id FROM users WHERE username = ?').get(String(req.params.username || ''));
+  if (!u) return res.status(404).json({ error: 'Member not found.' });
+  if (u.id !== req.user.id && areBlocked(req.user.id, u.id)) return res.json({ posts: [], hidden: true });
+  const posts = hw.byAuthor(u.id)
+    .map((r) => shapePost(r, req.user.id))
+    .filter((p) => p.blog !== null);
+  res.json({ posts });
 });
 
 // Accept up to MAX_MEDIA photos/videos ("media"), or one photo ("image", used
@@ -190,8 +202,7 @@ async function vetMedia(req, res, next) {
   } catch (e) { next(e); }
 }
 
-// POST /api/highway — create a post (text and/or photos/videos), then prune to
-// 100. An optional `originPeer` links a picture shared straight from a chat back
+// POST /api/highway — create a post (text and/or photos/videos). An optional `originPeer` links a picture shared straight from a chat back
 // to that conversation, so later likes/comments surface there.
 router.post('/', requireAuth, postLimiter, takeMedia, requireSafeLinks('body'), vetMedia, (req, res) => {
   const body = String((req.body && req.body.body) || '').trim().slice(0, BODY_MAX);
@@ -210,8 +221,7 @@ router.post('/', requireAuth, postLimiter, takeMedia, requireSafeLinks('body'), 
     }
   }
 
-  const { id, prunedImages } = hw.createPost({ userId: req.user.id, body, media, origin });
-  prunedImages.forEach(removeUpload);
+  const { id } = hw.createPost({ userId: req.user.id, body, media, origin });
 
   const post = shapePost(hw.byId(id), req.user.id);
 
@@ -221,7 +231,7 @@ router.post('/', requireAuth, postLimiter, takeMedia, requireSafeLinks('body'), 
     broadcastHighway({
       id: post.id, body: post.body, image: post.image, media: post.media,
       createdAt: post.createdAt, author: post.author,
-    }, (viewerId) => hw.canSeeAuthor(viewerId, req.user.id));
+    }, (viewerId) => hw.canSeeAuthor(viewerId, req.user.id, body));
   } catch (_e) { /* never block the response */ }
 
   res.status(201).json({ post });

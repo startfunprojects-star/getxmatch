@@ -1360,7 +1360,10 @@
 
     connectSocket();
     renderList();
-    renderMainHome(); // chat box shows the recent-activity feed by default
+    // Members land on their Highway (recommended posts) after signing in.
+    const hwNav = shell.querySelector('#exploreNav button[data-view="highway"]');
+    if (hwNav) hwNav.classList.add('active');
+    renderHighway();
     refreshRequestBadge();
     refreshNotifBadge();
     initPush(); // installed app: icon badge + push notifications
@@ -6925,10 +6928,17 @@
           <div class="pro-col-main">
             ${profile.about ? card('📝', 'About me', `<p class="rich">${esc(profile.about)}</p>`) : ''}
             <section class="card">
-              <h3 class="card-title">📷 Gallery <span class="hint" id="galCount"></span>
+              <h3 class="card-title">🗂️ ${isMe ? 'My timeline' : 'Timeline'} <span class="hint" id="galCount"></span>
                 <button class="ghost small gal-slideshow" id="galSlideshow" title="Play as slideshow" style="float:right">▶ Slideshow</button>
               </h3>
-              <div class="gallery" id="pvGallery"></div>
+              <div class="tl-tabs" id="tlTabs" role="tablist">
+                <button type="button" class="active" data-filter="all">All</button>
+                <button type="button" data-filter="photo">📷 Photos</button>
+                <button type="button" data-filter="reel">🎬 Reels</button>
+                <button type="button" data-filter="statement">💬 Statements</button>
+              </div>
+              <div class="gallery timeline-grid" id="pvGallery" data-filter="all"></div>
+              <div class="hint tl-empty hidden" id="tlEmpty"></div>
             </section>
           </div>
           <div class="pro-col-side">
@@ -6976,7 +6986,40 @@
     const galCount = view.querySelector('#galCount');
     const updateCount = () => {
       const n = gal.querySelectorAll('.cell').length;
-      galCount.textContent = profile.access === 'full' ? `(${n})` : `(${profile.galleryTotal || 0})`;
+      const posts = gal.querySelectorAll('.post-cell').length;
+      galCount.textContent = profile.access === 'full' ? `(${n})` : `(${(profile.galleryTotal || 0) + posts})`;
+      syncTimelineEmpty();
+    };
+    // Timeline tabs: All / Photos / Reels / Statements. Every cell carries a
+    // data-kind; the grid's data-filter hides the others (see style.css).
+    const tlEmpty = view.querySelector('#tlEmpty');
+    const TL_EMPTY = {
+      all: 'No posts yet.',
+      photo: 'No photos yet.',
+      reel: 'No reels yet.',
+      statement: 'No statements yet.',
+    };
+    function syncTimelineEmpty() {
+      const f = gal.dataset.filter;
+      const visible = gal.querySelectorAll(f === 'all' ? '.cell' : `.cell[data-kind="${f}"]`).length;
+      // A follower's / stranger's note that the gallery is locked applies to
+      // photos and reels only.
+      const locked = gal.querySelector(':scope > .hint');
+      const showLocked = !!locked && f !== 'statement';
+      if (locked) locked.classList.toggle('hidden', !showLocked);
+      tlEmpty.textContent = TL_EMPTY[f];
+      tlEmpty.classList.toggle('hidden', visible > 0 || showLocked);
+    }
+    view.querySelectorAll('#tlTabs button').forEach((b) => b.addEventListener('click', () => {
+      view.querySelectorAll('#tlTabs button').forEach((x) => x.classList.toggle('active', x === b));
+      gal.dataset.filter = b.dataset.filter;
+      syncTimelineEmpty();
+    }));
+    // Insert a cell so the grid stays newest-first (cells carry data-at).
+    const placeCell = (cell) => {
+      const at = Number(cell.dataset.at) || 0;
+      const after = Array.from(gal.querySelectorAll('.cell')).find((c) => (Number(c.dataset.at) || 0) < at);
+      gal.insertBefore(cell, after || null);
     };
     // The photos currently in the grid, in DOM order — the slider pages through
     // exactly these. Each cell keeps a reference to its photo + meta repainter.
@@ -6990,6 +7033,8 @@
         ? el(`<div class="cell reel-cell"><video src="${ph.url}#t=0.1" muted playsinline preload="metadata"></video><span class="reel-badge">▶ ${fmtReelTime(ph.duration)}</span><span class="cell-zoom">⤢</span><span class="cell-meta"></span></div>`)
         : el(`<div class="cell"><img src="${ph.url}" loading="lazy" /><span class="cell-zoom">⤢</span><span class="cell-meta"></span></div>`);
       cell._photo = ph;
+      cell.dataset.kind = isReel ? 'reel' : 'photo';
+      cell.dataset.at = ph.createdAt || Date.now();
       const meta = cell.querySelector('.cell-meta');
       const paintMeta = () => {
         const bits = [];
@@ -7029,12 +7074,11 @@
       }
       return cell;
     };
-    if (!profile.gallery.length) {
-      gal.appendChild(el(`<div class="hint">${profile.access === 'full' || !profile.galleryTotal
-        ? 'No photos or reels yet.'
-        : `🔒 ${profile.galleryTotal} photo${profile.galleryTotal === 1 ? '' : 's'} — follow to see a preview, or become friends to see them all.`}</div>`));
+    if (!profile.gallery.length && profile.access !== 'full' && profile.galleryTotal) {
+      gal.appendChild(el(`<div class="hint">🔒 ${profile.galleryTotal} photo${profile.galleryTotal === 1 ? '' : 's'} — follow to see a preview, or become friends to see them all.</div>`));
     } else profile.gallery.forEach((ph) => gal.appendChild(makeCell(ph)));
     updateCount();
+    loadTimelinePosts(); // their Highway posts join the grid when they arrive
     if (profile.access === 'follower' && profile.galleryTotal > profile.gallery.length) {
       gal.after(el(`<p class="hint gal-locked">🔒 Showing the newest ${profile.gallery.length} of ${profile.galleryTotal}. Become friends to see the whole gallery.</p>`));
     }
@@ -7055,20 +7099,88 @@
     // device, or capture one with the in-app camera. There's no limit on how
     // many; each item can carry a caption with #tags, a place and music.
     const addPosted = (photo) => {
-      const hint = gal.querySelector('.hint');
+      const hint = gal.querySelector(':scope > .hint');
       if (hint) hint.remove();
       gal.prepend(makeCell(photo));
       updateCount();
       syncGalSlideBtn();
     };
+
+    // The member's Highway posts on the timeline. A post with photos/videos
+    // shows its first one; a text-only post (or a listed blog) is a statement
+    // tile. Tapping opens the full post (likes, comments) in a window.
+    function postCell(p) {
+      const media = (p.media && p.media.length) ? p.media : (p.image ? [{ url: p.image, kind: 'image' }] : []);
+      const first = media[0];
+      const kind = !first ? 'statement' : (first.kind === 'video' ? 'reel' : 'photo');
+      const count = `<span class="cell-meta"${(p.likes && p.likes.count) || p.commentCount ? '' : ' style="display:none"'}>${
+        [p.likes && p.likes.count ? `❤ ${p.likes.count}` : '', p.commentCount ? `💬 ${p.commentCount}` : ''].filter(Boolean).join('  ')}</span>`;
+      const multi = media.length > 1 ? '<span class="post-multi" title="Several photos/videos">⧉</span>' : '';
+      let cell;
+      if (kind === 'statement') {
+        const text = p.blog ? `📝 ${p.blog.title}` : p.body;
+        cell = el(`<div class="cell post-cell statement-cell"><div class="statement-text"></div>${count}</div>`);
+        cell.querySelector('.statement-text').textContent = text.length > 220 ? text.slice(0, 220) + '…' : text;
+      } else if (kind === 'reel') {
+        cell = el(`<div class="cell post-cell reel-cell"><video src="${esc(first.url)}#t=0.1" muted playsinline preload="metadata"></video><span class="reel-badge">▶</span>${multi}${count}</div>`);
+      } else {
+        cell = el(`<div class="cell post-cell"><img src="${esc(first.url)}" loading="lazy" alt="" />${multi}${count}</div>`);
+      }
+      cell.dataset.kind = kind;
+      cell.dataset.at = p.createdAt;
+      cell.title = 'Open post';
+      cell.addEventListener('click', () => {
+        const m = openModal(kind === 'statement' ? 'Statement' : 'Post', '');
+        m.card.classList.add('tl-post-modal');
+        m.card.querySelector('.modal-body').appendChild(highwayPostEl(p, {
+          onDeleted: () => { m.close(); cell.remove(); updateCount(); syncGalSlideBtn(); },
+        }));
+      });
+      return cell;
+    }
+    async function loadTimelinePosts() {
+      try {
+        const { posts } = await api.get('/api/highway/user/' + encodeURIComponent(profile.username));
+        if (!gal.isConnected) return;
+        (posts || []).forEach((p) => placeCell(postCell(p)));
+        updateCount();
+        syncGalSlideBtn();
+      } catch (_e) { /* the rest of the profile still works */ }
+    }
     if (isMe) {
       const bar = el(`<div class="gal-add-row">
         <button class="primary small" id="pvCamera" title="Take a photo or record a reel">📷 Camera</button>
         <button class="ghost small" id="pvAdd">＋ Add photo</button>
         <button class="ghost small" id="pvAddReel">＋ Add reel</button>
+        <button class="ghost small" id="pvAddStatement" title="Post a statement — it goes on your timeline and the Highway">✍️ Statement</button>
         <span class="hint gal-upload-status"></span>
       </div>`);
       const status = bar.querySelector('.gal-upload-status');
+      bar.querySelector('#pvAddStatement').addEventListener('click', () => {
+        const m = openModal('Write a statement', `
+          <textarea class="tl-statement-input" maxlength="2000" placeholder="What’s on your mind? It appears on your timeline and on the Highway."></textarea>
+          <div class="msg"></div>
+          <div class="row-actions"><button class="primary" type="button">Post</button></div>`);
+        const input = m.card.querySelector('textarea');
+        const msg = m.card.querySelector('.msg');
+        const postBtn = m.card.querySelector('.row-actions .primary');
+        input.focus();
+        postBtn.addEventListener('click', async () => {
+          const text = input.value.trim();
+          if (!text) { msg.className = 'msg error'; msg.textContent = 'Write something first.'; return; }
+          const fd = new FormData();
+          fd.append('body', text);
+          postBtn.disabled = true;
+          try {
+            const { post } = await api.postForm('/api/highway', fd);
+            m.close();
+            const hint = gal.querySelector(':scope > .hint');
+            if (hint) hint.remove();
+            placeCell(postCell(post));
+            updateCount();
+          } catch (e) { postBtn.disabled = false; msg.className = 'msg error'; msg.textContent = e.message; }
+        });
+      });
       const fileIn = el('<input type="file" accept="image/*" class="hidden" />');
       const reelIn = el('<input type="file" accept="video/mp4,video/quicktime,video/webm,video/*" class="hidden" />');
       bar.querySelector('#pvCamera').addEventListener('click', () => openCamera(addPosted));
@@ -7442,15 +7554,17 @@
   }
 
   /* ======================================================================
-     HIGHWAY — a shared pool of posts (text / images / links). Any registered
-     user can post; only the newest 100 are kept. Live-updated over the socket.
+     HIGHWAY — each member's recommended feed of posts (text / images / links /
+     videos), ranked by their interests and likes. Any registered user can
+     post; every post also stays on its author's profile timeline. New posts
+     are pushed live over the socket. Members land here after signing in.
   ====================================================================== */
   let highwayFeed = null; // the mounted feed element, for live socket updates
 
   async function renderHighway() {
     const main = openMainView();
     main.appendChild(sectionShell('🌊 Highway',
-      'The community pool — share text, images, links, or videos. Anyone can post.'));
+      'Recommended for you — posts picked from your areas of interest, the posts you like and the people you follow. Share text, photos, links or videos.'));
     const body = main.querySelector('#sectionBody');
     body.innerHTML = '';
 
@@ -7572,14 +7686,16 @@
   }
 
   // Build one Highway post card.
-  function highwayPostEl(p) {
+  // `opts.onDeleted()` runs after the author deletes the post (instead of
+  // removing the card from the Highway feed).
+  function highwayPostEl(p, opts) {
     const card = el(`
       <div class="card highway-post${p.pinned ? ' hw-pinned' : ''}" data-id="${p.id}">
         <div class="hw-head">
           <img class="avatar sm hw-avatar" src="${avatarUrl(p.author.avatar)}" alt="" />
           <div class="hw-who">
             <div class="hw-name"></div>
-            <div class="hw-time hint">${p.pinned ? '📌 Pinned · ' : ''}${fmtDate(p.createdAt)} · ${fmtTime(p.createdAt)}</div>
+            <div class="hw-time hint">${p.pinned ? '📌 Pinned · ' : ''}${fmtDate(p.createdAt)} · ${fmtTime(p.createdAt)}${p.why ? ` · <span class="hw-why">✨ ${esc(p.why)}</span>` : ''}</div>
           </div>
           <div class="hw-action"></div>
         </div>
@@ -7610,7 +7726,8 @@
         del.disabled = true;
         try { await api.del('/api/highway/' + p.id); }
         catch (e) { del.disabled = false; return notifyToast(e.message); }
-        removeHighwayCard(card);
+        if (opts && opts.onDeleted) opts.onDeleted();
+        else removeHighwayCard(card);
       });
       actionSlot.appendChild(del);
     } else {
@@ -7670,7 +7787,7 @@
       try {
         const res = await api.post('/api/highway/' + p.id + '/report', { reason });
         reportBtn.textContent = '🚩 Reported';
-        if (res.removed) { removeHighwayCard(card); notifyToast('Thanks — this post has been removed.'); }
+        if (res.removed) { if (opts && opts.onDeleted) opts.onDeleted(); else removeHighwayCard(card); notifyToast('Thanks — this post has been removed.'); }
         else notifyToast(res.already ? 'You already reported this post.' : 'Thanks — your report was received.');
       } catch (e) { reportBtn.disabled = false; alert(e.message); }
     });

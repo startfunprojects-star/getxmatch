@@ -103,23 +103,32 @@ self-host on a single VPS: no external database or storage service required.
 - **Quizzes, Polls & Blogs** — admin-authored content users can engage with:
   take quizzes (auto-graded, attempts recorded), vote in polls (live tallies),
   and read blog posts. All are created/edited/deleted from the admin dashboard.
-- **Highway** — a shared community pool on the main menu where any registered
-  member can post text, an image and/or links (YouTube videos embed inline;
-  Instagram/Facebook and other links render as rich links). Each post shows who
-  posted it, and viewers can send that person a friend request straight
-  from the post. Members only see posts from people **near** them — at least
-  **5 shared areas of interest**, the **same country**, or born in the **same
-  decade** (their own and admin-pinned posts are always shown). An image shared
-  on Recent Activity is also posted to the Highway automatically (as a copy) and
-  reaches the same audience. Profile pictures, gallery photos and picture-buffer
-  pictures are **not**: they show on Recent Activity only to the member's
-  followers and friends. The pool keeps only the **newest 100 posts** — older ones (and
-  their images) are pruned automatically as new posts arrive — and updates live
-  over the socket. There's a **public, read-only `/highway` page** (linked from
-  the homepage menu) so logged-out visitors can browse posts too. From the admin
-  dashboard's **Highway** tab, the admin can **delete any post** and **pin a post
-  to a fixed position 1–10** — pinned posts show first everywhere and are exempt
-  from the 100-post prune.
+- **Highway** — each member's **recommended feed**, and where members land
+  after signing in. Any registered member can post text (a "statement"),
+  photos/videos and/or links (YouTube videos embed inline; Instagram/Facebook
+  and other links render as rich links). Each post shows who posted it, and
+  viewers can send that person a friend request straight from the post. The
+  feed is ranked per member from the newest 500 posts (`recommend()` in
+  `src/highway.js`): posts mentioning their **areas of interest** (or topics of
+  posts they have **liked**), posts by people they **follow / are connected
+  with / have liked before**, people **near** them (shared interests, same
+  country, same decade), plus how much a post is liked and commented on, minus
+  a point per 12 hours of age. A post is only shown when at least one personal
+  signal links it to the member; their own and admin-pinned posts always show.
+  Each card says why it was picked ("Because you like Music"). An image shared
+  on Recent Activity is also posted to the Highway automatically (as a copy).
+  Posts are **kept permanently** — the feed shows the top 100 — and new ones
+  arrive live over the socket. There's a **public, read-only `/highway` page**
+  (linked from the homepage menu) showing the newest 100 so logged-out visitors
+  can browse posts too. From the admin dashboard's **Highway** tab, the admin
+  can **delete any post** and **pin a post to a fixed position 1–10** — pinned
+  posts show first everywhere.
+- **Timeline** — every profile has an Instagram-style timeline grid with
+  **All / Photos / Reels / Statements** tabs: the member's gallery photos and
+  reels together with all of their Highway posts, newest first. Anyone can see
+  a member's Highway posts there (not across a block); gallery items keep their
+  follower/friend access rules. Tapping a post opens it with likes and
+  comments; owners can post a statement straight from their timeline.
 - **Leaderboards** — **Kings & Queens** (highlighted in gold) ranks every
   member by overall points, built from their ratings, friends, quiz activity
   and more. Every quiz belongs to one category the admin picks — **The Grand

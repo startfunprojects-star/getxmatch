@@ -111,18 +111,15 @@ async function readFields(body) {
 }
 
 // First publish: list the post on the Highway (a card linking to the blog).
-// The Highway post carries no files of its own, so pruning it never removes
-// the blog's cover.
 function listOnHighway(blogId, userId) {
   try {
-    const { id, prunedImages } = hw.createPost({ userId, body: '', origin: { kind: 'blog', a: blogId, b: null } });
-    prunedImages.forEach(removeUpload);
+    const { id } = hw.createPost({ userId, body: '', origin: { kind: 'blog', a: blogId, b: null } });
     const r = hw.byId(id);
     const blog = blogCard(blogId);
     broadcastHighway({
       id, body: '', image: null, media: [], createdAt: r.created_at, blog,
       author: { id: userId, username: r.username, displayName: r.display_name || r.username, avatar: r.avatar ? `/uploads/${r.avatar}` : null },
-    }, (viewerId) => hw.canSeeAuthor(viewerId, userId));
+    }, (viewerId) => hw.canSeeAuthor(viewerId, userId, blog ? `${blog.title} ${blog.category || ''}` : ''));
   } catch (e) { console.error('blogs: highway listing failed:', e.message); }
 }
 

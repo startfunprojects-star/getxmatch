@@ -677,9 +677,9 @@ db.exec(`
 `);
 
 // "Highway" — a shared public pool where any registered user can post text,
-// an image, and/or links (YouTube/Instagram/Facebook/etc). The pool is capped
-// at the newest 100 posts: older posts (and their images) are pruned when new
-// ones arrive (see src/routes/highway.js).
+// an image, and/or links (YouTube/Instagram/Facebook/etc). Posts are kept on
+// their author's timeline; each member's Highway is a ranked selection of
+// recent ones (see src/highway.js recommend()).
 db.exec(`
   CREATE TABLE IF NOT EXISTS highway_posts (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -705,7 +705,7 @@ db.exec(`
 }
 
 // Highway post engagement: one "like" per user per post, plus flat comments.
-// Both cascade-delete with their post (pruned or removed by its author).
+// Both cascade-delete with their post (when it is removed).
 db.exec(`
   CREATE TABLE IF NOT EXISTS highway_likes (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -726,8 +726,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_highway_comments_post ON highway_comments (post_id, created_at);
 `);
 
-// Admin pinning for Highway: a pinned post is exempt from the 100-post prune and
-// is shown ahead of the rest, ordered by pin_rank (1..10). Added idempotently.
+// Admin pinning for Highway: a pinned post is shown ahead of the rest, ordered by pin_rank (1..10). Added idempotently.
 {
   const cols = db.prepare('PRAGMA table_info(highway_posts)').all().map((c) => c.name);
   if (!cols.includes('pinned')) db.exec('ALTER TABLE highway_posts ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
@@ -1287,8 +1286,9 @@ db.exec(`
 })();
 
 // --- Migration: likes kept from pruned Highway posts (src/highway.js). The
-// Highway keeps only the newest posts; when an old one is pruned its likes move
-// here so the author keeps the like points they earned (src/points.js).
+// Highway used to keep only the newest posts; when an old one was pruned its
+// likes moved here so the author kept the like points they earned
+// (src/points.js). Posts are no longer pruned, but these rows still count.
 db.exec(`
   CREATE TABLE IF NOT EXISTS highway_like_archive (
     author_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

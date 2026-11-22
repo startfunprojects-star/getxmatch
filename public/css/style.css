@@ -2521,3 +2521,38 @@ a.button-link {
   background: var(--grad); box-shadow: var(--glow); text-decoration: none;
 }
 a.button-link:hover { filter: brightness(1.05); text-decoration: none; }
+
+/* Profile timeline: photos, reels and statements (Highway posts) in one grid,
+   filtered by the tabs above it. */
+.tl-tabs { display: flex; gap: 4px; margin: 0 0 12px; padding: 3px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-3); overflow-x: auto; scrollbar-width: none; }
+.tl-tabs::-webkit-scrollbar { display: none; }
+.tl-tabs button { flex: 1 0 auto; border: 0; background: none; color: var(--muted); border-radius: 999px; padding: 6px 12px; font-weight: 600; font-size: 13px; white-space: nowrap; }
+.tl-tabs button.active { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
+.timeline-grid[data-filter="photo"] .cell:not([data-kind="photo"]),
+.timeline-grid[data-filter="reel"] .cell:not([data-kind="reel"]),
+.timeline-grid[data-filter="statement"] .cell:not([data-kind="statement"]) { display: none; }
+.tl-empty { padding: 8px 2px; }
+.gallery .post-cell { cursor: pointer; }
+.gallery .post-cell img, .gallery .post-cell video { cursor: pointer; }
+.gallery .statement-cell {
+  display: flex; align-items: center; justify-content: center; padding: 12px;
+  background: var(--grad-soft), var(--bg-3); border: 1px solid var(--border);
+}
+.gallery .statement-text {
+  font-size: 13px; line-height: 1.35; color: var(--text); text-align: center;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+.gallery .post-multi {
+  position: absolute; top: 6px; right: 6px; z-index: 2; padding: 1px 7px; border-radius: 999px;
+  background: rgba(0,0,0,.58); color: #fff; font-size: 13px; pointer-events: none;
+}
+.modal-card.tl-post-modal { max-width: 620px; }
+.tl-post-modal .highway-post { margin: 0; box-shadow: none; }
+.tl-statement-input { width: 100%; min-height: 120px; resize: vertical; }
+.hw-why { color: var(--accent); font-weight: 600; }
+.gallery .post-cell .reel-badge { top: 8px; bottom: auto; pointer-events: none; }
+.pro-col-main { min-width: 0; }
+@media (max-width: 480px) {
+  .tl-tabs button { padding: 6px 8px; font-size: 12px; }
+}
