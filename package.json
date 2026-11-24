@@ -13,6 +13,7 @@
     "nsfw-scan": "node scripts/nsfw-scan.js"
   },
   "dependencies": {
+    "@tensorflow-models/coco-ssd": "^2.2.3",
     "@tensorflow/tfjs": "^4.22.0",
     "@tensorflow/tfjs-backend-wasm": "^4.22.0",
     "bcryptjs": "^2.4.3",

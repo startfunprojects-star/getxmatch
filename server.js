@@ -123,6 +123,20 @@ app.use('/guardian', require('./src/routes/guardian'));
 // with no matching page route fall through to the static assets and SPA below.
 app.use(pageRoutes);
 
+// Quiz camera check (public/js/camguard.js): TensorFlow.js + COCO-SSD served
+// from node_modules, and the detector's weights from public/models. Both are
+// versioned files, so browsers may cache them for a long time.
+const VENDOR_FILES = {
+  'tf.min.js': path.join(__dirname, 'node_modules', '@tensorflow', 'tfjs', 'dist', 'tf.min.js'),
+  'coco-ssd.min.js': path.join(__dirname, 'node_modules', '@tensorflow-models', 'coco-ssd', 'dist', 'coco-ssd.min.js'),
+};
+app.get('/vendor/:file', (req, res, next) => {
+  const file = Object.prototype.hasOwnProperty.call(VENDOR_FILES, req.params.file) && VENDOR_FILES[req.params.file];
+  if (!file) return next();
+  res.sendFile(file, { maxAge: '30d' });
+});
+app.use('/models', express.static(path.join(publicDir, 'models'), { maxAge: '30d', index: false }));
+
 app.use(express.static(publicDir, { index: 'index.html' }));
 
 // SPA fallback for non-API routes.

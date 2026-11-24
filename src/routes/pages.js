@@ -243,6 +243,14 @@ const ATTEMPT_STYLE = `<style>
 .gx-timebar { height: 6px; border-radius: 999px; background: var(--bg3); overflow: hidden; }
 .gx-timebar span { display: block; height: 100%; width: 100%; background: var(--grad); transition: width .25s linear; }
 .gx-timebar.untimed { display: none; }
+.gx-cam-row { display: flex; align-items: center; gap: 10px; }
+.gx-cam { width: 72px; height: 54px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); background: #000; transform: scaleX(-1); flex: none; }
+.gx-cam[hidden] { display: none; }
+.gx-proctor-intro .gx-cam { display: block; width: 120px; height: 90px; margin: 0 0 12px; }
+.gx-attempt.gx-cam-blocked #gxQuizForm, .gx-attempt.gx-cam-blocked .gx-step { filter: blur(22px); pointer-events: none; user-select: none; -webkit-user-select: none; }
+.gx-cam-block { position: fixed; inset: 0; z-index: 45; display: flex; align-items: center; justify-content: center; padding: 16px; background: color-mix(in srgb, var(--bg) 35%, transparent); }
+.gx-cam-block[hidden] { display: none; }
+.gx-cam-retry[hidden] { display: none; }
 .gx-share { margin: 26px 0 8px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg2); }
 .gx-share h2 { margin: 0; font-size: 18px; }
 .gx-share-hint { margin: 2px 0 12px; color: var(--muted); font-size: 14px; }
@@ -455,6 +463,7 @@ ${hasQuestions ? `
       <li>The quiz opens in full screen and must stay there until you submit.</li>
       <li>Questions come one at a time. Each shows its points and time limit — ${graded ? 'answer correctly' : 'answer'} before the timer runs out to earn its points${graded ? ' (a wrong answer earns none)' : ''}. When time is up, the question is skipped${negMarks ? ` and <strong>${negMarks} point${negMarks === 1 ? ' is' : 's are'} deducted (negative marking)</strong>` : ' and earns nothing (no negative marking)'}.</li>
       <li>Pressing Esc, switching tabs or apps, minimising the window, connecting another display or using remote-control/automation tools counts as leaving the quiz.</li>
+      <li><strong>The quiz needs your camera.</strong> It watches for a phone held up to photograph the screen, for you leaving, and for anyone else looking — and blurs the questions until that stops (the timer keeps running). The check runs only on your device: no picture or video is recorded or uploaded.</li>
       <li>The first time, you get a warning and return to full screen.</li>
       <li><strong>The second time, the quiz stops, you can't attempt it again for 24 hours and 10 points are deducted from your score.</strong></li>
       <li><strong>You can retake a quiz, but every reattempt costs ${graded ? 30 : 10} points as soon as you start it</strong> (only your latest attempt counts — it replaces your earlier score, even if it's lower).${graded ? ' A reattempt can’t be used to challenge anyone.' : ''}</li>
@@ -462,9 +471,10 @@ ${hasQuestions ? `
       ${graded ? `<li>When you finish, you get a challenge link that stays active for 24 hours. Only your first attempt gives a challenge link. One member who hasn't taken this quiz can accept it and plays it in full screen with the same timers. <strong>Whoever scores more points wins the other's points for this quiz</strong>; a tie moves no points.</li>` : ''}
       ${compat && !open ? `<li>This is a compatibility quiz: when you finish, you get a link to share that stays active for 24 hours. When a signed-in member answers it, you both see your compatibility results — you earn 10 points and they earn 5.</li>` : ''}
     </ul>
+    <video class="gx-cam gx-cam-intro" muted playsinline autoplay hidden></video>
     <button type="button" class="cta gx-start">Start quiz in full screen</button>
   </div>
-  <div class="gx-proctor-bar" hidden><span>Full-screen quiz</span><span class="gx-proctor-strikes"></span></div>
+  <div class="gx-proctor-bar" hidden><span class="gx-cam-row"><video class="gx-cam gx-cam-live" muted playsinline autoplay></video><span>Full-screen quiz · camera on</span></span><span class="gx-proctor-strikes"></span></div>
   <div class="gx-step" hidden>
     <div class="gx-step-row"><span class="gx-progress"></span><span class="gx-earned"></span><span class="gx-timer" aria-live="polite"></span></div>
     <div class="gx-timebar"><span></span></div>
@@ -476,6 +486,13 @@ ${hasQuestions ? `
       <button type="button" class="cta gx-return" hidden>Return to full screen</button>
     </div>
   </div>
+  <div class="gx-cam-block" role="alertdialog" aria-modal="true" aria-labelledby="gxCamTitle" hidden>
+    <div class="gx-proctor-box">
+      <h2 id="gxCamTitle">Quiz hidden</h2>
+      <p class="gx-cam-msg"></p>
+      <button type="button" class="cta gx-cam-retry" hidden>Turn camera back on</button>
+    </div>
+  </div>
   <form id="gxQuizForm" hidden>
     ${qHtml}
     <button type="submit" class="cta gx-submit">Next</button>
@@ -485,6 +502,7 @@ ${hasQuestions ? `
   <div class="gx-note" hidden></div>
 </div>` : '<p class="empty">This quiz has no questions yet.</p>'}
 ${ads.slotHtml('content_inline')}
+${hasQuestions ? '<script src="/js/camguard.js" defer></script>' : ''}
 ${ATTEMPT_SCRIPT}`;
   sendWithAds(res, { seoDescriptor, jsonLd, bodyHtml });
 });

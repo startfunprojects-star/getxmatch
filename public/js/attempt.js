@@ -169,6 +169,54 @@
     var answering = false;
     var fsSupported = !!(root.requestFullscreen || root.webkitRequestFullscreen);
 
+    // Camera check (/js/camguard.js): the questions are blurred while a phone
+    // is held up to the screen, nobody is in view, someone else is looking or
+    // the camera is off. The quiz can't start without the camera.
+    var camIntro = root.querySelector('.gx-cam-intro');
+    var camLive = root.querySelector('.gx-cam-live');
+    var camBlock = root.querySelector('.gx-cam-block');
+    var camMsg = camBlock.querySelector('.gx-cam-msg');
+    var camRetry = camBlock.querySelector('.gx-cam-retry');
+    var camBlocked = false;
+    var cam = window.GxCamGuard ? window.GxCamGuard.create({ video: camIntro, onChange: onCamChange }) : null;
+    var camReady = false;
+
+    function onCamChange(state) {
+      camBlocked = !!state;
+      root.classList.toggle('gx-cam-blocked', camBlocked);
+      camBlock.hidden = !camBlocked;
+      if (!state) return;
+      camMsg.textContent = state.message;
+      camRetry.hidden = state.reason !== 'camera';
+      var a = document.activeElement;
+      if (a && form.contains(a)) { try { a.blur(); } catch (_e) {} }
+    }
+    camRetry.addEventListener('click', function () {
+      camRetry.disabled = true;
+      cam.restart().then(
+        function () { camRetry.disabled = false; moveCamToBar(); },
+        function (err) { camRetry.disabled = false; camMsg.textContent = err.message; }
+      );
+    });
+    // Show the camera in the quiz bar once it starts (same stream as the intro preview).
+    function moveCamToBar() {
+      if (camIntro.srcObject) { camLive.srcObject = camIntro.srcObject; var p = camLive.play(); if (p && p.catch) p.catch(function () {}); }
+      camIntro.hidden = true;
+    }
+    function stopCam() {
+      camReady = false;
+      if (cam) cam.stop();
+      camLive.srcObject = null;
+      onCamChange(null);
+    }
+    // Get a head start on the camera-check download when a start looks likely.
+    if (cam && loggedIn) {
+      var warm = function () { window.GxCamGuard.preload(); };
+      startBtn.addEventListener('pointerenter', warm, { once: true });
+      startBtn.addEventListener('touchstart', warm, { once: true, passive: true });
+      startBtn.addEventListener('focus', warm, { once: true });
+    }
+
     function fsElement() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
 
     function lockKeys() {
@@ -224,6 +272,7 @@
       active = false;
       stopQuestionTimer();
       if (envTimer) { clearInterval(envTimer); envTimer = null; }
+      stopCam();
     }
 
     function showLocked(until, lead) {
@@ -332,6 +381,8 @@
       bar.hidden = false;
       form.hidden = false;
       updateStrikes(strikes);
+      moveCamToBar();
+      if (cam) cam.start();
       if (!envTimer) envTimer = setInterval(function () {
         var p = envProblem();
         if (p) violation('environment', p);
@@ -388,6 +439,7 @@
     }
     // Closing or reloading the page mid-quiz also counts as leaving it.
     window.addEventListener('pagehide', function () {
+      if (cam) cam.stop();
       if (!active || finishing || !session || !navigator.sendBeacon) return;
       try {
         navigator.sendBeacon(base + '/proctor/violation',
@@ -432,6 +484,31 @@
       if (!loggedIn) { promptRegister('attempt this quiz'); return; }
       var p = envProblem();
       if (p) { showNote(esc(p) + ' — turn it off, then start the quiz.'); return; }
+      // Step 1: turn the camera on and load the check. (Full screen needs a
+      // fresh click, and the camera prompt would use it up, so the quiz itself
+      // starts on the next click.)
+      if (!cam) { showNote('The camera check couldn’t load. Reload the page and try again.'); return; }
+      if (!camReady || !cam.isReady()) {
+        startBtn.disabled = true;
+        var label = startBtn.textContent;
+        startBtn.textContent = 'Turning on camera…';
+        camIntro.hidden = false;
+        showNote('Allow the camera when your browser asks. The check runs only on this device — nothing is recorded or uploaded.');
+        cam.prepare().then(function () {
+          camReady = true;
+          startBtn.disabled = false;
+          startBtn.textContent = '📷 Camera on — ' + label.charAt(0).toLowerCase() + label.slice(1);
+          if (note) note.hidden = true;
+          try { startBtn.focus(); } catch (_e) {}
+        }, function (err) {
+          stopCam();
+          camIntro.hidden = true;
+          startBtn.disabled = false;
+          startBtn.textContent = label;
+          showNote('<strong>This quiz needs your camera.</strong> ' + esc(err && err.message ? err.message : 'Could not turn on the camera.'));
+        });
+        return;
+      }
       startBtn.disabled = true;
       var fsReady = enterFs(); // inside the click so the browser allows it
       postJson(base + '/proctor/start', challengeToken ? { challenge: challengeToken } : {})
@@ -602,6 +679,7 @@
     // Send the current question's answer (or a timeout) and move on.
     function sendAnswer(timedOut) {
       if (!active || answering) return;
+      if (camBlocked && !timedOut) return; // questions are hidden right now
       var picked = form.querySelector('.gx-q input[type="radio"]:checked');
       if (!picked && !timedOut) { showNote('Pick an answer, or wait for the timer to skip this question.'); return; }
       answering = true;
