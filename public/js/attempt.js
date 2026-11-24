@@ -181,12 +181,41 @@
     var cam = window.GxCamGuard ? window.GxCamGuard.create({ video: camIntro, onChange: onCamChange }) : null;
     var camReady = false;
 
+    // Phone sightings are counted by the server: the 3rd stops the quiz and
+    // locks it for 24 hours.
+    var phoneStrikes = 0;
+    var maxPhone = 3;
+    var camReason = null;
+    function phoneLine() {
+      return ' Phone seen ' + phoneStrikes + ' of ' + maxPhone + ' times — the ' + maxPhone +
+        (maxPhone === 3 ? 'rd' : 'th') + ' time stops the quiz and you can’t attempt it again for 24 hours.';
+    }
+    function reportPhone(baseMsg) {
+      if (!session || !active || finishing) return;
+      postJson(base + '/proctor/phone', { session: session }, true)
+        .then(function (r) {
+          var d = r.data || {};
+          if (d.terminated) {
+            showLocked(d.lockedUntil || Date.now() + 864e5,
+              'Quiz stopped — a phone was seen in front of the screen ' + (d.maxPhone || maxPhone) + ' times.');
+            return;
+          }
+          if (typeof d.phoneStrikes === 'number') phoneStrikes = d.phoneStrikes;
+          if (d.maxPhone) maxPhone = d.maxPhone;
+          if (camReason === 'phone') camMsg.textContent = baseMsg + phoneLine();
+        })
+        .catch(function () {});
+    }
+
     function onCamChange(state) {
+      var prev = camReason;
+      camReason = state ? state.reason : null;
       camBlocked = !!state;
       root.classList.toggle('gx-cam-blocked', camBlocked);
       camBlock.hidden = !camBlocked;
       if (!state) return;
       camMsg.textContent = state.message;
+      if (state.reason === 'phone' && prev !== 'phone') reportPhone(state.message);
       camRetry.hidden = state.reason !== 'camera';
       var a = document.activeElement;
       if (a && form.contains(a)) { try { a.blur(); } catch (_e) {} }
@@ -523,6 +552,8 @@
           }
           session = d.session;
           if (d.penalty) penalty = d.penalty;
+          phoneStrikes = d.phoneStrikes || 0;
+          if (d.maxPhone) maxPhone = d.maxPhone;
           if (note) note.hidden = true;
           fsReady.then(function (ok) {
             if (!ok && fsSupported) {

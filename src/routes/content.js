@@ -238,7 +238,7 @@ function gradedCounts(type, questions, answers) {
 
 function lockedResponse(res, until) {
   return res.status(423).json({
-    error: 'You were stopped from this quiz for leaving full screen. You can attempt it again after the lock expires.',
+    error: 'You were stopped from this quiz. You can attempt it again after the lock expires.',
     lockedUntil: until,
   });
 }
@@ -323,6 +323,8 @@ router.post('/quizzes/:id/proctor/start', requireAuth, (req, res) => {
     session: sess.token,
     strikes: sess.strikes,
     maxStrikes: PROCTOR_MAX_STRIKES,
+    phoneStrikes: sess.phone_strikes || 0,
+    maxPhone: PROCTOR_MAX_PHONE,
     penalty: PROCTOR_PENALTY,
     state: sessionState(sess, questions, isGraded(row.type)),
   });
@@ -374,6 +376,58 @@ router.post('/quizzes/:id/proctor/violation', requireAuth, (req, res) => {
   if (sess.match_id) forfeitChallenge(sess);
   broadcastLeaderboardChange();
   res.json({ strikes, terminated: true, lockedUntil: until, penalty: PROCTOR_PENALTY });
+});
+
+// POST /api/content/quizzes/:id/proctor/phone  { session }
+// The camera check (public/js/camguard.js) saw a phone held up to the screen.
+// Each sighting is counted; the PROCTOR_MAX_PHONE-th stops the attempt and
+// locks the quiz for 24h (no points are deducted for it). Reports closer
+// together than PROCTOR_PHONE_GAP_MS are the same sighting.
+const PROCTOR_MAX_PHONE = 3;
+const PROCTOR_PHONE_GAP_MS = 3000;
+router.post('/quizzes/:id/proctor/phone', requireAuth, (req, res) => {
+  const quizId = Number(req.params.id);
+  const token = String((req.body && req.body.session) || '');
+  const sess = db
+    .prepare('SELECT * FROM quiz_proctor_sessions WHERE token = ? AND user_id = ? AND quiz_id = ?')
+    .get(token, req.user.id, quizId);
+  if (!sess) return res.status(404).json({ error: 'Quiz session not found.' });
+  const max = PROCTOR_MAX_PHONE;
+  if (sess.status === 'terminated') {
+    return res.json({ phoneStrikes: sess.phone_strikes, maxPhone: max, terminated: true, lockedUntil: activeLockout(req.user.id, quizId) });
+  }
+  if (sess.status !== 'active') return res.json({ phoneStrikes: sess.phone_strikes, maxPhone: max, terminated: false, ignored: true });
+
+  const now = Date.now();
+  if (sess.last_phone_at && now - sess.last_phone_at < PROCTOR_PHONE_GAP_MS) {
+    return res.json({ phoneStrikes: sess.phone_strikes, maxPhone: max, terminated: false, duplicate: true });
+  }
+  const phoneStrikes = (sess.phone_strikes || 0) + 1;
+  if (phoneStrikes < max) {
+    db.prepare('UPDATE quiz_proctor_sessions SET phone_strikes = ?, last_phone_at = ? WHERE token = ?').run(phoneStrikes, now, token);
+    return res.json({ phoneStrikes, maxPhone: max, terminated: false });
+  }
+
+  const until = now + PROCTOR_LOCK_MS;
+  db.exec('BEGIN');
+  try {
+    db.prepare("UPDATE quiz_proctor_sessions SET phone_strikes = ?, last_phone_at = ?, status = 'terminated' WHERE token = ?")
+      .run(phoneStrikes, now, token);
+    db.prepare(
+      `INSERT INTO quiz_lockouts (user_id, quiz_id, until) VALUES (?, ?, ?)
+       ON CONFLICT(user_id, quiz_id) DO UPDATE SET until = excluded.until`
+    ).run(req.user.id, quizId, until);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  // A challenger stopped mid-quiz forfeits the challenge.
+  if (sess.match_id) {
+    forfeitChallenge(sess);
+    broadcastLeaderboardChange();
+  }
+  res.json({ phoneStrikes, maxPhone: max, terminated: true, lockedUntil: until });
 });
 
 // POST /api/content/quizzes/:id/proctor/answer  { session, index, option }

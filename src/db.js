@@ -812,6 +812,10 @@ db.exec(`
   if (!cols.includes('q_started_at')) db.exec('ALTER TABLE quiz_proctor_sessions ADD COLUMN q_started_at INTEGER;');
   if (!cols.includes('answers')) db.exec("ALTER TABLE quiz_proctor_sessions ADD COLUMN answers TEXT NOT NULL DEFAULT '[]';");
   if (!cols.includes('points')) db.exec('ALTER TABLE quiz_proctor_sessions ADD COLUMN points INTEGER NOT NULL DEFAULT 0;');
+  // Times the camera check saw a phone held up to the screen (the 3rd stops
+  // the attempt and locks the quiz for 24h), and when it last counted one.
+  if (!cols.includes('phone_strikes')) db.exec('ALTER TABLE quiz_proctor_sessions ADD COLUMN phone_strikes INTEGER NOT NULL DEFAULT 0;');
+  if (!cols.includes('last_phone_at')) db.exec('ALTER TABLE quiz_proctor_sessions ADD COLUMN last_phone_at INTEGER;');
 })();
 
 // --- Migration: quiz card stats. negative_marks = points deducted for each
