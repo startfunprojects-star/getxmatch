@@ -188,7 +188,7 @@
     var camReason = null;
     function phoneLine() {
       return ' Phone seen ' + phoneStrikes + ' of ' + maxPhone + ' times — the ' + maxPhone +
-        (maxPhone === 3 ? 'rd' : 'th') + ' time stops the quiz and you can’t attempt it again for 24 hours.';
+        (maxPhone === 3 ? 'rd' : 'th') + ' time stops the quiz, deducts ' + penalty + ' points and you can’t attempt it again for 24 hours.';
     }
     function reportPhone(baseMsg) {
       if (!session || !active || finishing) return;
@@ -197,7 +197,8 @@
           var d = r.data || {};
           if (d.terminated) {
             showLocked(d.lockedUntil || Date.now() + 864e5,
-              'Quiz stopped — a phone was seen in front of the screen ' + (d.maxPhone || maxPhone) + ' times.');
+              'Quiz stopped — a phone was seen in front of the screen ' + (d.maxPhone || maxPhone) + ' times. ' +
+                (d.penalty || penalty) + ' points were deducted from your score.');
             return;
           }
           if (typeof d.phoneStrikes === 'number') phoneStrikes = d.phoneStrikes;

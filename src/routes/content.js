@@ -381,7 +381,7 @@ router.post('/quizzes/:id/proctor/violation', requireAuth, (req, res) => {
 // POST /api/content/quizzes/:id/proctor/phone  { session }
 // The camera check (public/js/camguard.js) saw a phone held up to the screen.
 // Each sighting is counted; the PROCTOR_MAX_PHONE-th stops the attempt and
-// locks the quiz for 24h (no points are deducted for it). Reports closer
+// locks the quiz for 24h and deducts PROCTOR_PENALTY points. Reports closer
 // together than PROCTOR_PHONE_GAP_MS are the same sighting.
 const PROCTOR_MAX_PHONE = 3;
 const PROCTOR_PHONE_GAP_MS = 3000;
@@ -417,17 +417,17 @@ router.post('/quizzes/:id/proctor/phone', requireAuth, (req, res) => {
       `INSERT INTO quiz_lockouts (user_id, quiz_id, until) VALUES (?, ?, ?)
        ON CONFLICT(user_id, quiz_id) DO UPDATE SET until = excluded.until`
     ).run(req.user.id, quizId, until);
+    db.prepare('INSERT INTO quiz_penalties (user_id, quiz_id, points, reason, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(req.user.id, quizId, PROCTOR_PENALTY, 'Quiz stopped: phone seen', now);
     db.exec('COMMIT');
   } catch (e) {
     db.exec('ROLLBACK');
     throw e;
   }
   // A challenger stopped mid-quiz forfeits the challenge.
-  if (sess.match_id) {
-    forfeitChallenge(sess);
-    broadcastLeaderboardChange();
-  }
-  res.json({ phoneStrikes, maxPhone: max, terminated: true, lockedUntil: until });
+  if (sess.match_id) forfeitChallenge(sess);
+  broadcastLeaderboardChange();
+  res.json({ phoneStrikes, maxPhone: max, terminated: true, lockedUntil: until, penalty: PROCTOR_PENALTY });
 });
 
 // POST /api/content/quizzes/:id/proctor/answer  { session, index, option }
