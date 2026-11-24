@@ -1302,4 +1302,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_highway_like_archive_author ON highway_like_archive (author_id);
 `);
 
+// --- Migration: question pools (standard quizzes). quizzes.pool holds extra
+// questions [{prompt, options, answer}]; once it has enough of them, each
+// attempt swaps some of the quiz's questions for random pool ones (see
+// src/quizPool.js). quiz_proctor_sessions.served is that attempt's own
+// question list (NULL = the quiz's questions as they are). On a challenge the
+// two sides may get different questions, so quiz_matches keeps each side's
+// right-answer count (a_correct, b_correct, graded_count) and the sharer's
+// question ids (a_qids) instead of comparing answers by position.
+(function migrateQuizPool() {
+  const qcols = db.prepare('PRAGMA table_info(quizzes)').all().map((c) => c.name);
+  if (!qcols.includes('pool')) db.exec("ALTER TABLE quizzes ADD COLUMN pool TEXT NOT NULL DEFAULT '[]';");
+  const scols = db.prepare('PRAGMA table_info(quiz_proctor_sessions)').all().map((c) => c.name);
+  if (!scols.includes('served')) db.exec('ALTER TABLE quiz_proctor_sessions ADD COLUMN served TEXT;');
+  const mcols = db.prepare('PRAGMA table_info(quiz_matches)').all().map((c) => c.name);
+  if (!mcols.includes('a_qids')) db.exec('ALTER TABLE quiz_matches ADD COLUMN a_qids TEXT;');
+  if (!mcols.includes('a_correct')) db.exec('ALTER TABLE quiz_matches ADD COLUMN a_correct INTEGER;');
+  if (!mcols.includes('b_correct')) db.exec('ALTER TABLE quiz_matches ADD COLUMN b_correct INTEGER;');
+  if (!mcols.includes('graded_count')) db.exec('ALTER TABLE quiz_matches ADD COLUMN graded_count INTEGER;');
+})();
+
 module.exports = db;

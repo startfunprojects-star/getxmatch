@@ -117,8 +117,13 @@ function summary(m) {
   return { aPoints: m.a_points || 0, bPoints: m.b_points || 0, winner, transfer, forfeit: !!m.b_forfeit };
 }
 
-// Right answers per side ({ aCorrect, bCorrect, graded }).
+// Right answers per side ({ aCorrect, bCorrect, graded }). Challenges made
+// since question pools store both counts (the sides may have had different
+// questions); older ones compare the answers against the quiz's questions.
 function correctCounts(m, questions) {
+  if (m.graded_count != null) {
+    return { aCorrect: m.a_correct || 0, bCorrect: m.b_correct || 0, graded: m.graded_count };
+  }
   const aAns = parseJson(m.a_answers, []);
   const bAns = parseJson(m.b_answers, []);
   let graded = 0;
@@ -137,20 +142,32 @@ function correctCounts(m, questions) {
 // Finish the challenge with the challenger's answers and points, and move the
 // loser's points to the winner. Returns the updated row, or null if it was
 // already finished.
-function complete(m, { answers, points, forfeit }) {
+// `qids` are the challenger's question ids (src/quizPool.js): answers only
+// count as "in common" where both sides had the same question.
+// `correct` is the challenger's right-answer count.
+function complete(m, { answers, points, forfeit, qids, correct }) {
   const now = Date.now();
   const aAns = parseJson(m.a_answers, []);
+  const aQids = parseJson(m.a_qids, null);
+  const sameQ = (i) => {
+    if (!aQids && !qids) return true;
+    const a = aQids ? aQids[i] : 'q' + i;
+    const b = qids ? qids[i] : 'q' + i;
+    return a === b;
+  };
   let common = 0;
-  answers.forEach((b, i) => { if (b >= 0 && b === aAns[i]) common += 1; });
+  answers.forEach((b, i) => { if (b >= 0 && b === aAns[i] && sameQ(i)) common += 1; });
   db.exec('BEGIN');
   try {
     const info = db
       .prepare(
         `UPDATE quiz_matches
-            SET b_answers = ?, b_points = ?, b_forfeit = ?, score = ?, completed_at = ?, points_awarded = 0
+            SET b_answers = ?, b_points = ?, b_forfeit = ?, score = ?, completed_at = ?, points_awarded = 0,
+                b_correct = ?
           WHERE id = ? AND completed_at IS NULL`
       )
-      .run(JSON.stringify(answers), forfeit ? 0 : points, forfeit ? 1 : 0, common, now, m.id);
+      .run(JSON.stringify(answers), forfeit ? 0 : points, forfeit ? 1 : 0, common, now,
+        forfeit ? 0 : Number.isInteger(correct) ? correct : null, m.id);
     if (!info.changes) {
       db.exec('ROLLBACK');
       return null;

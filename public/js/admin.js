@@ -817,6 +817,48 @@
     return block;
   }
 
+  // A question-pool entry (standard quizzes): prompt, options and the correct
+  // option. It takes the points and time of the question it replaces.
+  function poolBlock(p) {
+    p = p || { prompt: '', options: ['', ''], answer: null };
+    const block = el(`
+      <div class="qb-question qb-pool-q">
+        <label class="qb-pool-label"></label>
+        <input type="text" class="qb-prompt" value="${esc(p.prompt)}" placeholder="Pool question prompt" />
+        <div class="qb-options"></div>
+        <div class="admin-item-actions">
+          <button type="button" class="ghost small qb-add-opt">+ Add option</button>
+          <button type="button" class="danger small qb-rm-q">Remove from pool</button>
+        </div>
+      </div>
+    `);
+    const optsBox = block.querySelector('.qb-options');
+    const group = 'qbCorrect' + (qbSeq += 1);
+    const addOptRow = (value, correct) => {
+      const row = el(optionRowHtml(value, group, correct));
+      row.querySelector('.qb-rm-opt').addEventListener('click', () => {
+        if (optsBox.children.length <= 2) return alert('At least two options are required.');
+        row.remove();
+      });
+      optsBox.appendChild(row);
+    };
+    (p.options && p.options.length ? p.options : ['', '']).forEach((opt, i) => addOptRow(opt, p.answer === i));
+    block.querySelector('.qb-add-opt').addEventListener('click', () => addOptRow(''));
+    return block;
+  }
+
+  // Read question blocks back: empty option rows are dropped, so the correct
+  // answer's index is counted among the filled-in ones.
+  function readOptions(block) {
+    const rows = Array.from(block.querySelectorAll('.qb-option-row'))
+      .map((r) => ({ text: r.querySelector('.qb-opt').value.trim(), correct: r.querySelector('.qb-correct input').checked }))
+      .filter((r) => r.text);
+    const answer = rows.findIndex((r) => r.correct);
+    return { options: rows.map((r) => r.text), answer: answer >= 0 ? answer : null };
+  }
+
+  const POOL_MIN_ACTIVE = 20; // mirrors src/quizPool.js
+
   // Mirrors QUIZ_CATEGORIES in src/quizCategories.js.
   const QUIZ_CATEGORIES = [
     { id: 'polymath', label: 'The Grand Polymath' },
@@ -851,6 +893,13 @@
       <label>Questions</label>
       <p class="count" id="quizQHint"></p>
       <div id="quizQuestions"></div>
+      <div id="quizPoolSection">
+        <label>Question pool</label>
+        <p class="count">Extra questions with their correct answers. Once the pool has at least ${POOL_MIN_ACTIVE} questions it becomes active: every attempt then swaps at least 30% of the quiz’s questions (3 of 10), and up to all of them, for random pool questions. A pool question takes the points and time limit of the question it replaces, and never appears twice in one attempt. Pool questions can’t repeat each other or the quiz’s own questions.</p>
+        <p class="count" id="quizPoolStatus"></p>
+        <div id="quizPool" class="qb-graded"></div>
+        <div class="admin-item-actions"><button type="button" class="ghost small" id="addPoolQuestion">+ Add pool question</button></div>
+      </div>
       <label>Negative marking (points deducted per unanswered question)</label>
       <input id="quizNegative" type="number" min="0" max="1000" step="1" value="${quiz ? Number(quiz.negativeMarks) || 0 : 0}" />
       <p class="count">0 = no negative marking. Otherwise, each question a member leaves unanswered when its time runs out costs this many points.</p>
@@ -865,10 +914,29 @@
     const qBox = host.querySelector('#quizQuestions');
     const questions = quiz && quiz.questions && quiz.questions.length ? quiz.questions : [null];
     questions.forEach((q, i) => qBox.appendChild(questionBlock(i, q)));
+    const poolBox = host.querySelector('#quizPool');
+    const poolStatus = host.querySelector('#quizPoolStatus');
+    const syncPool = () => {
+      const blocks = poolBox.querySelectorAll('.qb-pool-q');
+      blocks.forEach((b, i) => { b.querySelector('.qb-pool-label').textContent = 'Pool question ' + (i + 1); });
+      const n = blocks.length;
+      poolStatus.innerHTML = n >= POOL_MIN_ACTIVE
+        ? '<strong>Active</strong> — ' + n + ' questions in the pool.'
+        : n + ' question' + (n === 1 ? '' : 's') + ' in the pool — <strong>not active yet</strong> (needs ' + POOL_MIN_ACTIVE + '; add ' + (POOL_MIN_ACTIVE - n) + ' more).';
+    };
+    const addPool = (p) => {
+      const b = poolBlock(p);
+      b.querySelector('.qb-rm-q').addEventListener('click', () => { b.remove(); syncPool(); });
+      poolBox.appendChild(b);
+    };
+    ((quiz && quiz.pool) || []).forEach(addPool);
+    syncPool();
+    host.querySelector('#addPoolQuestion').addEventListener('click', () => { addPool(null); syncPool(); });
     const typeSel = host.querySelector('#quizType');
     const syncGraded = () => {
       const graded = typeSel.value === 'standard';
       qBox.classList.toggle('qb-graded', graded);
+      host.querySelector('#quizPoolSection').hidden = !graded;
       host.querySelector('#quizQHint').textContent = graded
         ? 'Tick the correct option of every question. Set how many points each question is worth and how long members have to answer it: a correct answer given in time earns that question’s points toward the leaderboard; a wrong answer, or none before time runs out, earns none.'
         : 'There are no right or wrong answers. In a compatibility quiz, two people answer the same questions and get a score based on how many answers they pick in common. Set how many points each question is worth and how long members have to answer it: answering in time earns that question’s points toward the leaderboard, and a question left unanswered when time runs out earns none.';
@@ -890,22 +958,24 @@
       const questionsOut = [];
       qBox.querySelectorAll('.qb-question').forEach((block) => {
         const prompt = block.querySelector('.qb-prompt').value.trim();
-        // Empty option rows are dropped, so the correct answer's index is
-        // counted among the filled-in ones.
-        const rows = Array.from(block.querySelectorAll('.qb-option-row'))
-          .map((r) => ({ text: r.querySelector('.qb-opt').value.trim(), correct: r.querySelector('.qb-correct input').checked }))
-          .filter((r) => r.text);
-        const options = rows.map((r) => r.text);
-        const answer = rows.findIndex((r) => r.correct);
+        const { options, answer } = readOptions(block);
         const points = Number(block.querySelector('.qb-points').value || 0);
         const seconds = Number(block.querySelector('.qb-seconds').value || 0);
-        questionsOut.push({ prompt, options, points, seconds, answer: answer >= 0 ? answer : null });
+        questionsOut.push({ prompt, options, points, seconds, answer });
+      });
+      // Blank pool entries (no prompt, no options) are skipped.
+      const poolOut = [];
+      poolBox.querySelectorAll('.qb-pool-q').forEach((block) => {
+        const prompt = block.querySelector('.qb-prompt').value.trim();
+        const { options, answer } = readOptions(block);
+        if (!prompt && !options.length) return;
+        poolOut.push({ prompt, options, answer });
       });
       try {
         const negativeMarks = Number(host.querySelector('#quizNegative').value || 0);
         const type = host.querySelector('#quizType').value;
         const category = host.querySelector('#quizCategory').value;
-        const payload = { title, description, type, category, questions: questionsOut, negativeMarks, seo: collectSeo(host) };
+        const payload = { title, description, type, category, questions: questionsOut, pool: type === 'standard' ? poolOut : [], negativeMarks, seo: collectSeo(host) };
         if (quiz) await api.put('/api/admin/quizzes/' + quiz.id, payload);
         else await api.post('/api/admin/quizzes', payload);
         msg.className = 'msg ok'; msg.textContent = 'Saved.';
@@ -935,7 +1005,7 @@
       const item = el(`
         <div class="admin-item">
           <h3>${esc(q.title)}</h3>
-          <div class="count">${q.category ? esc(categoryName(q.category)) : '<strong style="color:var(--danger,#c0392b)">⚠ No category — edit to classify</strong>'} · ${({ compatibility: 'Compatibility', open_compatibility: 'Open Compatibility' })[q.type] || 'Standard'} · ${q.questions.length} questions · ${q.questions.reduce((n, x) => n + (Number(x.points) || 0), 0)} points · ${q.negativeMarks ? `−${q.negativeMarks} per unanswered` : 'no negative marking'} · ${q.attempts} attempts</div>
+          <div class="count">${q.category ? esc(categoryName(q.category)) : '<strong style="color:var(--danger,#c0392b)">⚠ No category — edit to classify</strong>'} · ${({ compatibility: 'Compatibility', open_compatibility: 'Open Compatibility' })[q.type] || 'Standard'} · ${q.questions.length} questions${q.type === 'standard' || !q.type ? ` · pool ${(q.pool || []).length}${(q.pool || []).length >= POOL_MIN_ACTIVE ? ' (active)' : ''}` : ''} · ${q.questions.reduce((n, x) => n + (Number(x.points) || 0), 0)} points · ${q.negativeMarks ? `−${q.negativeMarks} per unanswered` : 'no negative marking'} · ${q.attempts} attempts</div>
           <div class="admin-item-actions">
             <button class="ghost small" data-edit>Edit</button>
             <button class="danger small" data-del>Delete</button>

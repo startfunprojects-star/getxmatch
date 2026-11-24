@@ -122,11 +122,17 @@ function answerKey(quiz, questions) {
 function resultPayload(m, questions, key) {
   const aAns = parseJson(m.a_answers, []);
   const bAns = parseJson(m.b_answers, []);
-  if (key) {
+  if (key || m.graded_count != null) {
+    // Challenges made since question pools store each side's count (the two
+    // may have had different questions).
     let aCorrect = 0;
     let bCorrect = 0;
     let graded = 0;
-    questions.forEach((q, i) => {
+    if (m.graded_count != null) {
+      aCorrect = m.a_correct || 0;
+      bCorrect = m.b_correct || 0;
+      graded = m.graded_count;
+    } else questions.forEach((q, i) => {
       if (key[i] == null) return;
       graded += 1;
       if (aAns[i] === key[i]) aCorrect += 1;

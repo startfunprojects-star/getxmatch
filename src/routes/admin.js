@@ -17,6 +17,7 @@ const { buildFeed, pruneActivity } = require('./events');
 const { leaderboards } = require('../points');
 const { QUIZ_TYPES, isGraded } = require('../quizTypes');
 const { isValidCategory } = require('../quizCategories');
+const quizPool = require('../quizPool');
 const { imageUpload } = require('../upload');
 const { buildProfile } = require('../profileData');
 const { saveProfile } = require('../profileWrite');
@@ -653,13 +654,15 @@ function normalizeNegative(raw) {
 
 // GET /api/admin/quizzes — full quizzes including correct answers.
 router.get('/quizzes', requireAdmin, (req, res) => {
-  const rows = db.prepare('SELECT id, title, description, questions, negative_marks, type, category, seo, created_at, updated_at FROM quizzes ORDER BY created_at DESC').all();
+  const rows = db.prepare('SELECT id, title, description, questions, pool, negative_marks, type, category, seo, created_at, updated_at FROM quizzes ORDER BY created_at DESC').all();
   res.json({
     quizzes: rows.map((r) => ({
       id: r.id,
       title: r.title,
       description: r.description,
       questions: parseJson(r.questions, []),
+      pool: parseJson(r.pool, []),
+      poolMinActive: quizPool.POOL_MIN_ACTIVE,
       negativeMarks: r.negative_marks || 0,
       type: r.type,
       category: r.category || null,
@@ -680,6 +683,9 @@ router.post('/quizzes', requireAdmin, (req, res) => {
   if (type.error) return res.status(400).json({ error: type.error });
   const q = normalizeQuestions(req.body && req.body.questions, type.value);
   if (q.error) return res.status(400).json({ error: q.error });
+  // Only standard quizzes have a question pool (it needs right answers).
+  const pool = isGraded(type.value) ? quizPool.normalizePool(req.body && req.body.pool, q.value) : { value: [] };
+  if (pool.error) return res.status(400).json({ error: pool.error });
   const neg = normalizeNegative(req.body && req.body.negativeMarks);
   if (neg.error) return res.status(400).json({ error: neg.error });
   const category = normalizeCategory(req.body && req.body.category);
@@ -688,8 +694,8 @@ router.post('/quizzes', requireAdmin, (req, res) => {
   const seo = normalizeSeo(req.body && req.body.seo, title);
   const now = Date.now();
   const info = db.prepare(
-    'INSERT INTO quizzes (title, description, questions, negative_marks, type, category, seo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(title.slice(0, 150), description, JSON.stringify(q.value), neg.value, type.value, category.value, seo, now, now);
+    'INSERT INTO quizzes (title, description, questions, pool, negative_marks, type, category, seo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(title.slice(0, 150), description, JSON.stringify(q.value), JSON.stringify(pool.value), neg.value, type.value, category.value, seo, now, now);
   broadcastNotify(); // "new quiz" in members' Notifications
   push.pushToAll({ title: '🧠 New quiz', body: title.slice(0, 150), url: `/quizzes/${info.lastInsertRowid}`, tag: 'new-quiz' });
   res.status(201).json({ id: info.lastInsertRowid });
@@ -706,14 +712,17 @@ router.put('/quizzes/:id', requireAdmin, (req, res) => {
   if (type.error) return res.status(400).json({ error: type.error });
   const q = normalizeQuestions(req.body && req.body.questions, type.value);
   if (q.error) return res.status(400).json({ error: q.error });
+  // Only standard quizzes have a question pool (it needs right answers).
+  const pool = isGraded(type.value) ? quizPool.normalizePool(req.body && req.body.pool, q.value) : { value: [] };
+  if (pool.error) return res.status(400).json({ error: pool.error });
   const neg = normalizeNegative(req.body && req.body.negativeMarks);
   if (neg.error) return res.status(400).json({ error: neg.error });
   const category = normalizeCategory(req.body && req.body.category);
   if (category.error) return res.status(400).json({ error: category.error });
 
   const seo = normalizeSeo(req.body && req.body.seo, title);
-  db.prepare('UPDATE quizzes SET title = ?, description = ?, questions = ?, negative_marks = ?, type = ?, category = ?, seo = ?, updated_at = ? WHERE id = ?')
-    .run(title.slice(0, 150), description, JSON.stringify(q.value), neg.value, type.value, category.value, seo, Date.now(), row.id);
+  db.prepare('UPDATE quizzes SET title = ?, description = ?, questions = ?, pool = ?, negative_marks = ?, type = ?, category = ?, seo = ?, updated_at = ? WHERE id = ?')
+    .run(title.slice(0, 150), description, JSON.stringify(q.value), JSON.stringify(pool.value), neg.value, type.value, category.value, seo, Date.now(), row.id);
   res.json({ ok: true });
 });
 

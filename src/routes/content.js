@@ -17,6 +17,7 @@ const { MATCH_TTL_MS, typeLabel, isShareable, isOpen, hasBadge, isGraded, correc
 const { WEIGHTS } = require('../points'); // shared links live for 24 hours
 const { categoryLabel } = require('../quizCategories');
 const challenges = require('../quizChallenge');
+const quizPool = require('../quizPool');
 
 // Best display name for a logged-in user: their profile name, else @username.
 function userDisplayName(userId) {
@@ -136,6 +137,13 @@ function attemptedBefore(userId, quizId) {
 function activeLockout(userId, quizId) {
   const row = db.prepare('SELECT until FROM quiz_lockouts WHERE user_id = ? AND quiz_id = ?').get(userId, quizId);
   return row && row.until > Date.now() ? row.until : null;
+}
+
+// The questions of one attempt: its own list when the quiz's question pool
+// swapped some in (src/quizPool.js), else the quiz's questions.
+function sessionQuestions(sess, quizQuestions) {
+  const served = sess && sess.served ? parseJson(sess.served, null) : null;
+  return Array.isArray(served) && served.length ? served : quizQuestions;
 }
 
 // Allowance for network latency on top of a question's time limit.
@@ -277,11 +285,11 @@ router.get('/quizzes/:id/proctor', requireAuth, (req, res) => {
 // An unfinished session is resumed rather than replaced, so reloading the page
 // doesn't wipe an earlier strike.
 router.post('/quizzes/:id/proctor/start', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT id, questions, type FROM quizzes WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, questions, pool, type FROM quizzes WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Quiz not found.' });
   const until = activeLockout(req.user.id, row.id);
   if (until) return lockedResponse(res, until);
-  const questions = parseJson(row.questions, []);
+  let questions = parseJson(row.questions, []);
 
   const now = Date.now();
   let sess = activeSession(req.user.id, row.id);
@@ -303,6 +311,10 @@ router.post('/quizzes/:id/proctor/start', requireAuth, (req, res) => {
       db.prepare('INSERT INTO quiz_penalties (user_id, quiz_id, points, reason, created_at) VALUES (?, ?, ?, ?, ?)')
         .run(req.user.id, row.id, charged, 'Quiz reattempt', now);
     }
+    // A standard quiz with an active question pool swaps some of its
+    // questions for random pool ones in every new attempt.
+    const served = isGraded(row.type) ? quizPool.buildServed(questions, parseJson(row.pool, [])) : null;
+    if (served) questions = served;
     // The first question's clock starts now.
     // A fresh random order of questions and options for every attempt.
     const qOrder = JSON.stringify(shuffled(questions.length));
@@ -310,11 +322,14 @@ router.post('/quizzes/:id/proctor/start', requireAuth, (req, res) => {
     sess = {
       token: crypto.randomBytes(18).toString('base64url'),
       strikes: 0, q_index: 0, q_started_at: now, points: 0, match_id: matchId, q_order: qOrder, opt_order: optOrder,
+      served: served ? JSON.stringify(served) : null,
     };
     db.prepare(
-      `INSERT INTO quiz_proctor_sessions (token, quiz_id, user_id, created_at, expires_at, q_started_at, match_id, q_order, opt_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(sess.token, row.id, req.user.id, now, now + PROCTOR_SESSION_MS, now, matchId, qOrder, optOrder);
+      `INSERT INTO quiz_proctor_sessions (token, quiz_id, user_id, created_at, expires_at, q_started_at, match_id, q_order, opt_order, served)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(sess.token, row.id, req.user.id, now, now + PROCTOR_SESSION_MS, now, matchId, qOrder, optOrder, sess.served);
+  } else {
+    questions = sessionQuestions(sess, questions);
   }
   if (charged) broadcastLeaderboardChange();
   res.json({
@@ -441,7 +456,6 @@ router.post('/quizzes/:id/proctor/answer', requireAuth, (req, res) => {
   if (!row) return res.status(404).json({ error: 'Quiz not found.' });
   const until = activeLockout(req.user.id, row.id);
   if (until) return lockedResponse(res, until);
-  const questions = parseJson(row.questions, []);
 
   const token = String((req.body && req.body.session) || '');
   const sess = db
@@ -451,6 +465,7 @@ router.post('/quizzes/:id/proctor/answer', requireAuth, (req, res) => {
   if (!sess || sess.status !== 'active' || sess.expires_at <= now) {
     return res.status(409).json({ error: 'This quiz must be taken in full screen. Please start it again.' });
   }
+  const questions = sessionQuestions(sess, parseJson(row.questions, []));
   const index = Number(req.body && req.body.index);
   // Out of step (e.g. a retry after the answer already landed): resync.
   if (index !== sess.q_index || sess.q_index >= questions.length) {
@@ -509,7 +524,7 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
     return res.status(409).json({ error: 'This quiz must be taken in full screen. Please start it again.' });
   }
 
-  const questions = parseJson(row.questions, []);
+  const questions = sessionQuestions(sess, parseJson(row.questions, []));
   if (!questions.length) return res.status(400).json({ error: 'This quiz has no questions.' });
 
   // Answers come from the session (recorded one by one against each
@@ -541,10 +556,14 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
   const open = isOpen(row.type);
   const challenge = graded && shareable;
   const token = shareable ? crypto.randomBytes(9).toString('base64url') : null; // ~12 url-safe chars
+  // A challenge keeps the sharer's right-answer count and question ids: with a
+  // question pool the challenger may get different questions.
+  const counts = gradedCounts(row.type, questions, answers);
   if (shareable) db.prepare(
     `INSERT INTO quiz_matches
-       (token, quiz_id, a_user_id, a_name, a_answers, total, created_at, expires_at, is_open, challenge, a_points)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (token, quiz_id, a_user_id, a_name, a_answers, total, created_at, expires_at, is_open, challenge, a_points,
+        a_qids, a_correct, graded_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     token,
     row.id,
@@ -556,7 +575,10 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
     now + MATCH_TTL_MS,
     open ? 1 : 0,
     challenge ? 1 : 0,
-    challenge ? state.points : null
+    challenge ? state.points : null,
+    challenge && sess.served ? JSON.stringify(questions.map((q, i) => q.qid || 'q' + i)) : null,
+    challenge && counts.graded ? counts.correct : null,
+    challenge && counts.graded ? counts.graded : null
   );
   db.prepare("UPDATE quiz_proctor_sessions SET status = 'completed' WHERE token = ?").run(sessToken);
   // The attempt's points feed the leaderboard (the latest attempt per quiz
@@ -580,7 +602,7 @@ router.post('/quizzes/:id/match', requireAuth, (req, res) => {
     durationMs: now - sess.created_at,
     answered: answers.filter((a) => a >= 0).length,
     total: questions.length,
-    ...gradedCounts(row.type, questions, answers),
+    ...counts,
   });
 });
 
@@ -591,7 +613,11 @@ function finishChallenge(req, res, row, sess, questions, answers, state) {
   db.prepare("UPDATE quiz_proctor_sessions SET status = 'completed' WHERE token = ?").run(sess.token);
   db.prepare('INSERT INTO quiz_attempts (quiz_id, user_id, score, total, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(row.id, req.user.id, state.points, state.maxPoints, now - sess.created_at, now);
-  const done = m ? challenges.complete(m, { answers, points: state.points, forfeit: false }) : null;
+  const counts = gradedCounts(row.type, questions, answers);
+  const done = m ? challenges.complete(m, {
+    answers, points: state.points, forfeit: false,
+    qids: questions.map((q, i) => q.qid || 'q' + i), correct: counts.graded ? counts.correct : null,
+  }) : null;
   if (done) challenges.announce(done, row.title, questions);
   broadcastLeaderboardChange();
   res.status(201).json({
@@ -611,8 +637,8 @@ function forfeitChallenge(sess) {
   const m = db.prepare('SELECT * FROM quiz_matches WHERE id = ?').get(sess.match_id);
   const quiz = db.prepare('SELECT title, questions FROM quizzes WHERE id = ?').get(sess.quiz_id);
   if (!m || !quiz) return;
-  const questions = parseJson(quiz.questions, []);
-  const done = challenges.complete(m, { answers: questions.map(() => -1), points: 0, forfeit: true });
+  const questions = sessionQuestions(sess, parseJson(quiz.questions, []));
+  const done = challenges.complete(m, { answers: questions.map(() => -1), points: 0, forfeit: true, correct: 0 });
   if (done) challenges.announce(done, quiz.title, questions);
 }
 
