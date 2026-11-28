@@ -2537,7 +2537,33 @@ a.button-link:hover { filter: brightness(1.05); text-decoration: none; }
 .tl-tabs button.active { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
 .timeline-grid[data-filter="photo"] .cell:not([data-kind="photo"]),
 .timeline-grid[data-filter="reel"] .cell:not([data-kind="reel"]),
-.timeline-grid[data-filter="statement"] .cell:not([data-kind="statement"]) { display: none; }
+.timeline-grid[data-filter="statement"] .cell:not([data-kind="statement"]),
+.timeline-grid[data-filter="milestone"] .cell:not([data-kind="milestone"]),
+.timeline-grid[data-filter="activity"] .cell:not([data-kind="activity"]) { display: none; }
+/* Milestones and quiz/poll activity tiles. */
+.gallery .entry-cell {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 10px;
+  text-align: center; border: 1px solid var(--border); background: var(--bg-3);
+}
+.gallery .milestone-cell { background: var(--grad-soft), var(--bg-3); }
+.entry-emoji { font-size: 28px; line-height: 1; }
+.entry-emoji.big { font-size: 44px; }
+.gallery .entry-title {
+  font-size: 13px; font-weight: 700; line-height: 1.3; color: var(--text); overflow-wrap: anywhere;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+}
+.gallery .entry-date { font-size: 11px; }
+.tl-entry-view { text-align: center; }
+.tl-entry-view .entry-title { margin: 8px 0 2px; }
+.tl-entry-view .entry-detail { text-align: left; white-space: pre-wrap; }
+.tl-audience { display: flex; align-items: center; gap: 8px; margin: -4px 0 10px; flex-wrap: wrap; }
+.tl-private {
+  display: flex; align-items: center; gap: 14px; padding: 18px; border-radius: 12px;
+  border: 1px dashed var(--border); background: var(--bg-3);
+}
+.tl-private-icon { font-size: 32px; }
+.tl-private p { margin: 4px 0 0; }
+.tl-vis-list { max-height: none; }
 .tl-empty { padding: 8px 2px; }
 .gallery .post-cell { cursor: pointer; }
 .gallery .post-cell img, .gallery .post-cell video { cursor: pointer; }

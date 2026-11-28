@@ -14,6 +14,7 @@ const { videoDuration } = require('../videoDuration');
 const { buildProfile } = require('../profileData');
 const { saveProfile } = require('../profileWrite');
 const F = require('../profileFields');
+const timeline = require('../timeline');
 const crypto = require('crypto');
 
 const router = express.Router();
@@ -47,6 +48,48 @@ router.get('/me', requireAuth, (req, res) => {
   const profile = buildProfile(req.user.id, req.user.id);
   if (!profile) return res.status(404).json({ error: 'No profile yet.' });
   res.json({ profile });
+});
+
+/* ---------------- timeline: audience + milestones (src/timeline.js) ---------------- */
+
+// GET /api/profile/timeline/settings — the owner's timeline audience.
+router.get('/timeline/settings', requireAuth, (req, res) => {
+  const settings = timeline.settingsFor(req.user.id);
+  if (!settings) return res.status(404).json({ error: 'Create your profile first.' });
+  res.json({ settings, kinds: timeline.MILESTONE_KINDS });
+});
+
+// PUT /api/profile/timeline/settings — { visibility, allow:[username], deny:[username], showActivity }
+router.put('/timeline/settings', requireAuth, (req, res) => {
+  const out = timeline.saveSettings(req.user.id, req.body);
+  if (out.error) return res.status(400).json({ error: out.error });
+  res.json(out);
+});
+
+router.post('/timeline/milestones', requireAuth, requireSafeLinks('title', 'detail'), (req, res) => {
+  const out = timeline.addMilestone(req.user.id, req.body);
+  if (out.error) return res.status(400).json({ error: out.error });
+  res.status(201).json(out);
+});
+
+router.put('/timeline/milestones/:id', requireAuth, requireSafeLinks('title', 'detail'), (req, res) => {
+  const out = timeline.updateMilestone(req.user.id, req.params.id, req.body);
+  if (out.error) return res.status(out.status || 400).json({ error: out.error });
+  res.json(out);
+});
+
+router.delete('/timeline/milestones/:id', requireAuth, (req, res) => {
+  if (!timeline.deleteMilestone(req.user.id, req.params.id)) return res.status(404).json({ error: 'Milestone not found.' });
+  res.json({ ok: true });
+});
+
+// GET /api/profile/:username/timeline — milestones + quiz/poll activity, or
+// { private: true } when the owner's audience setting hides it from the viewer.
+router.get('/:username/timeline', requireAuth, (req, res) => {
+  const user = db.prepare('SELECT id FROM users WHERE username = ?').get(req.params.username);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  if (!timeline.canView(user.id, req.user.id)) return res.json({ private: true, milestones: [], activity: [] });
+  res.json({ private: false, ...timeline.entriesFor(user.id) });
 });
 
 // GET /api/profile/:username — view any user's profile

@@ -77,6 +77,8 @@ function visiblePhotoIds(ownerId, viewerId) {
 
 // True if `viewerId` may open (react to, comment on) this gallery photo.
 function canSeePhoto(photo, viewerId) {
+  // Gallery photos are part of the timeline, so its visibility applies too.
+  if (!require('./timeline').canView(photo.user_id, viewerId)) return false;
   const ids = visiblePhotoIds(photo.user_id, viewerId);
   return ids === null || ids.has(photo.id);
 }
@@ -357,7 +359,10 @@ function buildProfile(userId, viewerId) {
   const access = profileAccess(row.id, viewerId);
   const full = access === 'full';
 
-  const allPhotos = buildGallery(userId, viewerId);
+  // The timeline (gallery + posts + milestones) has its own audience setting
+  // (src/timeline.js); when it's hidden from this viewer nothing of it is sent.
+  const timelineVisible = require('./timeline').canView(row.id, viewerId);
+  const allPhotos = timelineVisible ? buildGallery(userId, viewerId) : [];
   const gallery = full ? allPhotos : access === 'follower' ? allPhotos.slice(0, FOLLOWER_PREVIEW_PHOTOS) : [];
 
   // GIF "feelings" collection, gated by the owner's chosen visibility.
@@ -420,6 +425,10 @@ function buildProfile(userId, viewerId) {
     // How many photos/reels the gallery really has (a follower sees only the
     // newest FOLLOWER_PREVIEW_PHOTOS of them, others none).
     galleryTotal: allPhotos.length,
+    // false = the owner's timeline settings hide it from this viewer.
+    timelineVisible,
+    // The owner's own audience setting (only they get it).
+    timelineVisibility: isMe ? require('./timeline').settingsFor(row.id).visibility : undefined,
     gifs,
     // The chosen audience level for the GIF collection. `gifsLocked` tells a
     // viewer the owner has GIFs they're not allowed to see, so the UI can show

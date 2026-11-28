@@ -104,6 +104,9 @@ function buildFeed(viewerId) {
       `SELECT id, user_id, filename, kind, created_at FROM gallery_photos
         WHERE user_id IN ${watchedOrMe} ORDER BY created_at DESC LIMIT @n`
     ).all({ me, n: PER_SOURCE }).forEach((row) => {
+      // Gallery items belong to the timeline: skip them when its audience
+      // setting hides it from this viewer (src/timeline.js).
+      if (!require('../timeline').canView(row.user_id, me)) return;
       const a = userMini(row.user_id, me);
       if (!a) return;
       const isReel = row.kind === 'reel';

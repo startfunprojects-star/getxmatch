@@ -124,11 +124,20 @@ self-host on a single VPS: no external database or storage service required.
   can **delete any post** and **pin a post to a fixed position 1–10** — pinned
   posts show first everywhere.
 - **Timeline** — every profile has an Instagram-style timeline grid with
-  **All / Photos / Reels / Statements** tabs: the member's gallery photos and
-  reels together with all of their Highway posts, newest first. Anyone can see
-  a member's Highway posts there (not across a block); gallery items keep their
-  follower/friend access rules. Tapping a post opens it with likes and
-  comments; owners can post a statement straight from their timeline.
+  **All / Photos / Reels / Statements / Milestones / Activity** tabs: the
+  member's gallery photos and reels, all of their Highway posts, the life and
+  career **milestones** they add (new job, education, relationship,
+  achievement, move, travel…, each with an optional date and story) and their
+  quiz/poll activity (can be switched off), newest first. Tapping an item
+  opens it; owners post statements and add/edit/delete milestones right there.
+  Each member picks **who can see their timeline** — Everyone, Followers &
+  friends, Friends only, Specific people (an include list) or Only me — plus
+  an "always hide from" list. The server enforces it on every timeline read
+  (profile gallery, the member's posts list, milestones/activity, gallery
+  photo reactions/comments, Recent Activity gallery updates); everyone else
+  sees "This timeline is private". Gallery items also keep their
+  follower/friend access rules, and posts shared on the Highway still appear
+  on the Highway itself (src/timeline.js).
 - **Leaderboards** — **Kings & Queens** (highlighted in gold) ranks every
   member by overall points, built from their ratings, friends, quiz activity
   and more. Every quiz belongs to one category the admin picks — **The Grand

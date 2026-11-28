@@ -162,6 +162,8 @@ router.get('/user/:username', requireAuth, (req, res) => {
   const u = db.prepare('SELECT id FROM users WHERE username = ?').get(String(req.params.username || ''));
   if (!u) return res.status(404).json({ error: 'Member not found.' });
   if (u.id !== req.user.id && areBlocked(req.user.id, u.id)) return res.json({ posts: [], hidden: true });
+  // The owner's timeline audience setting (src/timeline.js).
+  if (!require('../timeline').canView(u.id, req.user.id)) return res.json({ posts: [], hidden: true, private: true });
   const posts = hw.byAuthor(u.id)
     .map((r) => shapePost(r, req.user.id))
     .filter((p) => p.blog !== null);

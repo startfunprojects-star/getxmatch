@@ -1749,6 +1749,61 @@
   ====================================================================== */
 
   // Minimal centered modal. `bodyHtml` fills the card; returns { card, close }.
+  // Profile timeline audience (src/timeline.js) and milestone kinds.
+  const TL_AUDIENCE_LABEL = {
+    everyone: '🌍 Everyone',
+    followers: '👣 Followers & friends',
+    friends: '👥 Friends only',
+    custom: '🎯 Specific people',
+    only_me: '🔒 Only me',
+  };
+  const TL_MILESTONE_KINDS = { job: '💼', education: '🎓', relationship: '❤️', achievement: '🏆', move: '🏠', travel: '✈️', family: '👪', health: '💪', other: '⭐' };
+  const TL_KIND_NAMES = { job: 'New job / career', education: 'Education', relationship: 'Relationship', achievement: 'Achievement', move: 'Moved / new home', travel: 'Travel', family: 'Family', health: 'Health & fitness', other: 'Something else' };
+
+  // "Who can see my timeline": a level, plus include/exclude lists of
+  // specific people (usernames). `onSaved(visibility)` after a save.
+  async function openTimelineAudience(onSaved) {
+    let cur;
+    try { cur = (await api.get('/api/profile/timeline/settings')).settings; } catch (e) { return alert(e.message); }
+    const radios = Object.keys(TL_AUDIENCE_LABEL).map((k) => `<label class="pick-row"><input type="radio" name="tlVis" value="${k}"${cur.visibility === k ? ' checked' : ''}/> <span>${TL_AUDIENCE_LABEL[k]}</span></label>`).join('');
+    const m = openModal('Who can see your timeline', `
+      <p class="hint">Your timeline is your photos, reels, statements, milestones and quiz/poll activity on your profile. Posts you share on the Highway still appear on the Highway.</p>
+      <div class="pick-list tl-vis-list">${radios}</div>
+      <div class="tl-allow-wrap">
+        <label class="hint" for="tlAllow">Only these people can see it (usernames, comma-separated)</label>
+        <input type="text" id="tlAllow" placeholder="e.g. priya, sam_k" autocomplete="off" />
+      </div>
+      <label class="hint" for="tlDeny">Always hide it from (usernames, comma-separated)</label>
+      <input type="text" id="tlDeny" placeholder="e.g. exboss" autocomplete="off" />
+      <label class="pick-row"><input type="checkbox" id="tlActivity"${cur.showActivity ? ' checked' : ''}/> <span>Show my quiz and poll activity</span></label>
+      <div class="msg"></div>
+      <div class="row-actions"><button class="primary" type="button" id="tlSave">Save</button></div>`);
+    const q = (sel) => m.card.querySelector(sel);
+    q('#tlAllow').value = cur.allow.map((p) => p.username).join(', ');
+    q('#tlDeny').value = cur.deny.map((p) => p.username).join(', ');
+    const syncAllow = () => { q('.tl-allow-wrap').classList.toggle('hidden', m.card.querySelector('input[name="tlVis"]:checked').value !== 'custom'); };
+    m.card.querySelectorAll('input[name="tlVis"]').forEach((r) => r.addEventListener('change', syncAllow));
+    syncAllow();
+    const names = (v) => v.split(/[\s,]+/).map((x) => x.trim().replace(/^@/, '')).filter(Boolean);
+    q('#tlSave').addEventListener('click', async () => {
+      const visibility = m.card.querySelector('input[name="tlVis"]:checked').value;
+      const allow = names(q('#tlAllow').value);
+      const deny = names(q('#tlDeny').value);
+      const msg = q('.msg');
+      q('#tlSave').disabled = true;
+      try {
+        const { settings } = await api.put('/api/profile/timeline/settings', { visibility, allow, deny, showActivity: q('#tlActivity').checked });
+        const missing = allow.concat(deny).filter((n) => !settings.allow.concat(settings.deny).some((p) => p.username.toLowerCase() === n.toLowerCase()));
+        if (missing.length) {
+          q('#tlSave').disabled = false;
+          msg.className = 'msg error';
+          msg.textContent = `Saved, but no member was found for: ${missing.join(', ')}.`;
+        } else m.close();
+        if (onSaved) onSaved(settings.visibility);
+      } catch (e) { q('#tlSave').disabled = false; msg.className = 'msg error'; msg.textContent = e.message; }
+    });
+  }
+
   function openModal(title, bodyHtml) {
     const overlay = el(`
       <div class="modal-overlay">
@@ -6931,13 +6986,21 @@
               <h3 class="card-title">🗂️ ${isMe ? 'My timeline' : 'Timeline'} <span class="hint" id="galCount"></span>
                 <button class="ghost small gal-slideshow" id="galSlideshow" title="Play as slideshow" style="float:right">▶ Slideshow</button>
               </h3>
-              <div class="tl-tabs" id="tlTabs" role="tablist">
+              ${isMe ? `<div class="tl-audience"><button type="button" class="ghost small" id="tlAudience" title="Choose who can see your timeline">${TL_AUDIENCE_LABEL[profile.timelineVisibility] || TL_AUDIENCE_LABEL.everyone}</button>
+                <span class="hint">Who can see your timeline</span></div>` : ''}
+              ${!isMe && profile.timelineVisible === false ? `<div class="tl-private" id="tlPrivate">
+                <div class="tl-private-icon">🔒</div>
+                <div><b>This timeline is private</b><p class="hint">${esc(profile.displayName)} has chosen who can see their timeline, and it isn’t shared with you.</p></div>
+              </div>` : ''}
+              <div class="tl-tabs${!isMe && profile.timelineVisible === false ? ' hidden' : ''}" id="tlTabs" role="tablist">
                 <button type="button" class="active" data-filter="all">All</button>
                 <button type="button" data-filter="photo">📷 Photos</button>
                 <button type="button" data-filter="reel">🎬 Reels</button>
                 <button type="button" data-filter="statement">💬 Statements</button>
+                <button type="button" data-filter="milestone">🏁 Milestones</button>
+                <button type="button" data-filter="activity">🧠 Activity</button>
               </div>
-              <div class="gallery timeline-grid" id="pvGallery" data-filter="all"></div>
+              <div class="gallery timeline-grid${!isMe && profile.timelineVisible === false ? ' hidden' : ''}" id="pvGallery" data-filter="all"></div>
               <div class="hint tl-empty hidden" id="tlEmpty"></div>
             </section>
           </div>
@@ -6987,7 +7050,8 @@
     const updateCount = () => {
       const n = gal.querySelectorAll('.cell').length;
       const posts = gal.querySelectorAll('.post-cell').length;
-      galCount.textContent = profile.access === 'full' ? `(${n})` : `(${(profile.galleryTotal || 0) + posts})`;
+      galCount.textContent = !isMe && profile.timelineVisible === false ? ''
+        : profile.access === 'full' ? `(${n})` : `(${(profile.galleryTotal || 0) + posts})`;
       syncTimelineEmpty();
     };
     // Timeline tabs: All / Photos / Reels / Statements. Every cell carries a
@@ -6998,14 +7062,17 @@
       photo: 'No photos yet.',
       reel: 'No reels yet.',
       statement: 'No statements yet.',
+      milestone: isMe ? 'No milestones yet — add a new job, a graduation, an achievement…' : 'No milestones yet.',
+      activity: 'No quiz or poll activity yet.',
     };
     function syncTimelineEmpty() {
+      if (!isMe && profile.timelineVisible === false) { tlEmpty.classList.add('hidden'); return; }
       const f = gal.dataset.filter;
       const visible = gal.querySelectorAll(f === 'all' ? '.cell' : `.cell[data-kind="${f}"]`).length;
       // A follower's / stranger's note that the gallery is locked applies to
       // photos and reels only.
       const locked = gal.querySelector(':scope > .hint');
-      const showLocked = !!locked && f !== 'statement';
+      const showLocked = !!locked && ['all', 'photo', 'reel'].includes(f);
       if (locked) locked.classList.toggle('hidden', !showLocked);
       tlEmpty.textContent = TL_EMPTY[f];
       tlEmpty.classList.toggle('hidden', visible > 0 || showLocked);
@@ -7079,6 +7146,7 @@
     } else profile.gallery.forEach((ph) => gal.appendChild(makeCell(ph)));
     updateCount();
     loadTimelinePosts(); // their Highway posts join the grid when they arrive
+    loadTimelineEntries(); // milestones + quiz/poll activity
     if (profile.access === 'follower' && profile.galleryTotal > profile.gallery.length) {
       gal.after(el(`<p class="hint gal-locked">🔒 Showing the newest ${profile.gallery.length} of ${profile.galleryTotal}. Become friends to see the whole gallery.</p>`));
     }
@@ -7138,6 +7206,85 @@
       });
       return cell;
     }
+    // Milestones (new job, education, relationship, achievement, …) and
+    // quiz/poll activity, as tiles in the same newest-first grid.
+    const fmtTlDate = (m) => {
+      const d = m.happenedOn ? new Date(m.happenedOn + 'T12:00:00Z') : new Date(m.at);
+      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    };
+    function entryCell(e, kind) {
+      const cell = el(`<div class="cell post-cell entry-cell ${kind}-cell"><div class="entry-emoji"></div><div class="entry-title"></div><div class="entry-date hint"></div></div>`);
+      cell.querySelector('.entry-emoji').textContent = e.emoji;
+      cell.querySelector('.entry-title').textContent = e.title;
+      cell.querySelector('.entry-date').textContent = fmtTlDate(e);
+      cell.dataset.kind = kind;
+      cell.dataset.at = e.at;
+      cell.title = e.detail ? `${e.title} — ${e.detail}` : e.title;
+      cell.addEventListener('click', () => {
+        const m = openModal(kind === 'milestone' ? 'Milestone' : 'Activity', `
+          <div class="tl-entry-view"><div class="entry-emoji big"></div><h3 class="entry-title"></h3>
+          <div class="hint entry-date"></div><p class="rich entry-detail"></p></div>
+          ${isMe && kind === 'milestone' ? '<div class="row-actions"><button class="ghost" data-act="edit">✎ Edit</button><button class="ghost danger" data-act="del">🗑 Delete</button></div>' : ''}`);
+        m.card.querySelector('.entry-emoji').textContent = e.emoji;
+        m.card.querySelector('.entry-title').textContent = e.title;
+        m.card.querySelector('.entry-date').textContent = fmtTlDate(e);
+        m.card.querySelector('.entry-detail').textContent = e.detail || '';
+        const edit = m.card.querySelector('[data-act="edit"]');
+        if (edit) edit.addEventListener('click', () => { m.close(); openMilestoneEditor(e, cell); });
+        const del = m.card.querySelector('[data-act="del"]');
+        if (del) del.addEventListener('click', async () => {
+          if (!(await confirmBox('Delete this milestone?', 'Delete'))) return;
+          try { await api.del('/api/profile/timeline/milestones/' + e.id); m.close(); cell.remove(); updateCount(); }
+          catch (err) { alert(err.message); }
+        });
+      });
+      return cell;
+    }
+    async function loadTimelineEntries() {
+      try {
+        const r = await api.get('/api/profile/' + encodeURIComponent(profile.username) + '/timeline');
+        if (!gal.isConnected || r.private) return;
+        (r.milestones || []).forEach((m) => placeCell(entryCell(m, 'milestone')));
+        (r.activity || []).forEach((a) => placeCell(entryCell(a, 'activity')));
+        updateCount();
+      } catch (_e) { /* the rest of the profile still works */ }
+    }
+    // Add or edit a milestone (own profile). `existing` + `cell` = editing.
+    async function openMilestoneEditor(existing, oldCell) {
+      let kinds = TL_MILESTONE_KINDS;
+      const opts = Object.keys(kinds).map((k) => `<option value="${k}"${existing && existing.kind === k ? ' selected' : ''}>${kinds[k]} ${TL_KIND_NAMES[k] || k}</option>`).join('');
+      const m = openModal(existing ? 'Edit milestone' : 'Add a milestone', `
+        <label class="hint" for="msKind">What happened?</label>
+        <select id="msKind">${opts}</select>
+        <label class="hint" for="msTitle">Title</label>
+        <input type="text" id="msTitle" maxlength="120" placeholder="e.g. Started as a designer at Acme" dir="auto" />
+        <label class="hint" for="msDate">When (optional)</label>
+        <input type="date" id="msDate" />
+        <label class="hint" for="msDetail">Details (optional)</label>
+        <textarea id="msDetail" maxlength="1000" class="tl-statement-input" placeholder="Tell the story…" dir="auto"></textarea>
+        <div class="msg"></div>
+        <div class="row-actions"><button class="primary" type="button" id="msSave">${existing ? 'Save' : 'Add to timeline'}</button></div>`);
+      const q = (sel) => m.card.querySelector(sel);
+      if (existing) { q('#msTitle').value = existing.title; q('#msDate').value = existing.happenedOn || ''; q('#msDetail').value = existing.detail || ''; }
+      q('#msTitle').focus();
+      q('#msSave').addEventListener('click', async () => {
+        const body = { kind: q('#msKind').value, title: q('#msTitle').value.trim(), happenedOn: q('#msDate').value, detail: q('#msDetail').value.trim() };
+        const msg = q('.msg');
+        if (!body.title) { msg.className = 'msg error'; msg.textContent = 'Give the milestone a title.'; return; }
+        q('#msSave').disabled = true;
+        try {
+          const { milestone } = existing
+            ? await api.put('/api/profile/timeline/milestones/' + existing.id, body)
+            : await api.post('/api/profile/timeline/milestones', body);
+          m.close();
+          if (oldCell) oldCell.remove();
+          const hint = gal.querySelector(':scope > .hint');
+          if (hint) hint.remove();
+          placeCell(entryCell(milestone, 'milestone'));
+          updateCount();
+        } catch (e) { q('#msSave').disabled = false; msg.className = 'msg error'; msg.textContent = e.message; }
+      });
+    }
     async function loadTimelinePosts() {
       try {
         const { posts } = await api.get('/api/highway/user/' + encodeURIComponent(profile.username));
@@ -7153,9 +7300,13 @@
         <button class="ghost small" id="pvAdd">＋ Add photo</button>
         <button class="ghost small" id="pvAddReel">＋ Add reel</button>
         <button class="ghost small" id="pvAddStatement" title="Post a statement — it goes on your timeline and the Highway">✍️ Statement</button>
+        <button class="ghost small" id="pvAddMilestone" title="A new job, education, relationship, achievement…">🏁 Milestone</button>
         <span class="hint gal-upload-status"></span>
       </div>`);
       const status = bar.querySelector('.gal-upload-status');
+      bar.querySelector('#pvAddMilestone').addEventListener('click', () => openMilestoneEditor(null, null));
+      const audBtn = view.querySelector('#tlAudience');
+      if (audBtn) audBtn.addEventListener('click', () => openTimelineAudience((v) => { audBtn.textContent = TL_AUDIENCE_LABEL[v]; }));
       bar.querySelector('#pvAddStatement').addEventListener('click', () => {
         const m = openModal('Write a statement', `
           <textarea class="tl-statement-input" maxlength="2000" placeholder="What’s on your mind? It appears on your timeline and on the Highway."></textarea>
