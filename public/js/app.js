@@ -2330,9 +2330,9 @@
       <div class="chat-wrap">
         <div class="chat-tabs" id="chatTabs"></div>
         <div class="chat-head">
-          <img class="avatar sm" id="peerAvatar" src="${avatarUrl(peer.avatar)}" style="cursor:pointer" />
+          <img class="avatar sm" id="peerAvatar" src="${avatarUrl(peer.avatar)}" style="cursor:pointer" title="View profile" />
           <div class="chat-head-id">
-            <div class="name" id="peerName" style="cursor:pointer">${esc(peer.displayName || peer.username)}</div>
+            <button type="button" class="name profile-link" id="peerName" title="View ${esc(peer.displayName || peer.username)}'s profile"><span class="profile-link-text">${esc(peer.displayName || peer.username)}</span><span class="profile-link-hint">View profile ›</span></button>
             <div class="status">@${esc(peer.username)}</div>
           </div>
           <button class="ghost small" id="callBtn" title="Start a video call">📹 Call</button>

@@ -258,6 +258,13 @@ a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
 .chat-head .status { font-size: 12px; color: var(--muted); }
 .chat-head-id { min-width: 0; flex: 1; }
 .chat-head-id .name, .chat-head-id .status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Peer name in a 1:1 chat: a clear link to their profile. */
+.chat-head .profile-link { display: inline-flex; align-items: baseline; gap: 8px; max-width: 100%; padding: 0; margin: 0; border: 0; background: none; font: inherit; font-weight: 700; color: var(--accent); cursor: pointer; text-align: left; }
+.chat-head .profile-link-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); text-underline-offset: 3px; text-decoration-thickness: 2px; }
+.chat-head .profile-link-hint { flex: none; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.chat-head .profile-link:hover .profile-link-text, .chat-head .profile-link:focus-visible .profile-link-text { text-decoration-color: currentColor; }
+.chat-head .profile-link:hover .profile-link-hint, .chat-head .profile-link:focus-visible .profile-link-hint { background: var(--accent); color: var(--bg, #fff); }
+.chat-head .profile-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
 .chat-body { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 8px; }
 /* `unicode-bidi: plaintext` lets each message resolve its own base direction
    from its first strong character (like dir="auto"), so right-to-left scripts
