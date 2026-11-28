@@ -10,6 +10,10 @@
 //     Win+Shift+S, Cmd+Shift+3/4/5 take focus or start with these keys);
 //   - videos get no download / picture-in-picture controls.
 // Chat files someone sends you keep their explicit Download link.
+//
+// The admin can allow screenshots (Admin → Screenshots). Then the Print Screen,
+// blur and print measures are switched off; image-saving protection stays.
+// The last known setting is cached so the page doesn't flicker on load.
 (function () {
   'use strict';
 
@@ -17,6 +21,8 @@
     img, video { -webkit-user-drag: none; user-drag: none; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
     html.gx-shield body { filter: blur(22px) !important; }
     html.gx-shield body * { pointer-events: none !important; }
+  `;
+  const printCss = `
     @media print {
       html, body { background: #fff !important; }
       body * { display: none !important; }
@@ -26,6 +32,18 @@
   const style = document.createElement('style');
   style.textContent = css;
   (document.head || document.documentElement).appendChild(style);
+  const printStyle = document.createElement('style');
+  printStyle.textContent = printCss;
+
+  // Screenshot / print restriction, as set by the admin (restricted by default).
+  const CACHE_KEY = 'gx_screenshots_allowed';
+  let restricted = true;
+  try { restricted = localStorage.getItem(CACHE_KEY) !== '1'; } catch (_e) { /* ignore */ }
+  function applyRestriction(on) {
+    restricted = on;
+    if (on) (document.head || document.documentElement).appendChild(printStyle);
+    else { printStyle.remove(); unshield(); }
+  }
 
   const root = document.documentElement;
   const isEditable = (el) => !!el && el.closest &&
@@ -59,15 +77,27 @@
     try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(' ').catch(() => {}); } catch (_e) { /* ignore */ }
   }
 
+  applyRestriction(restricted);
+  fetch('/api/auth/screenshots', { credentials: 'same-origin', cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      if (!d) return;
+      try { localStorage.setItem(CACHE_KEY, d.allowed ? '1' : '0'); } catch (_e) { /* ignore */ }
+      applyRestriction(!d.allowed);
+    })
+    .catch(() => {});
+
   const isWindows = /Win/i.test(navigator.platform || navigator.userAgent || '');
 
   document.addEventListener('keydown', (e) => {
     const k = (e.key || '').toLowerCase();
     const mod = e.ctrlKey || e.metaKey;
-    // Save As, Print, View Source.
-    if (mod && !e.shiftKey && (k === 's' || k === 'p' || k === 'u')) { e.preventDefault(); return; }
+    // Save As, View Source (always); Print (while screenshots are restricted).
+    if (mod && !e.shiftKey && (k === 's' || k === 'u')) { e.preventDefault(); return; }
+    if (mod && !e.shiftKey && k === 'p' && restricted) { e.preventDefault(); return; }
     // Developer tools.
     if (k === 'f12' || (mod && e.shiftKey && (k === 'i' || k === 'j' || k === 'c'))) { e.preventDefault(); return; }
+    if (!restricted) return;
     // Screenshot shortcuts: Win+Shift+S / Win key (Snipping), Cmd+Shift+3/4/5.
     if (k === 'printscreen') { e.preventDefault(); wipeClipboard(); shield(1500); return; }
     if ((e.metaKey && e.shiftKey) || (isWindows && k === 'meta')) shield(2500);
@@ -75,7 +105,7 @@
 
   // Print Screen on Windows usually only fires keyup.
   document.addEventListener('keyup', (e) => {
-    if ((e.key || '').toLowerCase() === 'printscreen') { wipeClipboard(); shield(1500); }
+    if (restricted && (e.key || '').toLowerCase() === 'printscreen') { wipeClipboard(); shield(1500); }
   }, true);
 
   // Hide content while the page is in the background (a capture tool or another
@@ -83,12 +113,13 @@
   // (Focus moving into an embedded player, e.g. a YouTube link in chat, also
   // blurs the window; that's not leaving the page.)
   window.addEventListener('blur', () => setTimeout(() => {
+    if (!restricted) return;
     const a = document.activeElement;
     if (!(a && a.tagName === 'IFRAME')) shield(0);
   }, 0));
   window.addEventListener('focus', unshield);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) shield(0); else if (document.hasFocus()) unshield(); });
-  window.addEventListener('beforeprint', () => shield(0));
+  document.addEventListener('visibilitychange', () => { if (document.hidden && restricted) shield(0); else if (document.hasFocus()) unshield(); });
+  window.addEventListener('beforeprint', () => { if (restricted) shield(0); });
   window.addEventListener('afterprint', unshield);
 
   // Videos: no download button or picture-in-picture.

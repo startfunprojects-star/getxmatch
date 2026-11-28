@@ -21,7 +21,7 @@ const quizPool = require('../quizPool');
 const { imageUpload } = require('../upload');
 const { buildProfile } = require('../profileData');
 const { saveProfile } = require('../profileWrite');
-const { getSiteSeo, setSiteSeo } = require('../settings');
+const { getSiteSeo, setSiteSeo, screenshotsAllowed, setScreenshotsAllowed } = require('../settings');
 const seo = require('../seo');
 const ads = require('../ads');
 const hw = require('../highway');
@@ -997,6 +997,18 @@ router.put('/referrals', requireAdmin, (req, res) => {
   const referrals = require('../referrals');
   referrals.setEnabled(!!(req.body && req.body.enabled));
   res.json(referrals.stats());
+});
+
+// GET /api/admin/screenshots — whether members may take screenshots.
+router.get('/screenshots', requireAdmin, (req, res) => {
+  res.json({ allowed: screenshotsAllowed() });
+});
+
+// PUT /api/admin/screenshots { allowed } — allow or restrict screenshots and
+// printing across the member site.
+router.put('/screenshots', requireAdmin, (req, res) => {
+  setScreenshotsAllowed(!!(req.body && req.body.allowed));
+  res.json({ allowed: screenshotsAllowed() });
 });
 
 // GET /api/admin/site-seo — current settings, the brand defaults each field

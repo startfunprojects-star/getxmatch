@@ -43,9 +43,20 @@ function setSiteSeo(obj) {
   setSetting(SITE_SEO_KEY, JSON.stringify(obj && typeof obj === 'object' ? obj : {}));
 }
 
+/* ---------------------------------------------------------------------------
+   Screenshots: whether members may take screenshots / print pages.
+   Off (restricted) by default — public/js/protect.js then wipes Print Screen,
+   blurs the page while a capture tool has focus and blanks printing.
+--------------------------------------------------------------------------- */
+const SCREENSHOTS_KEY = 'screenshots_allowed';
+function screenshotsAllowed() { return getSetting(SCREENSHOTS_KEY, '0') === '1'; }
+function setScreenshotsAllowed(on) { setSetting(SCREENSHOTS_KEY, on ? '1' : '0'); }
+
 module.exports = {
   getSetting,
   setSetting,
   getSiteSeo,
   setSiteSeo,
+  screenshotsAllowed,
+  setScreenshotsAllowed,
 };

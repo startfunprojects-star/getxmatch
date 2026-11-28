@@ -392,6 +392,7 @@
     ['highway', 'Highway'],
     ['seo', 'Site SEO'],
     ['referrals', 'Referrals'],
+    ['screenshots', 'Screenshots'],
     ['leaderboard', 'Leaderboard'],
     ['suggestions', 'Suggestions'],
   ];
@@ -445,6 +446,7 @@
     if (tab === 'seo') return renderSeoTab();
     if (tab === 'leaderboard') return renderLeaderboardTab();
     if (tab === 'referrals') return renderReferralsTab();
+    if (tab === 'screenshots') return renderScreenshotsTab();
     if (tab === 'suggestions') return renderSuggestionsTab();
   }
 
@@ -2331,6 +2333,31 @@
       host.querySelector('#refEnabled').addEventListener('change', async (ev) => {
         try { paint(await api.put('/api/admin/referrals', { enabled: ev.target.checked })); }
         catch (e) { const m = host.querySelector('#refMsg'); m.textContent = e.message; m.className = 'msg error'; ev.target.checked = !ev.target.checked; }
+      });
+    };
+    paint(data);
+  }
+
+  /* ---- Screenshots tab: allow or restrict screen capture on the member site ---- */
+  async function renderScreenshotsTab() {
+    const host = tabHost();
+    host.innerHTML = '<div class="admin-card"><h2>Screenshots</h2><p class="count">Loading…</p></div>';
+    let data;
+    try { data = await api.get('/api/admin/screenshots'); }
+    catch (e) { if (e.status === 401) return renderLogin(true); host.innerHTML = `<div class="admin-card"><p class="msg error">${esc(e.message)}</p></div>`; return; }
+    const paint = (d) => {
+      host.innerHTML = `
+        <div class="admin-card">
+          <h2>Screenshots</h2>
+          <p class="count">When screenshots are <b>restricted</b>, Print Screen wipes the clipboard, the page blurs while a screenshot shortcut is pressed or a capture tool / another app has focus, and printing shows a blank page.
+            When they're <b>allowed</b>, none of that happens. Saving pictures by right-click or drag stays blocked either way.
+            No website can fully stop screenshots (phone buttons and cameras work outside the browser) — this is a deterrent. Changes apply the next time a member opens or reloads a page.</p>
+          <label class="switch-row"><input type="checkbox" id="ssAllowed"${d.allowed ? ' checked' : ''} /> <span>Screenshots are <b>${d.allowed ? 'ALLOWED' : 'RESTRICTED'}</b></span></label>
+          <div class="msg" id="ssMsg"></div>
+        </div>`;
+      host.querySelector('#ssAllowed').addEventListener('change', async (ev) => {
+        try { paint(await api.put('/api/admin/screenshots', { allowed: ev.target.checked })); }
+        catch (e) { const m = host.querySelector('#ssMsg'); m.textContent = e.message; m.className = 'msg error'; ev.target.checked = !ev.target.checked; }
       });
     };
     paint(data);

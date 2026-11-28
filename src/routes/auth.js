@@ -301,6 +301,13 @@ router.get('/referrals', (req, res) => {
   res.json({ enabled: referrals.enabled() });
 });
 
+// GET /api/auth/screenshots — public: whether the admin allows screenshots
+// (public/js/protect.js turns its capture shield off when they're allowed).
+router.get('/screenshots', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ allowed: require('../settings').screenshotsAllowed() });
+});
+
 router.get('/me', requireAuth, (req, res) => {
   const profile = db.prepare('SELECT user_id FROM profiles WHERE user_id = ?').get(req.user.id);
   res.json({ user: publicUser(req.user), hasProfile: !!profile });
